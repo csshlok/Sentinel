@@ -125,12 +125,20 @@ class RuntimeLifecycleFacts:
         return self.assurance_facts(change)
 
     def _ci_passed(self, change: ChangeView) -> bool:
+        """True iff the *latest* CI outcome for the current HEAD passed.
+
+        ``list_for_change`` returns outcomes newest-first, so the first CI
+        outcome matching the current SHA is the most recent one for it. Using
+        ``any(...)`` over every matching outcome (the prior implementation)
+        let an old PASSED result outlive a newer FAILED re-run of the same
+        commit -- once any CI run for a SHA ever passed, the gate stayed open
+        forever for that SHA regardless of later evidence.
+        """
+
         if change.git_summary is None:
             return False
         head_sha = change.git_summary.head_sha
-        return any(
-            outcome.kind is OutcomeKind.CI
-            and outcome.status is OutcomeStatus.PASSED
-            and outcome.head_sha == head_sha
-            for outcome in self.outcomes.list_for_change(change.id)
-        )
+        for outcome in self.outcomes.list_for_change(change.id):
+            if outcome.kind is OutcomeKind.CI and outcome.head_sha == head_sha:
+                return outcome.status is OutcomeStatus.PASSED
+        return False

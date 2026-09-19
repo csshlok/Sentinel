@@ -244,6 +244,42 @@ def test_ci_passed_only_for_the_current_head_sha(tmp_path) -> None:
     assert facts_port.get_facts(change, "CI_VERIFIED").ci_passed_for_current_head is True
 
 
+def test_a_newer_ci_failure_overrides_an_older_pass_for_the_same_sha(tmp_path) -> None:
+    """Reproduces the audit finding: a stale PASSED outcome for the current
+
+    SHA must not keep the gate open once a newer run for that same SHA
+    failed. ``any(...)`` over every matching outcome treated the gate as
+    permanently open the instant any CI run for a SHA ever passed; only the
+    *latest* outcome for the SHA should govern.
+    """
+
+    facts_port, _delegations, _provider_operations, outcomes, _recovery, base_change = _build(
+        tmp_path
+    )
+    current_sha = "a" * 40
+    change = _with_head_sha(base_change, current_sha)
+    older = datetime.now(UTC) - timedelta(minutes=10)
+    newer = datetime.now(UTC)
+
+    outcomes.create(
+        Outcome(
+            id=uuid4(), change_id=change.id, kind=OutcomeKind.CI, status=OutcomeStatus.PASSED,
+            repository="acme/widgets", head_sha=current_sha,
+            provider_reference="acme/widgets@" + current_sha, observed_at=older,
+        )
+    )
+    assert facts_port.get_facts(change, "CI_VERIFIED").ci_passed_for_current_head is True
+
+    outcomes.create(
+        Outcome(
+            id=uuid4(), change_id=change.id, kind=OutcomeKind.CI, status=OutcomeStatus.FAILED,
+            repository="acme/widgets", head_sha=current_sha,
+            provider_reference="acme/widgets@" + current_sha, observed_at=newer,
+        )
+    )
+    assert facts_port.get_facts(change, "CI_VERIFIED").ci_passed_for_current_head is False
+
+
 def test_recovery_facts_track_the_latest_plan_status(tmp_path) -> None:
     facts_port, _delegations, _provider_operations, _outcomes, recovery, change = _build(
         tmp_path
