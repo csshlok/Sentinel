@@ -38,3 +38,38 @@ def adapter_unavailable(capability: str) -> AppError:
         details={"capability": capability},
     )
 
+
+def revision_conflict(*, expected: int, actual: int) -> AppError:
+    return AppError(
+        "REVISION_CONFLICT",
+        "The Change was updated by another operation.",
+        status_code=409,
+        details={"expected_revision": expected, "actual_revision": actual},
+    )
+
+
+def idempotency_conflict(scope: str) -> AppError:
+    return AppError(
+        "IDEMPOTENCY_KEY_REUSED",
+        "The idempotency key was already used for a different request.",
+        status_code=409,
+        details={"scope": scope},
+    )
+
+
+def invalid_transition(current: str, target: str) -> AppError:
+    return AppError(
+        "INVALID_CHANGE_TRANSITION",
+        "The requested lifecycle transition is not allowed.",
+        status_code=409,
+        details={"current_state": current, "target_state": target},
+    )
+
+
+def transition_guard_failed(target: str, missing: list[str]) -> AppError:
+    return AppError(
+        "TRANSITION_GUARD_FAILED",
+        "Authoritative evidence does not permit the requested transition.",
+        status_code=409,
+        details={"target_state": target, "missing_requirements": missing},
+    )
