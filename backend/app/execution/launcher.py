@@ -33,6 +33,7 @@ from backend.app.execution.resolve import resolve_argv, safe_path_entries
 
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_TIMEOUT_SECONDS = 86_400
+MAX_RETAINED_RUNS = 512
 STOP_WAIT_SECONDS = 10.0
 REDACTION = "[REDACTED]"
 
@@ -186,6 +187,7 @@ class AgentLauncher:
         )
         with self._lock:
             state.record = final
+            self._evict()
         state.done.set()
         return final
 
@@ -205,6 +207,7 @@ class AgentLauncher:
         state.done.set()
         with self._lock:
             self._runs[run.id] = state
+            self._evict()
         return run
 
     def stop(self, run_id: UUID) -> AgentRun:
@@ -235,6 +238,17 @@ class AgentLauncher:
             raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist.",
                            status_code=404)
         return state.record
+
+    def _evict(self) -> None:
+        """Bound memory: drop the oldest finished records (caller holds the lock)."""
+
+        excess = len(self._runs) - MAX_RETAINED_RUNS
+        for run_id in list(self._runs):
+            if excess <= 0:
+                break
+            if self._runs[run_id].done.is_set():
+                del self._runs[run_id]
+                excess -= 1
 
     def _with_limitation(self, state: _State, text: str) -> AgentRun:
         record = state.record

@@ -445,3 +445,15 @@ def test_summarize_reporters():
     assert summarize("pytest", make("", "")) == ""
     assert summarize("pytest", make("weird output")) == "weird output"
     assert len(summarize("ruff", make("x" * 1000))) == 300
+
+
+def test_remembered_plans_are_bounded(tmp_path, monkeypatch):
+    from backend.app.assurance import engine as module
+    monkeypatch.setattr(module, "MAX_REMEMBERED_PLANS", 2)
+    repo = make_repo(tmp_path / "r", PYTEST_FILES)
+    engine, change, cp, first = plan_for(repo, {"app.py": "2\n"})
+    plans = [first] + [engine.discover(change, cp, None, None) for _ in range(2)]
+    assert len(engine._plans) == 2
+    with pytest.raises(AppError):
+        engine.evaluate(change, plans[0], [], current_checkpoint=cp)
+    assert engine.evaluate(change, plans[-1], [], current_checkpoint=cp)

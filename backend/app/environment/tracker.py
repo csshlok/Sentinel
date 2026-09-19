@@ -67,6 +67,9 @@ CommandRunner = Callable[[list[str], Path], tuple[int | None, str]]
 def _default_runner(argv: list[str], cwd: Path) -> tuple[int | None, str]:
     env = minimal_environment()
     env["PATH"] = os.pathsep.join(str(p) for p in safe_path_entries(env, cwd))
+    for key in ("HOME", "USERPROFILE"):  # read-only config lookups need the user's Git config
+        if key in os.environ:
+            env[key] = os.environ[key]
     result = capture(argv, cwd=cwd, env=env, timeout=TOOL_TIMEOUT_SECONDS,
                      limit=TOOL_OUTPUT_LIMIT)
     if result.timed_out or result.incomplete:

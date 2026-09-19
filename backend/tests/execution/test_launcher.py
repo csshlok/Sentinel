@@ -245,3 +245,15 @@ def test_concurrent_runs_are_independent(tmp_path):
     assert sorted(r.stdout.strip() for r in results) == ["0", "1", "2", "3"]
     assert len({r.id for r in results}) == 4
     assert sys.executable
+
+
+def test_finished_runs_are_evicted_beyond_the_cap(tmp_path, monkeypatch):
+    from backend.app.execution import launcher as module
+    monkeypatch.setattr(module, "MAX_RETAINED_RUNS", 3)
+    launcher = AgentLauncher()
+    ids = [launcher.attach(CHANGE, AgentAttachRequest(adapter="claude", external_run_id=f"r{i}")).id
+           for i in range(6)]
+    assert len(launcher._runs) == 3
+    assert set(launcher._runs) == set(ids[-3:])
+    run = launcher.launch(CHANGE, str(tmp_path), request("print(1)"), 100)
+    assert len(launcher._runs) == 3 and launcher.get(run.id).status is AgentRunStatus.PASSED

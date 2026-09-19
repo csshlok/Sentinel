@@ -35,6 +35,7 @@ from backend.app.git import reader
 from backend.app.git.state import GitStateTracker
 
 DEFAULT_CHECK_TIMEOUT = 300
+MAX_REMEMBERED_PLANS = 256
 _PY_SOURCE = {".py", ".pyi"}
 _NODE_SOURCE = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _STATUS = {
@@ -182,6 +183,8 @@ class AssuranceEngine:
             self._plans[plan.id] = _Binding(
                 checkpoint, contract_digest(change), tuple(c.id for c in plan.checks),
                 tuple(plan.coverage_gaps))
+            while len(self._plans) > MAX_REMEMBERED_PLANS:
+                del self._plans[next(iter(self._plans))]
 
     # -- run ----------------------------------------------------------------
 
