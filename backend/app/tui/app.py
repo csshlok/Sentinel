@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.tui.passport_screen import PassportScreen
 from backend.app.tui.recovery_screen import RecoveryScreen
 
 _STATE_SYMBOLS = {
@@ -36,6 +37,7 @@ class ChangeDashboard(App):
     BINDINGS = [
         ("r", "refresh", "Refresh"),
         ("v", "recover", "Recovery preview"),
+        ("p", "passport", "Passport"),
         ("q", "quit", "Quit"),
     ]
 
@@ -99,6 +101,16 @@ class ChangeDashboard(App):
         except IndexError:
             return
         self.push_screen(RecoveryScreen(change_id, self.api_url, self.actor_id))
+
+    def action_passport(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(PassportScreen(change_id, self.api_url))
 
 
 def main() -> None:

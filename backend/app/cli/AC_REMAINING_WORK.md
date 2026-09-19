@@ -54,12 +54,13 @@ fabricated data. `backend/tests/tui/test_app.py` covers the pure
 5. PR/CI **outcome** panel (`OutcomeListResponse`).
 6. Guided **Change Contract** and **delegation** creation forms (currently CLI-only via `delegation create`).
 7. ~~Recovery preview/confirmation screen~~ — done, see above.
-8. **Passport export** screen/keybinding (`PassportBuilder` already produces byte-stable canonical JSON).
-9. Interaction-test coverage with Textual's `Pilot`/`run_test()` — **still not added** because this project has no async pytest runner configured (`pytest-asyncio`/`anyio` pytest mode is not in `pyproject.toml`'s test extras). All TUI tests so far (dashboard, recovery screen) are synchronous unit tests of pure logic and construction, not actual keyboard/rendering interaction — that remains an honest, documented gap.
+8. ~~Passport export screen/keybinding~~ — done: `backend/app/tui/passport_screen.py`'s `PassportScreen`, pushed via a new `p` binding on the dashboard. Loads the latest passport (honest `PASSPORT_NOT_FOUND` empty state, not an error, when none exists yet), `b` builds a fresh one through the real `POST .../passport` route, `e` exports the exact payload the API returned to `passport-<change_id>.json` as canonical indented JSON. `format_passport()` is a pure, tested formatting function. Tests: `backend/tests/tui/test_passport_screen.py` (5 tests).
+9. Interaction-test coverage with Textual's `Pilot`/`run_test()` — **still not added** because this project has no async pytest runner configured (`pytest-asyncio`/`anyio` pytest mode is not in `pyproject.toml`'s test extras). All TUI tests so far (dashboard, recovery screen, passport screen) are synchronous unit tests of pure logic and construction, not actual keyboard/rendering interaction — that remains an honest, documented gap.
 10. Small-terminal/resize, `NO_COLOR`/`--no-color`, and plain non-TTY behavior for the TUI specifically (the CLI already has this; the TUI inherits Textual's own terminal-capability detection but this has not been manually verified at 80x24/120x30 per the plan's acceptance requirement).
 
 ## Recommended next step
 
-Passport export (item 8) is the next highest-value, lowest-effort
-piece: `PassportBuilder` already exists and is fully tested, and the
-API route (`POST/GET .../passport`) is already wired.
+Item 6 (guided Change Contract / delegation creation forms) is the
+largest remaining functional gap — everything else left is either a
+read-only evidence panel (items 1-5) or cross-cutting test/terminal
+hardening (items 9-10).
