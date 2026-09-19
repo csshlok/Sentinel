@@ -12,6 +12,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
 from backend.app.tui.delegation_screen import DelegationScreen
 from backend.app.tui.detail_screen import DetailScreen
+from backend.app.tui.evidence_screen import EvidenceScreen
 from backend.app.tui.outcome_screen import OutcomeScreen
 from backend.app.tui.passport_screen import PassportScreen
 from backend.app.tui.recovery_screen import RecoveryScreen
@@ -42,6 +43,7 @@ class ChangeDashboard(App):
         ("enter", "detail", "Detail"),
         ("v", "recover", "Recovery preview"),
         ("p", "passport", "Passport"),
+        ("g", "evidence", "Evidence"),
         ("o", "outcomes", "Outcomes"),
         ("d", "delegations", "Delegations"),
         ("q", "quit", "Quit"),
@@ -135,6 +137,16 @@ class ChangeDashboard(App):
         except IndexError:
             return
         self.push_screen(DetailScreen(change_id, self.api_url))
+
+    def action_evidence(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(EvidenceScreen(change_id, self.api_url))
 
     def action_outcomes(self) -> None:
         table = self.query_one(DataTable)
