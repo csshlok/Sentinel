@@ -635,6 +635,65 @@ class ChangePassport(ContractModel):
     canonical_digest: Digest
 
 
+class ActorCreateRequest(ContractModel):
+    kind: ActorKind
+    display_name: TrimmedTitle
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class DelegationCreateRequest(ContractModel):
+    grantor_id: UUID
+    grantee_id: UUID
+    change_id: UUID
+    scopes: list[CapabilityScope] = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(ge=1, le=31_536_000)
+    use_limit: int | None = Field(default=None, ge=1)
+
+
+class DelegationListResponse(ContractModel):
+    items: list[Delegation]
+    count: int = Field(ge=0)
+
+
+class CredentialGrantRequest(ContractModel):
+    actor_id: UUID
+    scopes: list[CapabilityScope] = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=900, ge=1, le=86400)
+
+
+class ProviderConnectRequest(ContractModel):
+    token: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
+class ProviderConnectionStatus(ContractModel):
+    provider: ShortText
+    configured: bool
+
+
+class PullRequestActionRequest(ContractModel):
+    actor_id: UUID
+    grant_id: UUID
+    base_branch: ShortText
+    head_branch: ShortText
+    title: ShortText
+    idempotency_key: ShortText
+
+
+class OutcomeRefreshRequest(ContractModel):
+    grant_id: UUID
+    required_check_names: list[ShortText] = Field(default_factory=list, max_length=64)
+
+
+class OutcomeListResponse(ContractModel):
+    items: list[Outcome]
+    count: int = Field(ge=0)
+
+
+class RecoveryExecuteRequest(ContractModel):
+    actor_id: UUID
+    approval_token: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
 class HealthResponse(ContractModel):
     status: str
     api_version: str

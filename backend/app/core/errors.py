@@ -73,3 +73,48 @@ def transition_guard_failed(target: str, missing: list[str]) -> AppError:
         status_code=409,
         details={"target_state": target, "missing_requirements": missing},
     )
+
+
+def policy_denied(reason_code: str, explanation: str) -> AppError:
+    return AppError(
+        "POLICY_DENIED",
+        explanation,
+        status_code=403,
+        details={"reason_code": reason_code},
+    )
+
+
+def provider_repository_unresolved(repository_path: str) -> AppError:
+    return AppError(
+        "PROVIDER_REPOSITORY_UNRESOLVED",
+        "The Change's repository has no resolvable GitHub remote.",
+        status_code=409,
+        details={"repository_path": repository_path},
+    )
+
+
+def grant_binding_invalid(grant_id: str) -> AppError:
+    return AppError(
+        "CREDENTIAL_GRANT_BINDING_INVALID",
+        "The credential grant is not bound to the requesting actor and Change.",
+        status_code=403,
+        details={"grant_id": grant_id},
+    )
+
+
+def recovery_plan_not_found(plan_id: str) -> AppError:
+    return AppError(
+        "RECOVERY_PLAN_NOT_FOUND",
+        "The requested recovery plan does not exist.",
+        status_code=404,
+        details={"plan_id": plan_id},
+    )
+
+
+def passport_not_found(change_id: str) -> AppError:
+    return AppError(
+        "PASSPORT_NOT_FOUND",
+        "No Change Passport has been generated for this Change yet.",
+        status_code=404,
+        details={"change_id": change_id},
+    )

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from backend.app.contracts.models import ErrorDetail, ErrorEnvelope, HealthResponse
 from backend.app.contracts.ports import (
+    CredentialStorePort,
     GitInspectionPort,
     LifecycleFactsPort,
     VerificationPort,
@@ -23,8 +24,34 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.core.router import build_router
+from backend.app.core.runtime_repositories import (
+    CredentialGrantRepository,
+    OutcomeRepository,
+    PassportRepository,
+    ProviderOperationRepository,
+    RecoveryRepository,
+)
+from backend.app.core.runtime_service import (
+    CredentialAdminService,
+    IdentityAdminService,
+    OutcomeService,
+    PassportService,
+    ProviderOperationService,
+    RecoveryService,
+    RuntimeServices,
+)
 from backend.app.core.unavailable_adapters import UnavailableLifecycleFacts
+from backend.app.credentials.broker import CredentialBroker
+from backend.app.credentials.windows_store import WindowsCredentialStore
 from backend.app.git.adapter import GitRepositoryInspector
+from backend.app.identity.repository import ActorRepository, DelegationRepository
+from backend.app.outcomes.tracker import OutcomeTracker
+from backend.app.passport.builder import PassportBuilder
+from backend.app.policy.service import DelegationPolicyEngine
+from backend.app.providers.github import GitHubProvider
+from backend.app.providers.http_transport import HttpTransport, UrllibHttpTransport
+from backend.app.providers.provider_port import GitHubProviderAdapter
+from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.app.verification.runner import SubprocessVerificationRunner
 
 
@@ -44,12 +71,26 @@ def _error_response(
     )
 
 
+_DEFAULT_CONFIGURED_CAPABILITIES = {
+    "change_lifecycle",
+    "git_inspection",
+    "legacy_verification",
+    "identity_and_policy",
+    "credential_broker",
+    "provider_outcomes",
+    "recovery",
+    "change_passport",
+}
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     git_inspection: GitInspectionPort | None = None,
     verification: VerificationPort | None = None,
     lifecycle_facts: LifecycleFactsPort | None = None,
+    credential_store: CredentialStorePort | None = None,
+    http_transport: HttpTransport | None = None,
     configured_capabilities: set[str] | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
@@ -61,7 +102,14 @@ def create_app(
         verification=verification or SubprocessVerificationRunner(),
         lifecycle_facts=lifecycle_facts or UnavailableLifecycleFacts(),
         settings=resolved_settings,
-        configured_capabilities=configured_capabilities,
+        configured_capabilities=configured_capabilities
+        or set(_DEFAULT_CONFIGURED_CAPABILITIES),
+    )
+    runtime = _build_runtime_services(
+        database,
+        service,
+        credential_store or WindowsCredentialStore(),
+        http_transport or UrllibHttpTransport(),
     )
 
     @asynccontextmanager
@@ -123,11 +171,65 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(status="ok", api_version=API_VERSION)
 
-    app.include_router(build_router(service))
+    app.include_router(build_router(service, runtime))
     app.state.settings = resolved_settings
     app.state.database = database
     app.state.change_service = service
+    app.state.runtime_services = runtime
     return app
+
+
+def _build_runtime_services(
+    database: Database,
+    service: ChangeService,
+    credential_store: CredentialStorePort,
+    http_transport: HttpTransport,
+) -> RuntimeServices:
+    """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
+    passport adapters into request-scoped use-case services (Gate 3 composition)."""
+
+    actors = ActorRepository(database)
+    delegations = DelegationRepository(database)
+    identity = IdentityAdminService(actors, delegations)
+
+    broker = CredentialBroker(credential_store)
+    credentials = CredentialAdminService(
+        broker, actors, CredentialGrantRepository(database)
+    )
+
+    policy = DelegationPolicyEngine(delegations)
+
+    github_provider = GitHubProvider(http_transport)
+    provider_adapter = GitHubProviderAdapter(github_provider, broker)
+    provider_operations = ProviderOperationService(
+        provider_adapter,
+        policy,
+        service,
+        credentials,
+        ProviderOperationRepository(database),
+    )
+
+    outcome_tracker = OutcomeTracker(github_provider)
+    outcomes = OutcomeService(
+        outcome_tracker, broker, service, credentials, OutcomeRepository(database)
+    )
+
+    recovery_engine = GitRecoveryEngine(database)
+    recovery = RecoveryService(
+        recovery_engine, policy, service, RecoveryRepository(database)
+    )
+
+    passport_builder = PassportBuilder(database, delegations)
+    passport = PassportService(passport_builder, service, PassportRepository(database))
+
+    return RuntimeServices(
+        identity=identity,
+        credentials=credentials,
+        provider_operations=provider_operations,
+        outcomes=outcomes,
+        recovery=recovery,
+        passport=passport,
+    )
 
 
 app = create_app()

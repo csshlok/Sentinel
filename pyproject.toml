@@ -11,6 +11,8 @@ dependencies = [
   "fastapi>=0.115,<1",
   "pydantic>=2.10,<3",
   "uvicorn[standard]>=0.34,<1",
+  "typer>=0.15,<1",
+  "rich>=13,<15",
 ]
 
 [project.optional-dependencies]
@@ -18,6 +20,9 @@ test = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<9",
   "pytest-cov>=6,<8",
+]
+tui = [
+  "textual>=0.85,<1",
 ]
 
 [tool.setuptools.packages.find]

@@ -116,6 +116,12 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[SD]` - 2026-09-19 01:12:33 -04:00 - Gate 3 composition for `[AC]`'s stream; AC-6/AC-7 unblocked
+
+`[SD]` cleared both blockers recorded in `backend/app/cli/AC_REMAINING_WORK.md` without editing any `[AC]`-owned module. `pyproject.toml` now declares `typer`, `rich`, and a `tui` extra with `textual`, exactly as `[AC]`'s `CONTRACT CHANGE REQUEST` asked. `backend/app/core/router.py` now exposes real routes for actors, delegations, GitHub connect/grants/pull-requests, outcome refresh, recovery preview/execute, and Change Passport build/retrieve, composed in new `backend/app/core/runtime_service.py` / `runtime_repositories.py` against `[AC]`'s existing, unmodified `IdentityService`/`DelegationPolicyEngine`/`CredentialBroker`/`GitHubProviderAdapter`/`GitHubOutcomeTracker`/`GitRecoveryEngine`/`PassportBuilder`. Every privileged mutation is policy-gated (`DelegationPolicyEngine.evaluate`) and grant-binding-checked before it runs. `credential_grants`, `provider_operations`, `outcomes`, `recovery_plans`/`recovery_actions`, and `change_passports` are now written, not just migrated. `create_app` gained injectable `credential_store`/`http_transport` parameters (defaulting to the real `WindowsCredentialStore`/`UrllibHttpTransport`) mirroring the existing adapter-injection pattern.
+
+Full commands and results, the two contract-gap resolutions, the one known inherited limitation (`CredentialBroker`'s in-process-only grant cache loses live tokens across a restart, failing safe), and exactly what remains `[AC]`'s to build (AC-6 CLI, AC-7 TUI, both now unblocked) are recorded in `OVERALL_CONTEXT.md`. `python -m pytest`: **258 passed, 1 skipped**, no regressions; 3 new `[SD]` acceptance tests in `backend/tests/acceptance/test_runtime_routes.py` exercise the full identity → GitHub PR → outcome → recovery → Passport path against a real disposable Git repository and a local HTTP transport fake (no network, no real credential). `[KB]`'s environment/dependency/assurance evidence remains genuinely absent and is reported as Passport `limitations`, not fabricated.
+
 ### `[AC]` - 2026-09-19 00:50:26 -04:00 - Person 3 AC-0..AC-5 complete; AC-6/AC-7 blocked
 
 #### Completed scope
