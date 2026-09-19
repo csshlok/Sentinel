@@ -404,11 +404,56 @@ def migration_004_tool_registry(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_005_journal_cascade_delete_fix(connection: sqlite3.Connection) -> None:
+    """Fix migration 3's DELETE triggers to allow the FK cascade they broke.
+
+    `journal_events.change_id` / `journal_effects.change_id` /
+    `journal_effects.event_id` all use `ON DELETE CASCADE`, and
+    `ChangeRepository.delete` relies on that cascade (A.4: "Change metadata
+    deletion in this product already means delete this Change's evidence").
+    Discovered only once a real end-to-end delete flow was exercised: SQLite
+    fires a child table's own DELETE triggers for rows removed by a foreign
+    key cascade action, exactly as it would for a direct `DELETE` statement --
+    so migration 3's unconditional `BEFORE DELETE ... RAISE(ABORT)` triggers
+    also aborted the legitimate cascade, not just direct tampering.
+
+    The fix: a `WHEN` guard that only aborts when the row's own parent Change
+    still exists. A direct `DELETE FROM journal_events WHERE ...` against a
+    live Change is still rejected exactly as before (empirically verified);
+    only a delete that is *itself* part of that Change's own cascade --
+    which, by the time SQLite processes it, has already removed the parent
+    `changes` row -- is allowed through. This is additive per this codebase's
+    migration convention: migration 3 is not edited, its triggers are
+    replaced by a later migration, the same way a bug found in shipped SQL
+    would be patched forward in any real system.
+    """
+
+    connection.execute("DROP TRIGGER IF EXISTS journal_events_immutable_delete")
+    connection.execute(
+        """
+        CREATE TRIGGER journal_events_immutable_delete
+        BEFORE DELETE ON journal_events
+        WHEN EXISTS (SELECT 1 FROM changes WHERE id = OLD.change_id)
+        BEGIN SELECT RAISE(ABORT, 'journal_events is append-only'); END
+        """
+    )
+    connection.execute("DROP TRIGGER IF EXISTS journal_effects_immutable_delete")
+    connection.execute(
+        """
+        CREATE TRIGGER journal_effects_immutable_delete
+        BEFORE DELETE ON journal_effects
+        WHEN EXISTS (SELECT 1 FROM changes WHERE id = OLD.change_id)
+        BEGIN SELECT RAISE(ABORT, 'journal_effects is append-only'); END
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
     Migration(3, "event_effect_journal", migration_003_event_effect_journal),
     Migration(4, "tool_registry", migration_004_tool_registry),
+    Migration(5, "journal_cascade_delete_fix", migration_005_journal_cascade_delete_fix),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

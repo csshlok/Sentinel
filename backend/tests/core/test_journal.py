@@ -233,6 +233,39 @@ def test_direct_sqlite_delete_against_journal_events_is_rejected(tmp_path) -> No
         connection.close()
 
 
+def test_change_deletion_cascade_is_not_blocked_by_the_append_only_trigger(tmp_path) -> None:
+    """Regression test for migration 5: an unqualified BEFORE DELETE trigger
+    also fires for rows removed by an ON DELETE CASCADE action, not just a
+    direct DELETE statement -- so deleting a Change must still succeed even
+    though journal_events/journal_effects are append-only, while a *direct*
+    delete against a live Change's journal rows remains rejected."""
+
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    writer = JournalWriter(database)
+    event = writer.append(change_id, JournalEventType.CHANGE_CREATED, payload={})
+    writer.append_effect(
+        event, resource_type="git_checkpoint", resource_id=uuid4(),
+        restoration_class=RestorationClass.NONE, produced_digest="a" * 64,
+    )
+
+    with database.connection(immediate=True) as connection:
+        connection.execute("DELETE FROM changes WHERE id = ?", (str(change_id),))
+
+    with database.connection() as connection:
+        remaining_events = connection.execute(
+            "SELECT COUNT(*) AS n FROM journal_events WHERE change_id = ?",
+            (str(change_id),),
+        ).fetchone()["n"]
+        remaining_effects = connection.execute(
+            "SELECT COUNT(*) AS n FROM journal_effects WHERE change_id = ?",
+            (str(change_id),),
+        ).fetchone()["n"]
+    assert remaining_events == 0
+    assert remaining_effects == 0
+
+
 def test_direct_sqlite_update_against_journal_effects_is_rejected(tmp_path) -> None:
     database = _database(tmp_path)
     change_id = uuid4()

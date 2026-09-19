@@ -111,7 +111,7 @@ def create_app(
     )
     database = Database(resolved_settings.database_path)
     journal = JournalWriter(database)
-    repository = ChangeRepository(database)
+    repository = ChangeRepository(database, journal=journal)
     evidence_service = evidence or EvidenceService(EvidenceStore(database), journal=journal)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
         DelegationRepository(database),
@@ -135,6 +135,7 @@ def create_app(
         credential_store or WindowsCredentialStore(),
         http_transport or UrllibHttpTransport(),
         evidence_service,
+        journal,
     )
 
     @asynccontextmanager
@@ -214,17 +215,19 @@ def _build_runtime_services(
     credential_store: CredentialStorePort,
     http_transport: HttpTransport,
     evidence_service: EvidenceService,
+    journal: JournalWriter | None = None,
 ) -> RuntimeServices:
     """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
     passport adapters into request-scoped use-case services (Gate 3 composition)."""
 
+    resolved_journal = journal or JournalWriter(database)
     actors = ActorRepository(database)
     delegations = DelegationRepository(database)
-    identity = IdentityAdminService(actors, delegations)
+    identity = IdentityAdminService(actors, delegations, journal=resolved_journal)
 
-    broker = CredentialBroker(credential_store)
+    broker = CredentialBroker(credential_store, journal=resolved_journal)
     credentials = CredentialAdminService(
-        broker, actors, CredentialGrantRepository(database)
+        broker, actors, CredentialGrantRepository(database), journal=resolved_journal
     )
 
     policy = DelegationPolicyEngine(delegations)
@@ -237,20 +240,24 @@ def _build_runtime_services(
         service,
         credentials,
         ProviderOperationRepository(database),
+        journal=resolved_journal,
     )
 
     outcome_tracker = OutcomeTracker(github_provider)
     outcomes = OutcomeService(
-        outcome_tracker, broker, service, credentials, OutcomeRepository(database)
+        outcome_tracker, broker, service, credentials, OutcomeRepository(database),
+        journal=resolved_journal,
     )
 
     recovery_engine = GitRecoveryEngine(database)
     recovery = RecoveryService(
-        recovery_engine, policy, service, RecoveryRepository(database)
+        recovery_engine, policy, service, RecoveryRepository(database),
+        journal=resolved_journal,
     )
 
     passport_builder = PassportBuilder(database, delegations)
-    passport = PassportService(passport_builder, service, PassportRepository(database))
+    passport = PassportService(passport_builder, service, PassportRepository(database),
+                               journal=resolved_journal)
 
     return RuntimeServices(
         identity=identity,

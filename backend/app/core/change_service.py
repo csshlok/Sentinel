@@ -161,6 +161,7 @@ class ChangeService:
             self.clock(),
             idempotency_key=idempotency_key,
             request_hash=request_hash,
+            reason=request.reason,
         )
         if updated is None:
             raise change_not_found(str(change_id))

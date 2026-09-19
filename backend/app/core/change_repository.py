@@ -13,11 +13,13 @@ from backend.app.contracts.models import (
     ChangeContract,
     ChangeLifecycleState,
     GitSummary,
+    JournalEventType,
     RiskLevel,
     VerificationResult,
 )
 from backend.app.core.database import Database
 from backend.app.core.errors import idempotency_conflict, revision_conflict
+from backend.app.core.journal import JournalWriter
 
 
 _INVALIDATED_BY_NEW_GIT = frozenset(
@@ -55,8 +57,9 @@ class StoredChange:
 
 
 class ChangeRepository:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, journal: JournalWriter | None = None) -> None:
         self.database = database
+        self.journal = journal
 
     def create(
         self,
@@ -84,6 +87,13 @@ class ChangeRepository:
                 """,
                 self._to_values(change),
             )
+            if self.journal is not None:
+                self.journal.append(
+                    change.id, JournalEventType.CHANGE_CREATED,
+                    subject_type="change", subject_id=change.id,
+                    payload={"title": change.title, "repository_path": change.repository_path},
+                    connection=connection,
+                )
             self._record_change_result(
                 connection, scope, idempotency_key, request_hash, change
             )
@@ -142,6 +152,12 @@ class ChangeRepository:
                 ),
             )
             updated = self._require_selected(connection, change_id)
+            if self.journal is not None:
+                self.journal.append(
+                    change_id, JournalEventType.CHANGE_CONTRACT_UPDATED,
+                    subject_type="change", subject_id=change_id,
+                    payload={"revision": updated.revision}, connection=connection,
+                )
             self._record_change_result(
                 connection, scope, idempotency_key, request_hash, updated
             )
@@ -156,6 +172,7 @@ class ChangeRepository:
         *,
         idempotency_key: str | None = None,
         request_hash: str | None = None,
+        reason: str | None = None,
     ) -> StoredChange | None:
         scope = f"change:{change_id}:transition"
         with self.database.connection(immediate=True) as connection:
@@ -190,6 +207,17 @@ class ChangeRepository:
                 ),
             )
             updated = self._require_selected(connection, change_id)
+            if self.journal is not None:
+                self.journal.append(
+                    change_id, JournalEventType.CHANGE_TRANSITIONED,
+                    subject_type="change", subject_id=change_id,
+                    payload={
+                        "from_state": current.lifecycle_state.value,
+                        "to_state": target.value,
+                        "reason": reason,
+                    },
+                    connection=connection,
+                )
             self._record_change_result(
                 connection, scope, idempotency_key, request_hash, updated
             )
@@ -249,6 +277,13 @@ class ChangeRepository:
                 ),
             )
             updated = self._require_selected(connection, change_id)
+            if self.journal is not None:
+                self.journal.append(
+                    change_id, JournalEventType.CHANGE_GIT_SUMMARY_REFRESHED,
+                    subject_type="change", subject_id=change_id,
+                    payload={"head_sha": summary.head_sha, "branch": summary.branch},
+                    connection=connection,
+                )
             self._record_change_result(
                 connection, scope, idempotency_key, request_hash, updated
             )
@@ -284,6 +319,12 @@ class ChangeRepository:
                 (self._model_json(result), updated_at.isoformat(), str(change_id)),
             )
             updated = self._require_selected(connection, change_id)
+            if self.journal is not None:
+                self.journal.append(
+                    change_id, JournalEventType.CHANGE_LEGACY_VERIFICATION_RUN,
+                    subject_type="change", subject_id=change_id,
+                    payload={"status": result.status.value}, connection=connection,
+                )
             self._record_change_result(
                 connection, scope, idempotency_key, request_hash, updated
             )
@@ -318,6 +359,22 @@ class ChangeRepository:
             )
             if envelope is not None:
                 return envelope["kind"] == "deleted"
+            if self.journal is not None:
+                exists = connection.execute(
+                    "SELECT 1 FROM changes WHERE id = ?", (str(change_id),)
+                ).fetchone()
+                if exists is not None:
+                    # Emitted immediately before the row delete; the ON DELETE
+                    # CASCADE below removes journal_events for this change too
+                    # (change_id is the journal's own scope, see A.4), so this
+                    # event never survives to be read back. It exists so a
+                    # JournalWriter-level test can assert emission order, and
+                    # so a future export-before-delete flow has a final marker.
+                    self.journal.append(
+                        change_id, JournalEventType.CHANGE_DELETED,
+                        subject_type="change", subject_id=change_id, payload={},
+                        connection=connection,
+                    )
             cursor = connection.execute(
                 "DELETE FROM changes WHERE id = ?", (str(change_id),)
             )

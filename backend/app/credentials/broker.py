@@ -14,13 +14,14 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from backend.app.contracts.models import CredentialGrant
+from backend.app.contracts.models import CredentialGrant, JournalEventType
 from backend.app.contracts.ports import CredentialStorePort
 from backend.app.credentials.errors import (
     grant_denied,
     grant_not_found,
     provider_secret_not_configured,
 )
+from backend.app.core.journal import JournalWriter
 
 
 def _default_clock() -> datetime:
@@ -40,10 +41,12 @@ class CredentialBroker:
         store: CredentialStorePort,
         *,
         clock: Callable[[], datetime] = _default_clock,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.store = store
         self._clock = clock
         self._grants: dict[UUID, CredentialGrant] = {}
+        self._journal = journal
 
     def store_provider_secret(self, provider: str, token: str) -> None:
         self.store.put(self._secret_key(provider), token)
@@ -96,6 +99,18 @@ class CredentialBroker:
         secret = self.store.get(self._secret_key(grant.provider))
         if secret is None:
             raise provider_secret_not_configured(grant.provider)
+        # The single highest-risk emission point in the whole journal (A.5):
+        # the payload carries only {grant_id, scope, provider} -- exactly the
+        # fields available *without* touching `secret` -- so the raw value
+        # can never reach `journal_events.payload_json`. See
+        # backend/tests/credentials/test_broker.py's canary-secret test.
+        if self._journal is not None:
+            self._journal.append(
+                grant.change_id, JournalEventType.CREDENTIAL_SECRET_RESOLVED,
+                actor_id=grant.actor_id, subject_type="credential_grant",
+                subject_id=grant.id,
+                payload={"grant_id": str(grant.id), "scope": scope, "provider": grant.provider},
+            )
         return secret
 
     @staticmethod

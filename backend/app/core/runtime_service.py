@@ -13,6 +13,7 @@ the application).
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -26,10 +27,12 @@ from backend.app.contracts.models import (
     CredentialGrant,
     Delegation,
     DelegationCreateRequest,
+    JournalEventType,
     Outcome,
     ProviderOperation,
     ProviderOperationRequest,
     RecoveryPlan,
+    RestorationClass,
     utc_now,
 )
 from backend.app.contracts.ports import (
@@ -48,6 +51,7 @@ from backend.app.core.errors import (
     provider_repository_unresolved,
     recovery_plan_not_found,
 )
+from backend.app.core.journal import JournalWriter
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
     OutcomeRepository,
@@ -75,10 +79,12 @@ class IdentityAdminService:
         delegations: DelegationRepository,
         *,
         clock: Clock = utc_now,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.actors = actors
         self.delegations = delegations
         self._clock = clock
+        self._journal = journal
 
     def create_actor(self, request: ActorCreateRequest) -> Actor:
         now = self._clock()
@@ -115,7 +121,14 @@ class IdentityAdminService:
             expires_at=now + timedelta(seconds=request.ttl_seconds),
             use_limit=request.use_limit,
         )
-        return self.delegations.create(delegation)
+        created = self.delegations.create(delegation)
+        if self._journal is not None:
+            self._journal.append(
+                created.change_id, JournalEventType.DELEGATION_ISSUED,
+                actor_id=created.grantor_id, subject_type="delegation", subject_id=created.id,
+                payload={"grantee_id": str(created.grantee_id), "scopes": list(created.scopes)},
+            )
+        return created
 
     def get_delegation(self, delegation_id: UUID) -> Delegation:
         delegation = self.delegations.get(delegation_id)
@@ -127,6 +140,11 @@ class IdentityAdminService:
         revoked = self.delegations.revoke(delegation_id, self._clock())
         if revoked is None:
             raise delegation_not_found(str(delegation_id))
+        if self._journal is not None:
+            self._journal.append(
+                revoked.change_id, JournalEventType.DELEGATION_REVOKED,
+                subject_type="delegation", subject_id=revoked.id, payload={},
+            )
         return revoked
 
     def list_delegations_for_change(self, change_id: UUID) -> list[Delegation]:
@@ -143,11 +161,13 @@ class CredentialAdminService:
         grants: CredentialGrantRepository,
         *,
         clock: Clock = utc_now,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.broker = broker
         self.actors = actors
         self.grants = grants
         self._clock = clock
+        self._journal = journal
 
     def connect(self, provider: str, token: str) -> None:
         self.broker.store_provider_secret(provider, token)
@@ -166,13 +186,27 @@ class CredentialAdminService:
         if self.actors.get(actor_id) is None:
             raise actor_not_found(str(actor_id))
         grant = self.broker.issue_grant(actor_id, change_id, scopes, ttl_seconds)
-        return self.grants.create(grant)
+        created = self.grants.create(grant)
+        if self._journal is not None:
+            self._journal.append(
+                created.change_id, JournalEventType.CREDENTIAL_GRANT_ISSUED,
+                actor_id=created.actor_id, subject_type="credential_grant", subject_id=created.id,
+                payload={"provider": created.provider, "scopes": list(created.scopes),
+                         "expires_at": created.expires_at.isoformat()},
+            )
+        return created
 
     def revoke_grant(self, grant_id: UUID) -> CredentialGrant:
         self.broker.revoke(grant_id)
         revoked = self.grants.revoke(grant_id, self._clock())
         if revoked is None:
             raise grant_binding_invalid(str(grant_id))
+        if self._journal is not None:
+            self._journal.append(
+                revoked.change_id, JournalEventType.CREDENTIAL_GRANT_REVOKED,
+                actor_id=revoked.actor_id, subject_type="credential_grant", subject_id=revoked.id,
+                payload={"provider": revoked.provider},
+            )
         return revoked
 
     def get_grant(self, grant_id: UUID) -> CredentialGrant:
@@ -194,9 +228,17 @@ def _enforce_policy(
     change: ChangeView,
     operation: str,
     parameters: dict[str, object],
+    *,
+    journal: JournalWriter | None = None,
 ) -> None:
     decision = policy.evaluate(actor_id, change, operation, parameters)
     if not decision.allowed:
+        if journal is not None:
+            journal.append(
+                change.id, JournalEventType.POLICY_DECISION_DENIED,
+                actor_id=actor_id, subject_type="policy_operation",
+                payload={"operation": operation, "denial_reason": decision.reason_code},
+            )
         raise policy_denied(decision.reason_code, decision.explanation)
 
 
@@ -210,12 +252,15 @@ class ProviderOperationService:
         change_service: ChangeService,
         credentials: CredentialAdminService,
         operations: ProviderOperationRepository,
+        *,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.provider = provider
         self.policy = policy
         self.change_service = change_service
         self.credentials = credentials
         self.operations = operations
+        self._journal = journal
 
     def create_pull_request(
         self,
@@ -254,6 +299,12 @@ class ProviderOperationService:
                 or replayed.get("title") != title
             ):
                 raise idempotency_conflict(f"providers/github/pulls:{idempotency_key}")
+            if self._journal is not None:
+                self._journal.append(
+                    change_id, JournalEventType.PROVIDER_PULL_REQUEST_REFRESHED,
+                    actor_id=actor_id, subject_type="provider_operation", subject_id=existing.id,
+                    payload={"operation": existing.request.operation, "replayed": True},
+                )
             return existing
 
         change = self.change_service.get(change_id)
@@ -270,7 +321,8 @@ class ProviderOperationService:
             "head_branch": head_branch,
             "title": title,
         }
-        _enforce_policy(self.policy, actor_id, change, "github.pr.create", parameters)
+        _enforce_policy(self.policy, actor_id, change, "github.pr.create", parameters,
+                        journal=self._journal)
 
         request = ProviderOperationRequest(
             provider="github",
@@ -281,7 +333,17 @@ class ProviderOperationService:
             parameters=parameters,
         )
         result = self.provider.execute(request, grant)
-        stored, _created = self.operations.create(result)
+        stored, created = self.operations.create(result)
+        if self._journal is not None:
+            event_type = (
+                JournalEventType.PROVIDER_PULL_REQUEST_CREATED if created
+                else JournalEventType.PROVIDER_PULL_REQUEST_REFRESHED
+            )
+            self._journal.append(
+                change_id, event_type, actor_id=actor_id,
+                subject_type="provider_operation", subject_id=stored.id,
+                payload={"operation": stored.request.operation, "status": stored.status.value},
+            )
         return stored
 
 
@@ -295,12 +357,15 @@ class OutcomeService:
         change_service: ChangeService,
         credentials: CredentialAdminService,
         outcomes: OutcomeRepository,
+        *,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.tracker = tracker
         self.broker = broker
         self.change_service = change_service
         self.credentials = credentials
         self.outcomes = outcomes
+        self._journal = journal
 
     def refresh(
         self,
@@ -320,8 +385,24 @@ class OutcomeService:
             required_check_names=required_check_names,
         )
         results = port.refresh(change)
+        if self._journal is not None:
+            # Lower priority than the mutation-backed events (read-only against
+            # GitHub) but still worth a timeline entry per PDF §9.2.
+            self._journal.append(
+                change_id, JournalEventType.PROVIDER_CI_REFRESHED,
+                subject_type="change", subject_id=change_id,
+                payload={"required_check_names": required_check_names,
+                         "results_count": len(results)},
+            )
         for outcome in results:
             self.outcomes.create(outcome)
+            if self._journal is not None:
+                self._journal.append(
+                    change_id, JournalEventType.OUTCOME_RECORDED,
+                    subject_type="outcome", subject_id=outcome.id,
+                    payload={"kind": outcome.kind.value, "status": outcome.status.value,
+                             "head_sha": outcome.head_sha},
+                )
         return results
 
     def list_for_change(self, change_id: UUID) -> list[Outcome]:
@@ -337,16 +418,27 @@ class RecoveryService:
         policy: PolicyPort,
         change_service: ChangeService,
         plans: RecoveryRepository,
+        *,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.recovery = recovery
         self.policy = policy
         self.change_service = change_service
         self.plans = plans
+        self._journal = journal
 
     def preview(self, change_id: UUID) -> RecoveryPlan:
         change = self.change_service.get(change_id)
         plan = self.recovery.plan(change)
-        return self.plans.create_plan(plan)
+        created = self.plans.create_plan(plan)
+        if self._journal is not None:
+            self._journal.append(
+                change_id, JournalEventType.RECOVERY_PLAN_CREATED,
+                subject_type="recovery_plan", subject_id=created.id,
+                payload={"actions_count": len(created.actions),
+                         "conflicts_count": len(created.conflicts)},
+            )
+        return created
 
     def execute(
         self, change_id: UUID, plan_id: UUID, *, actor_id: UUID, approval_token: str
@@ -355,9 +447,38 @@ class RecoveryService:
         stored_plan = self.plans.get(plan_id)
         if stored_plan is None or stored_plan.change_id != change_id:
             raise recovery_plan_not_found(str(plan_id))
-        _enforce_policy(self.policy, actor_id, change, "recovery.execute", {})
+        _enforce_policy(self.policy, actor_id, change, "recovery.execute", {},
+                        journal=self._journal)
         result = self.recovery.execute(change, stored_plan, approval_token)
-        return self.plans.update_plan(result)
+        updated = self.plans.update_plan(result)
+        if self._journal is not None:
+            for action in updated.actions:
+                if not action.provider_reference or not action.reversible_commit:
+                    continue
+                post_sha = action.provider_reference.rsplit("@", 1)[-1]
+                event = self._journal.append(
+                    change_id, JournalEventType.RECOVERY_ACTION_COMPLETED,
+                    actor_id=actor_id, subject_type="recovery_action", subject_id=action.id,
+                    payload={"kind": action.kind, "status": updated.status.value},
+                )
+                # RecoveryAction.reversible_commit/provider_reference carry raw
+                # 40-hex Git SHAs, not sha256 digests; JournalEffect reuses the
+                # existing `Digest` (sha256-pattern) type alias (A.2), so each
+                # SHA is wrapped in one more sha256 to conform -- this is a
+                # deliberate adaptation, not a new content digest.
+                self._journal.append_effect(
+                    event, resource_type="recovery_action", resource_id=action.id,
+                    restoration_class=RestorationClass.EXACT,
+                    before_digest=hashlib.sha256(
+                        action.reversible_commit.encode("ascii")).hexdigest(),
+                    produced_digest=hashlib.sha256(post_sha.encode("ascii")).hexdigest(),
+                )
+            self._journal.append(
+                change_id, JournalEventType.RECOVERY_PLAN_COMPLETED,
+                actor_id=actor_id, subject_type="recovery_plan", subject_id=updated.id,
+                payload={"status": updated.status.value},
+            )
+        return updated
 
     def latest(self, change_id: UUID) -> RecoveryPlan:
         plan = self.plans.latest_for_change(change_id)
@@ -374,15 +495,26 @@ class PassportService:
         passport: PassportPort,
         change_service: ChangeService,
         passports: PassportRepository,
+        *,
+        journal: JournalWriter | None = None,
     ) -> None:
         self.passport = passport
         self.change_service = change_service
         self.passports = passports
+        self._journal = journal
 
     def build(self, change_id: UUID) -> ChangePassport:
         change = self.change_service.get(change_id)
         built = self.passport.build(change)
-        return self.passports.create(built)
+        stored = self.passports.create(built)
+        if self._journal is not None:
+            self._journal.append(
+                change_id, JournalEventType.PASSPORT_BUILT,
+                subject_type="change_passport", subject_id=stored.id,
+                payload={"lifecycle_state": stored.lifecycle_state.value,
+                         "canonical_digest": stored.canonical_digest},
+            )
+        return stored
 
     def latest(self, change_id: UUID) -> ChangePassport:
         stored = self.passports.latest_for_change(change_id)
