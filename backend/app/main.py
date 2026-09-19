@@ -95,6 +95,9 @@ _DEFAULT_CONFIGURED_CAPABILITIES = {
     "dependency_tracking",
     "assurance",
     "cli_and_terminal_ui",
+    "event_journal",
+    "replay",
+    "tool_registry",
 }
 
 

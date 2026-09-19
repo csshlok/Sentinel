@@ -2,31 +2,36 @@
 
 ## 1. Authority and outcome
 
-This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. The interactive terminal UI is part of this phase; only the browser-based web UI is deferred. Only these four subsystems are removed from the product architecture:
+This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. The interactive terminal UI is part of this phase; only the browser-based web UI is deferred. Only these two subsystems are removed from the product architecture:
 
-1. Event/effect journal.
-2. Process supervisor.
-3. Filesystem tracker.
-4. Tool registry.
+1. Process supervisor.
+2. Filesystem tracker.
 
-The result is a local-first Change Assurance control plane that binds intent, actors, authority, Git state, environment and dependency evidence, assurance results, provider outcomes, and a final Change Passport. It must not claim observation, attribution, replay, or recovery that the four removed primitives would have supplied.
+The event/effect journal and tool registry, originally cut alongside these two, were reversed by explicit user decision and are retained in bounded form — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design, integration surface, and non-goals.
+
+The result is a local-first Change Assurance control plane that binds intent, actors, authority, Git state, environment and dependency evidence, assurance results, provider outcomes, a per-Change event/effect journal, and a final Change Passport. It must not claim observation, attribution, or recovery that the two removed primitives would have supplied, nor replay/tool-trust capability beyond the bounded forms `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines.
 
 ## 2. Scope consequences
 
 | Removed subsystem | Removed capability | What remains |
 | --- | --- | --- |
-| Event journal | Causal event stream, trace timeline, tamper-evident event chain, effect replay | Durable current state, immutable result records, timestamps, and final Passport evidence |
 | Process supervisor | Descendant-process ownership, orphan cleanup, process-tree policy, child-effect attribution | A top-level Agent Launcher that starts or attaches to one invocation and stores a bounded aggregate execution summary |
 | Filesystem tracker | Write interception, before-images, resource versions, uncommitted-file undo, conflict-aware local restoration | Read-only Git state/checkpoints and explicitly approved Git-native recovery on a dedicated Change branch |
-| Tool registry | Tool manifests, MCP/tool inventory, signatures, trust decisions, capability-drift checks | Agent adapter metadata and ordinary dependency provenance only |
+
+Retained (bounded) — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`:
+
+| Subsystem | Bounded form | Explicit non-goals |
+| --- | --- | --- |
+| Event/effect journal | Per-Change hash-chained record of mutations to entities this backend already models | No filesystem-write or process-spawn effect types; no cross-Change tamper evidence |
+| Replay | Trace-only reconstruction and cryptographic verification of a Change's journal | No re-execution of any kind; no filesystem/controlled/forked replay |
+| Tool registry | Trust lifecycle for the top-level launched executable and explicitly declared manifests, with Windows-Authenticode signature checks | No interception of a running agent's own tool/MCP calls; no sandboxing/enforcement of declared scope |
 
 These cuts also mean:
 
-- The proposal's replay engine and replay UI are not implementable and are removed.
 - Environment drift may be compared between checkpoints, but cannot be causally attributed to a process.
 - Local uncommitted file recovery and environment rollback are unsupported.
 - Recovery is limited to reversible Git commits and supported provider operations.
-- There will be no `/events`, `/effects`, `/replay`, `/tools`, or filesystem-snapshot APIs or tables.
+- There will be no filesystem-snapshot or process-tree APIs or tables. `/events`, `/replay`, and `/tools` exist in their bounded form (§8).
 
 ## 3. Retained product capabilities
 
@@ -54,13 +59,13 @@ These cuts also mean:
 | Credential broker | Keep | `[AC]` | OS-backed secrets and brokered GitHub operations |
 | Process supervisor | Cut | None | Replaced only by a top-level launcher; no process tree |
 | Filesystem tracker | Cut | None | Git checkpoints remain, without filesystem attribution or snapshots |
-| Event/effect journal | Cut | None | Ordinary entity/result persistence remains, without a causal stream |
+| Event/effect journal | Keep (bounded) | `[SD]` infra, `[KB]`/`[AC]` emission | Per-Change hash-chained record of mutations to entities already modeled; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A |
 | Environment tracker | Keep | `[KB]` | Redacted passports and drift comparison |
 | Dependency tracking | Keep | `[KB]` | Manifest/lockfile comparison without causal attribution |
-| Tool registry/supply-chain trust | Cut | None | No tool inventory, signatures, or trust decisions |
+| Tool registry/supply-chain trust | Keep (bounded) | `[SD]` infra, `[KB]` enforcement, `[AC]` surface | Top-level launched executable and declared manifests only; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part B |
 | Assurance engine | Keep | `[KB]` | Discovery, selection, bounded checks, and evidence coverage |
 | Recovery engine | Keep with reduced boundary | `[AC]` | Git commit and provider compensation only |
-| Replay engine | Remove as dependency | None | Cannot be implemented without the event journal/process/filesystem evidence |
+| Replay engine | Keep (trace replay only) | `[SD]` core, `[AC]` surface | Deterministic reconstruction and hash-chain verification only, no re-execution; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` §A.7 |
 | Git/PR/CI continuity | Keep | `[KB]` + `[AC]` | Git evidence by `[KB]`; provider outcomes by `[AC]` |
 | Change Passport | Keep | `[AC]` | Aggregated retained evidence plus limitations |
 | CLI and terminal UI | Keep | `[AC]` | Scriptable commands plus a visual interactive workflow through the local API |
@@ -84,6 +89,9 @@ Local authenticated API
       +-- Assurance Engine -------> bounded checks
       +-- Outcome Tracker --------> PR and CI state
       +-- Recovery Engine --------> approved Git/provider compensations
+      +-- Tool Registry ----------> top-level executable + declared manifests only
+      +-- Event/Effect Journal ---> per-Change hash chain
+      +-- Replay Service ---------> trace-only reconstruction/verification of the journal
       +-- Passport Builder
       |
       v
@@ -128,7 +136,7 @@ All durable entities have stable IDs, UTC timestamps, schema versions, and expli
 | `RecoveryAction` | One approved compensation and verified result |
 | `ChangePassport` | Versioned export of retained evidence and limitations |
 
-Forbidden persistence concepts: `Event`, `Effect`, `ProcessTree`, `ResourceVersion`, `BeforeImage`, `FilesystemSnapshot`, `ToolRecord`, and replay traces.
+Forbidden persistence concepts: `ProcessTree`, `ResourceVersion`, `BeforeImage`, `FilesystemSnapshot`. `Event`, `Effect`, and `ToolRecord` (as `JournalEvent`/`JournalEffect`/`ToolManifest`) are retained in the bounded form defined by `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`; nothing above authorizes a filesystem-write or process-spawn event type or effect.
 
 Migrations extend the existing SQLite database in place. Existing Change, Git summary, and verification records must be migrated or exposed through compatibility adapters; user data must not be reset.
 
@@ -167,12 +175,15 @@ Transitions use optimistic concurrency and idempotency. A new Git checkpoint inv
 - `/api/v1/changes/{id}/recovery`: preview, approve, execute, verify.
 - `/api/v1/changes/{id}/passport`: build, retrieve, export.
 - `/api/v1/capabilities`: supported, unavailable, and configured capabilities.
+- `/api/v1/changes/{id}/events`: paginated raw journal, filterable by `event_type`/`since_seq`.
+- `/api/v1/changes/{id}/replay`, `/replay/verify`, `/replay/export`: trace reconstruction, cheap chain-verification, and redacted export.
+- `/api/v1/tools`, `/api/v1/tools/{id}`, `/api/v1/tools/{id}/trust`, `/api/v1/changes/{id}/tools`: tool registry listing, detail, trust decisions, and per-Change observations.
 
 Every mutation accepts an idempotency key. Errors retain the safe `{ "error": { "code", "message", "details" } }` envelope. Secrets, raw environment values, and credential locations never appear in responses.
 
 ## 9. Person 1 - `[SD]` verifier and integration lead
 
-Exclusive paths: `backend/app/contracts/`, `backend/app/core/`, `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, and project context/plan documents.
+Exclusive paths: `backend/app/contracts/`, `backend/app/core/` (including `core/journal.py`, `core/replay_service.py`, `core/tool_registry_service.py`), `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, and project context/plan documents.
 
 `[SD]` does not take feature work from `[KB]` or `[AC]`. `[SD]` defines shared contracts, reviews every handoff, writes independent acceptance/adversarial tests, and integrates only code that passes review. A defect is returned to its owner instead of silently repaired in the owner's path.
 
@@ -199,7 +210,7 @@ Exclusive paths: `backend/app/contracts/`, `backend/app/core/`, `backend/app/mai
 
 ## 10. Person 2 - `[KB]` evidence, execution, and assurance
 
-Exclusive paths: `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, and matching unit-test directories.
+Exclusive paths: `backend/app/git/`, `execution/` (including `execution/signature.py`), `environment/`, `dependencies/`, `assurance/`, and matching unit-test directories.
 
 1. **P2.1 Git State Tracker**
    - Extend inspection into named checkpoints and comparisons.
@@ -227,7 +238,7 @@ Exclusive paths: `backend/app/git/`, `execution/`, `environment/`, `dependencies
 
 ## 11. Person 3 - `[AC]` authority, outcomes, recovery, and CLI
 
-Exclusive paths: `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, and matching owner unit/contract tests.
+Exclusive paths: `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, `tui/` (including `tui/timeline_screen.py`, `tui/tool_trust_screen.py`), and matching owner unit/contract tests.
 
 1. **P3.1 Local API identity and actor model**
    - Implement loopback/session authentication plus human, agent, and service identities.
@@ -280,16 +291,16 @@ Use this page guide while reading the PDF, but do not substitute it for a full r
 | 2-4 | Product thesis, five pillars, root Change object, observation over narration, least authority, typed reversibility |
 | 6 | Original component responsibilities and boundaries |
 | 9-11 | Lifecycle, end-to-end user flow, assurance summary, and recovery semantics |
-| 14 | Why replay depends on journal/process/resource evidence and is therefore removed here |
+| 14 | Why the original proposal ties replay to journal/process/resource evidence; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` §A.7 for how trace replay is retained without process/filesystem evidence |
 | 18 | Local authenticated API intent and original route families |
 | 21-24 | Recommended implementation language, phased build, detailed milestones, MVP, and demo expectations |
 | 26-28 | Threat model, feasibility risks, non-goals, and competitive boundary |
-| 29-30 | Engineering backlog and acceptance criteria to reinterpret after the four approved cuts |
+| 29-30 | Engineering backlog and acceptance criteria to reinterpret after the two approved cuts |
 | 33-34 | External technical foundations and growth direction |
 
 ### 12.2 Scope interpretation rule
 
-The PDF is the product-design authority. This plan is the implementation authority for the approved variation. Contributors must preserve the proposal's intent wherever possible, but must not implement or imply the event journal, process supervisor, filesystem tracker, tool registry, or dependent replay capability. When a PDF requirement depends on a cut primitive, the implementation must expose an honest unsupported/limited state described in sections 2, 3.1, and 14.
+The PDF is the product-design authority. This plan is the implementation authority for the approved variation. Contributors must preserve the proposal's intent wherever possible, but must not implement or imply the process supervisor, filesystem tracker, or any event-journal/replay/tool-registry capability beyond the bounded form `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines. When a PDF requirement depends on a cut primitive, the implementation must expose an honest unsupported/limited state described in sections 2, 3.1, and 14.
 
 ### 12.3 Required comprehension statement
 
@@ -297,7 +308,7 @@ Before the first claim, each contributor sends `[SD]` a concise comprehension st
 
 - The proposal capabilities owned by their stream.
 - The proposal principles their design must preserve.
-- The four cuts and the limitations those cuts impose on their stream.
+- The two cuts (process supervisor, filesystem tracker) and the limitations those cuts impose on their stream, plus the bounded event-journal/replay/tool-registry non-goals relevant to their stream.
 - The ports/models they consume and provide.
 - The top five failure/security risks in their stream.
 - Any apparent conflict between the PDF, context documents, current code, and this plan.
@@ -715,7 +726,7 @@ Every work-item commit or handoff states:
 7. The Passport exports real intent, actors, authority, checkpoints, deviations, assurance, outcomes, limitations, and recovery status.
 8. Supported recovery requires preview/approval, is conflict-safe, and is verified.
 9. API, CLI, and interactive terminal UI show real missing, stale, unsupported, denied, failed, and partial states.
-10. Event journal, process supervisor, filesystem tracker, tool registry, and replay are absent from code, storage, API, and claims.
+10. Process supervisor and filesystem tracker are absent from code, storage, API, and claims. The event journal, tool registry, and trace replay are present, but strictly in the bounded form `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines: no descendant-process attribution, no filesystem-write timeline, no re-execution, no interception of a running agent's own tool/MCP calls. `test_no_removed_subsystem_endpoints_are_exposed` asserts `/processes`/`/snapshots`-style filesystem/process routes are absent; `test_expected_route_families_are_present` asserts `/events`, `/tools`, `/replay` are present.
 11. Existing data upgrades successfully and the complete backend release matrix passes.
 12. The terminal UI passes keyboard, resize, no-colour, plain-output, and critical-flow interaction tests.
 13. Browser web UI implementation remains deferred and does not block backend acceptance.
@@ -739,4 +750,4 @@ Integration instructions: <constructors, configuration, migration/data needs, or
 Consumer action: `[SD]` independent review; no direct integration by owner
 ```
 
-Attach or reference the test matrix and owner-local flow result. The working tree must be clean, and the submitted commits must contain only the owner's paths. No handoff may claim a capability that depends on one of the four removed subsystems.
+Attach or reference the test matrix and owner-local flow result. The working tree must be clean, and the submitted commits must contain only the owner's paths. No handoff may claim a capability that depends on the process supervisor or filesystem tracker, or that exceeds the bounded event-journal/replay/tool-registry form defined in `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`.

@@ -124,12 +124,10 @@ At Gates 2 through 6 in the plan, `[SD]` posts a review or integration lock nami
 
 The product implements the PDF proposal except for:
 
-- Event/effect journal.
 - Process supervisor.
 - Filesystem tracker.
-- Tool registry.
 
-Stop and report a scope conflict if work introduces those systems, a replay engine, process-tree attribution, local-file snapshots/undo, or tool-trust records. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, and constrained Git/provider recovery remain in scope.
+Stop and report a scope conflict if work introduces those systems, process-tree attribution, or local-file snapshots/undo. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, constrained Git/provider recovery, the per-Change event/effect journal, trace-only replay, and the bounded tool registry (top-level launched executable plus declared manifests only, no MCP/descendant-call interception) remain in scope. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the exact bounded scope of the journal, replay, and tool registry.
 
 ## Git hygiene
 

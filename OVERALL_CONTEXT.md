@@ -36,18 +36,18 @@ The repository now targets the retained Change Assurance Runtime from the projec
 - Pull-request, CI, artifact, and deployment continuity where real adapters exist.
 - Approved Git/provider compensation and a final Change Passport.
 
-Event journaling, process supervision, filesystem tracking, and the tool registry are deliberately excluded. Capabilities that require those primitives are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed.
+Process supervision and filesystem tracking are deliberately excluded. Capabilities that require those primitives are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed. The event/effect journal and tool registry are retained in bounded form: a per-Change hash-chained mutation record with trace-only replay, and a tool registry scoped to the top-level launched executable and explicitly declared manifests (no descendant-call interception). See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full bounded design and its own explicit non-goals.
 
 ## Current product scope
 
-The current build implements the proposal without a time-box, except for these four approved cuts:
+The current build implements the proposal without a time-box, except for these two approved cuts:
 
-- Event/effect journal.
 - Process supervision and descendant attribution.
 - Filesystem tracking, snapshots, local-file recovery, and undo.
-- Tool registry and tool trust.
 
-Replay is also unavailable because it depends on the removed event journal. Descendant attribution and cleanup depend on the removed process supervisor. Uncommitted local recovery depends on filesystem tracking. Tool trust depends on the tool registry. These consequences must remain visible in APIs, UI copy, Passport limitations, and recovery previews.
+Descendant attribution and cleanup depend on the removed process supervisor. Uncommitted local recovery depends on filesystem tracking. These consequences must remain visible in APIs, UI copy, Passport limitations, and recovery previews.
+
+The event/effect journal, trace-only replay, and the bounded tool registry are retained (see above and `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`). Their own non-goals still apply: no descendant-process attribution in any replay row, no filesystem-level write timeline, no re-execution of any kind, no cross-Change tamper evidence, no interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope.
 
 The already implemented Git review backend is the migration foundation, not the final scope. The active phase adds the retained lifecycle, authority, evidence, assurance, outcomes, recovery, scriptable CLI, and interactive terminal UI around it. Browser web UI implementation is deferred until the backend contracts and acceptance suite are stable.
 
@@ -115,15 +115,16 @@ The available local CML export contains application UI and an audit, but not the
 ```text
 Terminal UI / CLI / API clients -> Authenticated local API -> Change lifecycle and policy
                                       -> Identity and credential broker -> GitHub
-                                      -> Top-level Agent Launcher
+                                      -> Top-level Agent Launcher -> Tool Registry (top-level executable + declared manifests only)
                                       -> Git/environment/dependency evidence
                                       -> Assurance engine
                                       -> Outcome tracker
                                       -> Constrained recovery
+                                      -> Event/Effect Journal (per-Change hash chain) -> Replay (trace-only reconstruction)
                                       -> Change Passport
 ```
 
-The Agent Launcher invokes or references only the top-level agent. No component supervises the descendant process tree, intercepts filesystem operations, or records a causal event stream.
+The Agent Launcher invokes or references only the top-level agent. No component supervises the descendant process tree or intercepts filesystem operations. The Event/Effect Journal records mutations to entities this backend already models (Change, Delegation, CredentialGrant, GitCheckpoint, EnvironmentPassport, DependencyReport, AssuranceRun, AgentRun, ProviderOperation, Outcome, RecoveryPlan/Action, ToolManifest/ToolTrustDecision) — it is not a filesystem or process-level causal trace. The Tool Registry governs only the top-level executable `AgentLauncherPort` resolves and explicitly declared tool/MCP manifests; it does not intercept or attribute a running agent's own tool calls.
 
 The interactive terminal UI is the current human interface. A browser web UI is a later consumer of this boundary and is not part of the active implementation phase.
 

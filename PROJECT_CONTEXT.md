@@ -2,7 +2,7 @@
 
 ## Relationship to overall context
 
-This document defines the active implementation of `Change_Assurance_Runtime_Project_Proposal (2).pdf`. Read `OVERALL_CONTEXT.md` first for stable product principles, vocabulary, the CML working standard, and decision authority. The PDF proposal is the feature baseline; this document records the four approved cuts and their necessary consequences.
+This document defines the active implementation of `Change_Assurance_Runtime_Project_Proposal (2).pdf`. Read `OVERALL_CONTEXT.md` first for stable product principles, vocabulary, the CML working standard, and decision authority. The PDF proposal is the feature baseline; this document records the two approved cuts and their necessary consequences. `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` records the reversal that retains the event/effect journal and tool registry in bounded form.
 
 ## Goal
 
@@ -37,23 +37,25 @@ A developer can define a bounded Change, delegate scoped authority to an agent, 
 - Constrained Git commit/provider recovery with preview, approval, conflict checks, and verification.
 - Versioned Change Passport, scriptable CLI, interactive terminal UI, capabilities reporting, and explicit unsupported states.
 - A frozen OpenAPI contract suitable for a later browser UI phase; web frontend implementation is deferred.
+- A per-Change hash-chained event/effect journal and trace-only replay (reconstruction/verification, no re-execution) — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` §A.7 for the exact boundary.
+- A tool registry covering the top-level launched executable and explicitly declared manifests, with Windows-Authenticode-based signature checks and drift-based trust invalidation — see the same plan's §B.10 for the exact boundary.
 
 ## Approved cuts
 
 The following proposal subsystems are intentionally removed from the product:
 
-- Event/effect journal and causal timeline.
 - Process supervisor, descendant-process attribution, and process cleanup.
 - Filesystem observation, before-images, snapshots, file-effect attribution, and local-file recovery/undo.
-- Tool registry, MCP inventory, tool manifests, signatures, and trust decisions.
+
+The event/effect journal, causal timeline, and trace-only replay are retained in bounded form, as is a tool registry scoped to the top-level launched executable and explicitly declared manifests. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design and its own non-goals.
 
 ## Necessary consequences and non-goals
 
-- No causal event/effect timeline, trace replay, or replay engine because the event journal is absent.
 - No descendant-process ownership, orphan cleanup, process-tree policy, or Windows Job Object enforcement because the process supervisor is absent.
 - No uncommitted-file restoration, resource versions, write attribution, or environment rollback because filesystem/process observation is absent.
-- No tool manifests, signatures, inventory, trust decisions, or capability-drift tracking because the tool registry is absent.
 - No attribution of an environment/dependency change to a particular process; only checkpoint comparison is claimed.
+- No descendant-process attribution in any replay row, no filesystem-level write timeline, and no re-execution of any kind during replay — replay is a per-Change hash chain reconstruction/verification only.
+- No interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope — the tool registry governs only the top-level launched executable and explicitly declared manifests.
 - No automatic recovery. Retained recovery is limited to known Git commits and supported provider objects and always requires approval.
 - Initial host collectors target Windows; other platforms require tested adapters before support is claimed.
 
@@ -74,10 +76,12 @@ Do not claim:
 
 - Complete observation, causal attribution, or sandboxing.
 - Descendant-process control.
-- Replay or local-file/environment rollback.
+- Local-file/environment rollback.
 - Process-tree visibility.
-- Tool or credential trust enforcement.
+- Interception or enforcement of a running agent's own tool/MCP calls, or credential trust enforcement.
 - General recovery beyond the explicitly supported Git/provider actions.
+- Replay beyond a per-Change hash-chain trace reconstruction/verification with no re-execution.
+- Tool trust beyond the top-level launched executable and explicitly declared manifests.
 
 ## Active architecture
 
@@ -90,11 +94,13 @@ Interactive terminal UI / CLI / API clients (browser UI deferred)
        -> Git, environment, and dependency trackers
        -> Assurance engine
        -> Constrained recovery engine
+       -> Tool Registry (top-level executable + declared manifests only)
+       -> Event/Effect Journal (per-Change hash chain) and trace-only Replay
        -> Change Passport builder
        -> SQLite state/evidence store
 ```
 
-The Agent Launcher may start or attach to a top-level invocation, but it does not observe or control a descendant process tree. Git is the source of code-change evidence; it is not filesystem-effect attribution.
+The Agent Launcher may start or attach to a top-level invocation, but it does not observe or control a descendant process tree. Git is the source of code-change evidence; it is not filesystem-effect attribution. The Event/Effect Journal records mutations to entities already modeled by this backend, not a filesystem or process-level causal trace; Replay reconstructs and verifies that journal without re-executing anything. The Tool Registry governs only the top-level executable the Agent Launcher resolves and explicitly declared manifests — it does not intercept a running agent's own tool calls.
 
 ## Core data concepts
 
@@ -112,7 +118,7 @@ The Agent Launcher may start or attach to a top-level invocation, but it does no
 
 The backend/terminal phase meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end through the API, CLI, and interactive terminal UI using real data; migrations preserve existing data; authority and credentials are enforced; evidence freshness gates lifecycle state; every relevant failure or unsupported condition is represented; and recovery stays inside its documented Git/provider boundary.
 
-No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. The terminal UI is required; browser UI implementation and browser acceptance are not part of this phase.
+No code, schema, route, or copy may imply process supervision, filesystem tracking/undo, or any capability beyond the bounded event journal/replay and tool registry described in `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` (no descendant-process attribution, no filesystem-level write timeline, no re-execution, no interception of a running agent's own tool/MCP calls). The terminal UI is required; browser UI implementation and browser acceptance are not part of this phase.
 
 ## Current implementation status
 

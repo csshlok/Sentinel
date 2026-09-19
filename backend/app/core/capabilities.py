@@ -10,11 +10,8 @@ from backend.app.contracts.models import (
 
 
 _REMOVED = {
-    "event_journal": "Removed by approved scope; no causal event stream is recorded.",
     "process_supervisor": "Removed by approved scope; descendant processes are not controlled or attributed.",
     "filesystem_tracker": "Removed by approved scope; file writes and before-images are not observed.",
-    "tool_registry": "Removed by approved scope; tool inventory and trust decisions are unavailable.",
-    "replay": "Unavailable because replay requires the removed event/process/filesystem evidence.",
 }
 
 _RETAINED = {
@@ -32,6 +29,9 @@ _RETAINED = {
     "recovery": "Approved Git commit and provider compensation only.",
     "change_passport": "Versioned retained-evidence export.",
     "cli_and_terminal_ui": "Scriptable and interactive terminal experience.",
+    "event_journal": "Per-Change hash-chained mutation record covering entities this backend already models.",
+    "replay": "Trace-only reconstruction and cryptographic verification of a Change's causal timeline; no re-execution.",
+    "tool_registry": "Top-level launched executable and declared-manifest trust lifecycle with Windows-Authenticode signature checks.",
 }
 
 

@@ -59,7 +59,9 @@ def test_capabilities_report_the_kb_stream_as_available(tmp_path):
     items = {item["id"]: item for item in client.get("/api/v1/capabilities").json()["items"]}
     for name in KB_CAPABILITIES:
         assert items[name]["state"] == "AVAILABLE", name
-    assert items["replay"]["state"] == "UNSUPPORTED"
+    assert items["replay"]["state"] == "AVAILABLE"
+    assert items["event_journal"]["state"] == "AVAILABLE"
+    assert items["tool_registry"]["state"] == "AVAILABLE"
 
 
 def test_full_flow_through_the_api_and_lifecycle_guards(tmp_path):
