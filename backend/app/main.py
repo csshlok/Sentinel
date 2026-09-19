@@ -242,15 +242,16 @@ def _build_runtime_services(
     delegations = DelegationRepository(database)
     identity = IdentityAdminService(actors, delegations, journal=resolved_journal)
 
+    policy = DelegationPolicyEngine(delegations)
+
     credential_grants = CredentialGrantRepository(database)
     broker = CredentialBroker(
         credential_store, journal=resolved_journal, grant_lookup=credential_grants.get
     )
     credentials = CredentialAdminService(
-        broker, actors, credential_grants, journal=resolved_journal
+        broker, actors, credential_grants,
+        policy=policy, change_service=service, journal=resolved_journal,
     )
-
-    policy = DelegationPolicyEngine(delegations)
 
     github_provider = GitHubProvider(http_transport)
     provider_adapter = GitHubProviderAdapter(github_provider, broker)

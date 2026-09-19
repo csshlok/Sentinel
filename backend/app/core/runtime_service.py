@@ -171,12 +171,16 @@ class CredentialAdminService:
         actors: ActorRepository,
         grants: CredentialGrantRepository,
         *,
+        policy: PolicyPort,
+        change_service: ChangeService,
         clock: Clock = utc_now,
         journal: JournalWriter | None = None,
     ) -> None:
         self.broker = broker
         self.actors = actors
         self.grants = grants
+        self.policy = policy
+        self.change_service = change_service
         self._clock = clock
         self._journal = journal
 
@@ -196,6 +200,19 @@ class CredentialAdminService:
     ) -> CredentialGrant:
         if self.actors.get(actor_id) is None:
             raise actor_not_found(str(actor_id))
+        # Threat model finding #1: minting a CredentialGrant hands the actor
+        # a usable capability, so it needs the same authority check every
+        # other privileged operation gets -- without this, any caller
+        # holding the shared bearer token could self-mint a grant for
+        # scopes/Changes it was never delegated. Each requested scope must
+        # itself be an operation the actor already holds delegated
+        # authority for on this Change (the same scope name
+        # create_pull_request/etc. already check via _enforce_policy), so a
+        # grant can never carry more capability than the actor's own
+        # delegation already covers.
+        change = self.change_service.get(change_id)
+        for scope in scopes:
+            _enforce_policy(self.policy, actor_id, change, scope, {}, journal=self._journal)
         grant = self.broker.issue_grant(actor_id, change_id, scopes, ttl_seconds)
         # The broker's own issue_grant is in-memory only (no rollback needed
         # on failure below); the durable row and its journal event commit or
@@ -214,7 +231,11 @@ class CredentialAdminService:
         return created
 
     def revoke_grant(self, grant_id: UUID) -> CredentialGrant:
-        self.broker.revoke(grant_id)
+        # Threat model finding #6 (TOCTOU): the durable revoke is the real
+        # enforcement point (CredentialBroker._get_grant prefers the durable
+        # lookup over its own in-memory cache), so it must land *before*
+        # broker.revoke -- otherwise a resolve_secret landing between the
+        # two calls still succeeds against the not-yet-revoked durable row.
         with self.grants.database.connection(immediate=True) as connection:
             revoked = self.grants.revoke(grant_id, self._clock(), connection=connection)
             if revoked is None:
@@ -226,6 +247,7 @@ class CredentialAdminService:
                     payload={"provider": revoked.provider},
                     connection=connection,
                 )
+        self.broker.revoke(grant_id)
         return revoked
 
     def get_grant(self, grant_id: UUID) -> CredentialGrant:

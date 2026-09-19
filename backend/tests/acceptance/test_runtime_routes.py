@@ -181,7 +181,7 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
                 "grantor_id": str(uuid4()),
                 "grantee_id": actor_id,
                 "change_id": change_id,
-                "scopes": ["github.pr.create", "recovery.execute"],
+                "scopes": ["github.pr.create", "recovery.execute", "github.repo.read"],
                 "ttl_seconds": 3600,
             },
         )
@@ -318,6 +318,17 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
 
 
 def test_policy_denies_operation_without_matching_delegation(tmp_path) -> None:
+    """Threat model finding #1: issuing a CredentialGrant now itself requires
+
+    a matching Delegation for every requested scope, so the actor without
+    any delegation cannot even mint a usable grant -- the vulnerability
+    ("policy must default-deny even though a credential grant exists") no
+    longer needs a separate downstream check, because the grant can never
+    come into existence in the first place. Also confirms that a grant
+    covering only an unrelated scope cannot be leveraged to mint a further
+    grant for github.pr.create.
+    """
+
     repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
     app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
     del app
@@ -339,31 +350,28 @@ def test_policy_denies_operation_without_matching_delegation(tmp_path) -> None:
         actor_id = actor.json()["id"]
 
         client.post("/api/v1/providers/github/connect", json={"token": "token"})
-        grant = client.post(
-            f"/api/v1/changes/{change_id}/providers/github/grants",
-            json={
-                "actor_id": actor_id,
-                "scopes": ["github.pr.create"],
-                "ttl_seconds": 900,
-            },
-        )
-        grant_id = grant.json()["id"]
 
-        # No delegation was ever created for this actor/Change, so policy
-        # must default-deny even though a credential grant exists.
-        response = client.post(
-            f"/api/v1/changes/{change_id}/providers/github/pulls",
-            json={
-                "actor_id": actor_id,
-                "grant_id": grant_id,
-                "base_branch": "main",
-                "head_branch": "feature",
-                "title": "Blocked PR",
-                "idempotency_key": "blocked-1",
-            },
+        # No delegation was ever created for this actor/Change, so grant
+        # issuance itself must default-deny.
+        denied_grant = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.create"], "ttl_seconds": 900},
         )
-        assert response.status_code == 403
-        assert response.json()["error"]["code"] == "POLICY_DENIED"
+        assert denied_grant.status_code == 403
+        assert denied_grant.json()["error"]["code"] == "POLICY_DENIED"
+
+        # A delegation for a *different* scope does not let the actor mint
+        # a grant for github.pr.create either.
+        client.post("/api/v1/delegations", json={
+            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["github.repo.read"], "ttl_seconds": 3600,
+        })
+        still_denied = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.create"], "ttl_seconds": 900},
+        )
+        assert still_denied.status_code == 403
+        assert still_denied.json()["error"]["code"] == "POLICY_DENIED"
 
 
 def test_grant_bound_to_different_change_is_rejected(tmp_path) -> None:
@@ -399,6 +407,19 @@ def test_grant_bound_to_different_change_is_rejected(tmp_path) -> None:
                 "grantor_id": str(uuid4()),
                 "grantee_id": actor_id,
                 "change_id": change_b,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 3600,
+            },
+        )
+        # A delegation on Change A too, purely so the grant *can* be minted
+        # for Change A (threat model finding #1's new check) -- the actual
+        # cross-change binding check below is unaffected by this.
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_a,
                 "scopes": ["github.pr.create"],
                 "ttl_seconds": 3600,
             },
@@ -606,6 +627,10 @@ def test_credential_grants_are_usable_and_revocable_across_a_real_app_restart(tm
         actor_id = client1.post(
             "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
         ).json()["id"]
+        client1.post("/api/v1/delegations", json={
+            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["github.pr.create"], "ttl_seconds": 3600,
+        })
         client1.post("/api/v1/providers/github/connect", json={"token": "gh-secret-token"})
         grant_id = client1.post(
             f"/api/v1/changes/{change_id}/providers/github/grants",

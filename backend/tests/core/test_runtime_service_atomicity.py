@@ -19,7 +19,12 @@ import pytest
 from backend.app.contracts.models import (
     Actor,
     ActorKind,
+    ChangeContract,
+    ChangeView,
     DelegationCreateRequest,
+    PolicyDecision,
+    ReviewState,
+    RiskLevel,
 )
 from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.database import Database
@@ -39,6 +44,35 @@ class _ExplodingJournal:
 
     def append(self, *args, **kwargs):
         raise RuntimeError("journal backend unavailable")
+
+
+class _AllowAllPolicy:
+    """These tests exercise journal-failure atomicity, not authorization --
+
+    a permissive policy keeps issue_grant/revoke_grant's own authority
+    check (threat model finding #1) out of the way here.
+    """
+
+    def evaluate(self, actor_id, change, operation, parameters):
+        del actor_id, change, operation, parameters
+        return PolicyDecision(
+            allowed=True, reason_code="ALLOWED", explanation="allowed for the test",
+            risk_level=RiskLevel.LOW,
+        )
+
+
+class _FakeChangeService:
+    def __init__(self, change_id) -> None:
+        now = datetime.now(UTC)
+        self._view = ChangeView(
+            id=change_id, title="T", intent="I", repository_path=REPO_PATH,
+            created_at=now, updated_at=now, review_state=ReviewState.NO_CHANGES,
+            contract=ChangeContract(),
+        )
+
+    def get(self, change_id):
+        del change_id
+        return self._view
 
 
 def _database(tmp_path) -> Database:
@@ -123,7 +157,10 @@ def test_a_journal_failure_rolls_back_credential_grant_issuance(tmp_path) -> Non
               created_at=now, updated_at=now)
     )
     broker = CredentialBroker(InMemoryCredentialStore())
-    service = CredentialAdminService(broker, actors, grants, journal=_ExplodingJournal())
+    service = CredentialAdminService(
+        broker, actors, grants, policy=_AllowAllPolicy(),
+        change_service=_FakeChangeService(change_id), journal=_ExplodingJournal(),
+    )
 
     with pytest.raises(RuntimeError, match="journal backend unavailable"):
         service.issue_grant(actor.id, change_id, ["github.pr.create"], 3600)
@@ -147,10 +184,16 @@ def test_a_journal_failure_rolls_back_credential_grant_revocation(tmp_path) -> N
               created_at=now, updated_at=now)
     )
     broker = CredentialBroker(InMemoryCredentialStore(), grant_lookup=grants.get)
-    working_service = CredentialAdminService(broker, actors, grants)
+    fake_change_service = _FakeChangeService(change_id)
+    working_service = CredentialAdminService(
+        broker, actors, grants, policy=_AllowAllPolicy(), change_service=fake_change_service,
+    )
     grant = working_service.issue_grant(actor.id, change_id, ["github.pr.create"], 3600)
 
-    failing_service = CredentialAdminService(broker, actors, grants, journal=_ExplodingJournal())
+    failing_service = CredentialAdminService(
+        broker, actors, grants, policy=_AllowAllPolicy(),
+        change_service=fake_change_service, journal=_ExplodingJournal(),
+    )
     with pytest.raises(RuntimeError, match="journal backend unavailable"):
         failing_service.revoke_grant(grant.id)
 

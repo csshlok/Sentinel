@@ -90,7 +90,8 @@ def test_full_ac_flow_produces_a_correctly_chained_and_ordered_journal(tmp_path)
         delegation = client.post(
             "/api/v1/delegations",
             json={"grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
-                  "scopes": ["github.pr.create", "recovery.execute"], "ttl_seconds": 3600},
+                  "scopes": ["github.pr.create", "recovery.execute", "github.repo.read"],
+                  "ttl_seconds": 3600},
         )
         assert delegation.status_code == 201
 
@@ -179,6 +180,15 @@ def test_full_ac_flow_produces_a_correctly_chained_and_ordered_journal(tmp_path)
 
 
 def test_policy_denial_is_journaled(tmp_path) -> None:
+    """Threat model finding #1: grant issuance itself is now policy-gated,
+
+    so an actor with no delegation is denied at that step -- and that
+    denial is journaled exactly like every other policy.decision.denied
+    event, closing the vulnerability one step earlier than before (a
+    denied create_pull_request call downstream is no longer reachable
+    without a delegation, since a grant can't exist without one either).
+    """
+
     repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
     app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
 
@@ -192,15 +202,10 @@ def test_policy_denial_is_journaled(tmp_path) -> None:
             "/api/v1/actors", json={"kind": "AGENT", "display_name": "Unauthorized"}
         ).json()["id"]
         client.post("/api/v1/providers/github/connect", json={"token": "token"})
-        grant_id = client.post(
-            f"/api/v1/changes/{change_id}/providers/github/grants",
-            json={"actor_id": actor_id, "scopes": ["github.pr.create"], "ttl_seconds": 900},
-        ).json()["id"]
 
         response = client.post(
-            f"/api/v1/changes/{change_id}/providers/github/pulls",
-            json={"actor_id": actor_id, "grant_id": grant_id, "base_branch": "main",
-                  "head_branch": "feature", "title": "Blocked PR", "idempotency_key": "b-1"},
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.create"], "ttl_seconds": 900},
         )
         assert response.status_code == 403
 
