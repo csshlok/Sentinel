@@ -257,6 +257,17 @@ class ToolRegistryService:
 
     def check_drift(self, tool_id: UUID, *, change_id: UUID | None = None) -> DriftReport:
         manifest = self.get(tool_id)
+        if manifest.trust_state is not ToolTrustState.APPROVED:
+            # B.5: drift only invalidates "an existing APPROVED decision".
+            # Querying trust_state history for the latest non-invalidated
+            # APPROVE row without checking the *current* state would let a
+            # later explicit DENY be silently overridden back to PROVISIONAL
+            # by a stale approval that a human has since revoked in effect --
+            # a denial is not itself something drift ever loosens.
+            return DriftReport(
+                tool_id=tool_id, drifted=False, changed_fields=[],
+                prior_trust_state=manifest.trust_state, new_trust_state=manifest.trust_state,
+            )
         with self.database.connection(immediate=True) as connection:
             approved = connection.execute(
                 """

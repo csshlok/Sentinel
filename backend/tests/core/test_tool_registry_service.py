@@ -190,6 +190,38 @@ def test_drift_check_without_any_approval_is_never_drifted(tmp_path) -> None:
     assert report.drifted is False
 
 
+def test_drift_never_overrides_a_later_explicit_denial(tmp_path) -> None:
+    """Reproduces the audit finding: approve -> deny -> digest change ->
+
+    check_drift must not resurrect the stale, now-superseded APPROVE decision
+    and flip a denied tool back to PROVISIONAL. Denial is not itself
+    something drift loosens -- a human explicitly denying a tool is a
+    stronger, later signal than the earlier approval drift would otherwise
+    react to.
+    """
+
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    registry = ToolRegistryService(database)
+    exe = _executable(tmp_path, content=b"original-bytes")
+    manifest = registry.resolve_or_register(exe, source="launcher_executable")
+
+    _approve(registry, manifest.id, change_id)
+    registry.decide_trust(manifest.id, uuid4(), "DENY", "exact_version", "revoked", change_id)
+    assert registry.get(manifest.id).trust_state is ToolTrustState.DENIED
+
+    with open(exe, "wb") as handle:
+        handle.write(b"swapped-bytes")
+    registry.resolve_or_register(exe, source="launcher_executable")
+
+    report = registry.check_drift(manifest.id, change_id=change_id)
+    assert report.drifted is False
+    assert report.prior_trust_state is ToolTrustState.DENIED
+    assert report.new_trust_state is ToolTrustState.DENIED
+    assert registry.get(manifest.id).trust_state is ToolTrustState.DENIED
+
+
 # -- exhaustive trust-state decision table --------------------------------
 
 
