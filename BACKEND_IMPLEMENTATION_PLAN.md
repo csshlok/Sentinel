@@ -1,8 +1,8 @@
-# Change Assurance Runtime - Three-Person Implementation Plan
+# Change Assurance Runtime - Backend Implementation and Verification Plan
 
 ## 1. Authority and outcome
 
-This plan implements `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. Only these four subsystems are removed:
+This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. UI implementation is deferred to a later phase; it is not assigned or required for current backend acceptance. Only these four subsystems are removed from the product architecture:
 
 1. Event/effect journal.
 2. Process supervisor.
@@ -42,15 +42,16 @@ These cuts also mean:
 - GitHub pull-request and CI outcome tracking.
 - Constrained Git/provider recovery with dry-run, approval, and post-action verification.
 - A Change Passport containing intent, authority, evidence, assurance, outcomes, limitations, and recovery status.
-- A real web UI and CLI backed by the same versioned API.
+- A CLI backed by the versioned API.
+- A stable API suitable for a later UI phase; no frontend work occurs in this plan.
 
 ### 3.1 Proposal coverage matrix
 
 | Proposal area | Decision | Owner | Implementation interpretation |
 | --- | --- | --- | --- |
 | Change object, contract, lifecycle | Keep | `[SD]` | Durable root, guarded state, freshness and idempotency |
-| Actor/agent identity and delegation | Keep | `[SD]` | Scoped, expiring, revocable authority |
-| Credential broker | Keep | `[SD]` | OS-backed secrets and brokered GitHub operations |
+| Actor/agent identity and delegation | Keep | `[AC]` | Scoped, expiring, revocable authority |
+| Credential broker | Keep | `[AC]` | OS-backed secrets and brokered GitHub operations |
 | Process supervisor | Cut | None | Replaced only by a top-level launcher; no process tree |
 | Filesystem tracker | Cut | None | Git checkpoints remain, without filesystem attribution or snapshots |
 | Event/effect journal | Cut | None | Ordinary entity/result persistence remains, without a causal stream |
@@ -58,16 +59,17 @@ These cuts also mean:
 | Dependency tracking | Keep | `[KB]` | Manifest/lockfile comparison without causal attribution |
 | Tool registry/supply-chain trust | Cut | None | No tool inventory, signatures, or trust decisions |
 | Assurance engine | Keep | `[KB]` | Discovery, selection, bounded checks, and evidence coverage |
-| Recovery engine | Keep with reduced boundary | `[SD]` | Git commit and provider compensation only |
+| Recovery engine | Keep with reduced boundary | `[AC]` | Git commit and provider compensation only |
 | Replay engine | Remove as dependency | None | Cannot be implemented without the event journal/process/filesystem evidence |
 | Git/PR/CI continuity | Keep | `[KB]` + `[AC]` | Git evidence by `[KB]`; provider outcomes by `[AC]` |
-| Change Passport | Keep | `[SD]` | Aggregated retained evidence plus limitations |
-| UI and CLI | Keep | `[AC]` | Complete real-data workflow and unsupported states |
+| Change Passport | Keep | `[AC]` | Aggregated retained evidence plus limitations |
+| CLI | Keep | `[AC]` | Complete backend workflow and unsupported states through the local API |
+| Web UI | Deferred | None in this phase | Implement only after backend contracts and acceptance are complete |
 
 ## 4. Architecture
 
 ```text
-Web UI / CLI
+CLI / API clients (web UI deferred)
       |
       v
 Local authenticated API
@@ -93,8 +95,7 @@ No component is renamed to conceal a removed subsystem. `ExecutionSummary` is on
 ## 5. Technology baseline
 
 - Python 3.12+, FastAPI, Pydantic v2, SQLite, and explicit schema migrations.
-- React, TypeScript, and Vite for the web UI.
-- A typed API client pinned to the OpenAPI contract.
+- OpenAPI is frozen and validated so a later React/TypeScript UI can generate a typed client.
 - Typer for the local CLI.
 - Subprocess argument arrays, `shell=False`, bounded output, and bounded runtime.
 - Windows Credential Manager behind a narrow credential-store port; tests use an in-memory fake.
@@ -165,33 +166,32 @@ Transitions use optimistic concurrency and idempotency. A new Git checkpoint inv
 
 Every mutation accepts an idempotency key. Errors retain the safe `{ "error": { "code", "message", "details" } }` envelope. Secrets, raw environment values, and credential locations never appear in responses.
 
-## 9. Person 1 - `[SD]` platform, authority, and recovery
+## 9. Person 1 - `[SD]` verifier and integration lead
 
-Exclusive paths: `backend/app/contracts/`, `core/`, `identity/`, `policy/`, `credentials/`, `recovery/`, `passport/`, `backend/app/main.py`, `backend/migrations/`, and matching unit-test directories.
+Exclusive paths: `backend/app/contracts/`, `backend/app/core/`, `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, and project context/plan documents.
 
-1. **P1.1 Migration and compatibility foundation**
-   - Ordered migrations and schema-version tracking.
-   - Preserve current data/API behavior during migration.
-   - Repository/unit-of-work boundaries and optimistic concurrency.
-2. **P1.2 Contracts and state machine**
-   - Freeze entities, ports, requests, responses, and errors.
-   - Implement guarded transitions, freshness, capabilities, and idempotency.
-3. **P1.3 Local API identity**
-   - Loopback by default, per-install/session bearer credential, and origin/CSRF defenses.
-4. **P1.4 Actors, delegation, policy, and risk**
-   - Scoped, expiring, revocable delegation.
-   - Path, operation, provider, and risk policy with stable denial reasons.
-5. **P1.5 GitHub credential broker**
-   - Durable provider credentials only in Windows Credential Manager.
-   - Short-lived internal capability grants bound to actor, Change, scopes, and expiry.
-   - Proxy allowed GitHub calls and redact every secret boundary.
-6. **P1.6 Recovery engine**
-   - Dry-run and approved revert of commits on a dedicated Change branch.
-   - Test in a temporary worktree, report conflicts, create a revert commit, verify new SHA.
-   - Provider compensation for Change-created draft PRs/branches when policy permits.
-   - Explicitly mark local uncommitted files, environment changes, and unknown effects unsupported.
-7. **P1.7 Passport and composition**
-   - Build the Passport from all ports and own application wiring, release migrations, and capability reporting.
+`[SD]` does not take feature work from `[KB]` or `[AC]`. `[SD]` defines shared contracts, reviews every handoff, writes independent acceptance/adversarial tests, and integrates only code that passes review. A defect is returned to its owner instead of silently repaired in the owner's path.
+
+1. **P1.1 Contract, lifecycle, and migration baseline**
+   - Freeze entities, ports, API shapes, lifecycle guards, freshness, capabilities, idempotency, and safe errors.
+   - Add ordered migrations while preserving current data/API behavior.
+   - Maintain repository/unit-of-work boundaries and optimistic concurrency in the shared core.
+2. **P1.2 Independent verification harness**
+   - Build acceptance fixtures, populated upgrade databases, disposable repositories, provider fakes, secret-leak scans, and full-system smoke commands.
+   - Verify both behavior and explicit absence of removed capabilities.
+3. **P1.3 `[KB]` review stream**
+   - Review Git, launcher, environment, dependency, and assurance changes for contract compliance, edge cases, safety, and evidence accuracy.
+   - Add black-box/adversarial acceptance tests without editing `[KB]` modules.
+   - Return findings with severity, reproduction, expected behavior, and required regression test.
+4. **P1.4 `[AC]` review stream**
+   - Review identity, policy, broker, provider, outcomes, recovery, Passport, and CLI code.
+   - Test authorization, expiry/revocation, idempotency, secret handling, conflict safety, partial failure, and unsupported-state accuracy.
+5. **P1.5 Integration**
+   - Wire accepted ports into `main.py`, apply migrations, update root dependencies/configuration, freeze OpenAPI, and resolve only composition-level conflicts.
+   - Never weaken a contract or test merely to make integration pass.
+6. **P1.6 Release verification**
+   - Run clean-clone, upgrade, restart, end-to-end backend, security-boundary, and failure-injection suites.
+   - Record an evidence-backed accept/reject decision for every work item and the release candidate.
 
 ## 10. Person 2 - `[KB]` evidence, execution, and assurance
 
@@ -219,80 +219,83 @@ Exclusive paths: `backend/app/git/`, `execution/`, `environment/`, `dependencies
    - Execute bounded checks, store structured results, invalidate stale results, expose coverage gaps.
 6. **P2.6 Deviation and coverage analysis**
    - Compare paths, dependencies, and environment drift with the contract.
-   - Produce deterministic findings consumed by lifecycle and UI.
+   - Produce deterministic findings consumed by lifecycle, API, CLI, and the later UI.
 
-## 11. Person 3 - `[AC]` experience, outcomes, and quality
+## 11. Person 3 - `[AC]` authority, outcomes, recovery, and CLI
 
-Exclusive paths: `frontend/`, `backend/app/providers/`, `outcomes/`, `cli/`, `backend/tests/integration/`, `backend/tests/e2e/`, and `scripts/`.
+Exclusive paths: `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, and matching owner unit/contract tests.
 
-1. **P3.1 Frontend foundation**
-   - React/TypeScript app, typed client, routing, auth bootstrap, error boundary, accessible design system.
-   - Loading, empty, stale, unsupported, denied, failure, and success states.
-2. **P3.2 Onboarding and contract UX**
-   - Repository, actor, intent, paths, outcomes, required checks, and authority review.
-3. **P3.3 Active Change workspace**
-   - Lifecycle, run summary, Git checkpoint, deviations, environment drift, dependencies, assurance, gaps.
-   - No timeline and no process/file attribution language.
+1. **P3.1 Local API identity and actor model**
+   - Implement loopback/session authentication plus human, agent, and service identities.
+   - Implement scoped, expiring, revocable delegations bound to repository and Change.
+2. **P3.2 Policy and risk**
+   - Enforce path, operation, provider, lifecycle, and risk policy with stable denial reasons.
+   - Require explicit authority context for every privileged mutation.
+3. **P3.3 Credential broker**
+   - Store durable provider credentials only in Windows Credential Manager.
+   - Issue short-lived internal grants bound to actor, Change, scopes, and expiry.
+   - Proxy allowed calls and prevent secrets entering logs, SQLite, responses, or subprocess environments.
 4. **P3.4 GitHub and outcomes**
-   - GitHub operations only through Person 1's broker/port.
-   - PR and required CI state tied to commit SHA.
-   - Artifact/deployment only when real adapters exist; otherwise unsupported.
-5. **P3.5 Recovery and Passport UX**
-   - Dry-run actions, conflicts, unsupported effects, authority, confirmation, result, export.
-6. **P3.6 CLI**
-   - Equivalent create/status/checkpoint/assure/outcome/recovery/passport flows through the API; no policy bypass.
-7. **P3.7 Integration and E2E QA**
-   - Temporary repositories, fake GitHub contract server, browser tests, accessibility, failure injection, release smoke tests.
+   - Implement GitHub operations behind broker/policy ports.
+   - Record PR and required CI state tied to exact commit SHA.
+   - Expose artifact/deployment only when real adapters exist; otherwise mark unsupported.
+5. **P3.5 Recovery engine**
+   - Preview and execute approved revert commits on dedicated Change branches.
+   - Detect conflicts in a temporary worktree before target mutation.
+   - Implement authorized provider compensation for Change-created objects.
+   - Mark uncommitted files, environment changes, and unknown effects unsupported.
+6. **P3.6 Change Passport**
+   - Aggregate intent, actors, authority, evidence references, assurance, outcomes, limitations, and recovery status under the frozen Passport contract.
+7. **P3.7 CLI**
+   - Implement create/status/checkpoint/assure/outcome/recovery/passport flows through the API without bypassing policy.
 
 ## 12. Parallel execution and intersection gates
 
 ### Gate 0 - Scope and contracts
 
-Owner `[SD]`; reviewers `[KB]` and `[AC]`. Freeze cuts, capability matrix, ports, IDs, errors, and OpenAPI names. No consumer implementation begins until all three acknowledge the handoff.
+Owner `[SD]`; reviewers `[KB]` and `[AC]`. Freeze cuts, capability matrix, ports, IDs, errors, review rubric, and OpenAPI names. No consumer implementation begins until all three acknowledge the handoff.
 
 Exit: contract tests compile, forbidden entities/endpoints are absent, and current tests pass.
 
 ### Gate 1 - Independent foundations
 
-- `[SD]`: migrations, lifecycle, local auth, identity, policy.
+- `[SD]`: contracts, migrations, lifecycle core, and independent verification harness.
 - `[KB]`: Git checkpoints, launcher, environment/dependencies, assurance discovery.
-- `[AC]`: frontend shell with contract fixtures, provider fake, E2E harness.
+- `[AC]`: identity, delegation, policy, credential store/broker, provider fakes.
 
 No shared source edits. Feedback is a contract-change request to `[SD]`.
 
 Exit: each module passes unit/contract tests and has a formal handoff.
 
-### Gate 2 - Evidence composition
+### Gate 2 - Independent code review
 
-Single integration window owned by `[SD]`: `[KB]` hands off ports, `[SD]` wires lifecycle/freshness/risk/Passport, then `[AC]` updates the typed client after OpenAPI refreezes.
+`[KB]` and `[AC]` submit separate handoffs. `[SD]` reviews diffs, runs owner tests, adds black-box/adversarial acceptance tests, and returns findings to the owner. Owners correct their own modules and resubmit. No rejected code is integrated.
 
-Exit: create -> activate -> checkpoint -> environment/dependencies -> assurance -> review-ready passes through the API.
+Exit: both streams have an `[SD]` acceptance record with no unresolved blocking or high-severity findings.
 
-### Gate 3 - Authority and provider integration
+### Gate 3 - Backend composition
 
-- `[SD]` provides broker/policy ports and an in-memory provider double.
-- `[AC]` implements GitHub operations only through those ports.
-- `[KB]` supplies evidence/risk inputs and never handles secrets.
+In a declared lock, `[SD]` wires accepted `[KB]` and `[AC]` ports into lifecycle, freshness, risk, Passport, migrations, and the API. `[KB]` and `[AC]` stop edits to integration targets and fix only defects returned to their paths.
 
-Exit: scoped operations succeed; expired, revoked, wrong-Change, and over-scoped grants fail; credentials never reach agent environment, logs, SQLite, or responses.
+Exit: create -> authorize -> activate -> checkpoint -> environment/dependencies -> assurance -> review-ready passes through the real API.
 
-### Gate 4 - UI vertical slices
+### Gate 4 - Authority and provider verification
 
-`[AC]` integrates frozen APIs. Backend defects return to the owning tag; `[AC]` does not patch backend-owned files.
+`[AC]` completes broker/provider/outcome integration. `[KB]` supplies evidence/risk inputs but never handles secrets. `[SD]` independently probes cross-Change access, over-scoping, expiry, revocation, idempotency, redaction, and provider partial failures.
 
-Exit: browser tests cover onboarding, evidence, assurance, provider outcomes, denied/unsupported states, and Passport export with real responses.
+Exit: scoped operations succeed; invalid grants fail; credentials never reach agent environment, logs, SQLite, or responses.
 
 ### Gate 5 - Recovery integration
 
-- `[SD]`: recovery plan/execution and temporary-worktree safety.
+- `[AC]`: recovery plan/execution and temporary-worktree safety.
 - `[KB]`: pre/post Git checkpoints and assurance verification.
-- `[AC]`: confirmation UX, provider compensation adapter, E2E scenarios.
+- `[SD]`: adversarial review, integration wiring, and acceptance tests.
 
 Exit: committed Change-branch recovery creates a verified revert; conflicts cause no target mutation; unsupported effects are visible.
 
 ### Gate 6 - Release candidate
 
-`[SD]` freezes integration. `[AC]` runs the full release matrix; owners fix only their modules. Context and acceptance evidence are updated after results are known.
+`[SD]` freezes integration and runs the full backend release matrix. Owners fix only their modules and resubmit for verification. Context and acceptance evidence are updated after results are known.
 
 Exit: all section 17 criteria pass from a clean clone and an upgraded existing database.
 
@@ -301,8 +304,7 @@ Exit: all section 17 criteria pass from a clean clone and an upgraded existing d
 Person 1 owns signatures; concrete owners are:
 
 - `GitStatePort`, `AgentLauncherPort`, `EnvironmentPort`, `DependencyPort`, `AssurancePort` -> `[KB]`.
-- `CredentialStorePort`, `CredentialBrokerPort`, `PolicyPort`, `RecoveryPort`, `PassportPort` -> `[SD]`.
-- `ProviderPort`, `OutcomePort` -> `[AC]`.
+- `CredentialStorePort`, `CredentialBrokerPort`, `PolicyPort`, `RecoveryPort`, `PassportPort`, `ProviderPort`, `OutcomePort` -> `[AC]`.
 
 Ports exchange immutable Pydantic models, not dictionaries. Side effects require authority context and an idempotency key. Changes require owner review and a versioned handoff.
 
@@ -348,7 +350,8 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 - GitHub adapter contract tests against a local fake, including rate limits and partial failure.
 - Disposable-repository recovery tests for isolation, approval, conflict safety, idempotency, and verification.
 - API tests for all envelopes and forbidden endpoint absence.
-- Browser E2E, accessibility, keyboard, responsive, restart-persistence, clean-clone, and upgrade smoke tests.
+- CLI/API end-to-end, restart-persistence, clean-clone, and upgrade smoke tests.
+- UI/browser/accessibility testing is deferred with UI implementation.
 
 ## 17. Definition of done
 
@@ -360,9 +363,10 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 6. PR and CI results are tied to the correct commit SHA.
 7. The Passport exports real intent, actors, authority, checkpoints, deviations, assurance, outcomes, limitations, and recovery status.
 8. Supported recovery requires preview/approval, is conflict-safe, and is verified.
-9. UI and CLI show real missing, stale, unsupported, denied, failed, and partial states.
+9. API and CLI show real missing, stale, unsupported, denied, failed, and partial states.
 10. Event journal, process supervisor, filesystem tracker, tool registry, and replay are absent from code, storage, API, and claims.
-11. Existing data upgrades successfully and the complete release matrix passes.
+11. Existing data upgrades successfully and the complete backend release matrix passes.
+12. UI implementation remains deferred and does not block backend acceptance.
 
 ## 18. Handoff format
 

@@ -20,11 +20,13 @@ The PDF proposal is product authority; the context documents record the approved
 
 | Person | Tag | Role | Exclusive paths |
 | --- | --- | --- | --- |
-| Person 1 | `[SD]` | Platform, contracts, lifecycle, identity, policy, credential broker, recovery, Passport, integration | `backend/app/contracts/`, `core/`, `identity/`, `policy/`, `credentials/`, `recovery/`, `passport/`, `backend/app/main.py`, `backend/migrations/`, matching unit tests |
+| Person 1 | `[SD]` | Independent verification, shared contracts/core, migrations, integration, release acceptance | `backend/app/contracts/`, `backend/app/core/`, `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, context/plan documents |
 | Person 2 | `[KB]` | Git evidence, agent launcher, environment/dependency tracking, assurance | `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, matching unit tests |
-| Person 3 | `[AC]` | Frontend, GitHub/provider outcomes, CLI, integration/E2E QA | `frontend/`, `backend/app/providers/`, `outcomes/`, `cli/`, `backend/tests/integration/`, `backend/tests/e2e/`, `scripts/` |
+| Person 3 | `[AC]` | Identity, policy, credential broker, GitHub/outcomes, recovery, Passport, CLI | `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, matching owner unit/contract tests |
 
 No additional implementation tag creates a fourth owner. `[INTEGRATION]` is a temporary activity led by `[SD]`, not a separate person or permission to edit arbitrary files.
+
+`frontend/` is unassigned and frozen during this backend phase. No person may create, modify, or integrate UI code until a later plan explicitly assigns it.
 
 ## Root files and documentation
 
@@ -62,7 +64,7 @@ A directory claim includes its descendants. Do not start if a claim overlaps or 
 
 ## Contracts and intersections
 
-`[SD]` owns shared contracts and signatures. `[KB]` and `[AC]` consume them and own their concrete implementations.
+`[SD]` owns shared contracts and signatures. `[KB]` and `[AC]` consume them and own their concrete implementations. `[SD]` also verifies every submitted implementation independently before integration.
 
 Required intersection order:
 
@@ -71,7 +73,7 @@ Required intersection order:
 3. Concrete work proceeds independently.
 4. Provider emits a handoff with tests and limitations.
 5. `[SD]` wires backend composition in a declared integration window.
-6. `[AC]` updates the typed client only after OpenAPI is re-frozen.
+6. `[SD]` freezes the accepted OpenAPI snapshot for the deferred UI phase.
 
 An owner must not change a consumed contract silently. Use:
 
@@ -82,6 +84,20 @@ Reason: <specific blocked behavior>
 Proposed compatible change: <shape>
 Affected consumers/tests: <list>
 ```
+
+## `[SD]` verification protocol
+
+Every `[KB]` and `[AC]` handoff receives an independent review before integration:
+
+1. Confirm the diff contains only claimed, owned paths.
+2. Trace every new behavior to a frozen requirement and contract.
+3. Run the owner's unit/contract tests from a clean state.
+4. Inspect security, privacy, error, timeout, concurrency, idempotency, and data-migration boundaries.
+5. Add black-box or adversarial tests under `backend/tests/acceptance/` where owner tests do not prove the boundary.
+6. Check that removed capabilities are neither implemented nor implied.
+7. Record `ACCEPT`, `ACCEPT WITH NON-BLOCKING FINDINGS`, or `REJECT` with evidence.
+
+A rejected handoff returns to its owner. `[SD]` must not patch the owner's feature files, lower a test expectation, or broaden a contract to hide the defect. Resubmission includes the regression test added by the owner.
 
 ## Handoffs
 
@@ -100,7 +116,7 @@ The receiver acknowledges before integration. A handoff transfers an interface, 
 
 ## Integration locks
 
-At Gates 2, 3, 5, and 6 in the plan, `[SD]` posts an integration lock naming exact paths and participating handoffs. Owners stop edits to those paths until `[SD]` posts the result. Integration commits contain only wiring, migrations, root configuration, and conflict resolution; defects return to their permanent owner.
+At Gates 2 through 6 in the plan, `[SD]` posts a review or integration lock naming exact paths and participating handoffs. Owners stop edits to those paths until `[SD]` posts the result. `[SD]` may add independent black-box tests under `backend/tests/acceptance/`, but does not repair `[KB]` or `[AC]` feature code. Integration commits contain only accepted wiring, shared core/contracts, migrations, root configuration, and composition-level conflict resolution; defects return to their permanent owner.
 
 ## Scope guardrails
 

@@ -35,7 +35,8 @@ A developer can define a bounded Change, delegate scoped authority to an agent, 
 - Assurance discovery, selection, bounded execution, contract deviation, and evidence coverage.
 - GitHub PR/CI outcomes tied to exact commit SHAs.
 - Constrained Git commit/provider recovery with preview, approval, conflict checks, and verification.
-- Versioned Change Passport, web UI, CLI, capabilities reporting, and explicit unsupported states.
+- Versioned Change Passport, CLI, capabilities reporting, and explicit unsupported states.
+- A frozen OpenAPI contract suitable for a later UI phase; frontend implementation is deferred.
 
 ## Approved cuts
 
@@ -81,7 +82,7 @@ Do not claim:
 ## Active architecture
 
 ```text
-Web UI / CLI
+CLI / API clients (web UI deferred)
   -> Authenticated local API
        -> Change lifecycle, contracts, identity, policy
        -> Credential broker and GitHub outcomes
@@ -109,11 +110,21 @@ The Agent Launcher may start or attach to a top-level invocation, but it does no
 
 ## Definition of done
 
-The product meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end using real data, migrations preserve existing data, authority and credentials are enforced, evidence freshness gates lifecycle state, the UI/CLI expose every relevant failure or unsupported condition, and recovery stays inside its documented Git/provider boundary.
+The backend phase meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end through the API and CLI using real data, migrations preserve existing data, authority and credentials are enforced, evidence freshness gates lifecycle state, every relevant failure or unsupported condition is represented, and recovery stays inside its documented Git/provider boundary.
 
-No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. Mock data is allowed only in isolated frontend tests and must not enter the release path.
+No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. UI implementation and browser acceptance are not part of this phase and cannot block backend completion.
 
 ## Current implementation status
+
+### `[SD]` - 2026-09-18 23:20:58 -04:00 - Verification and integration role established
+
+UI implementation is deferred. `[SD]` is now the independent verifier and integration owner for all backend work submitted by `[KB]` and `[AC]`.
+
+- `[SD]` owns shared contracts/core, migrations, application composition, independent acceptance tests, code-review findings, release verification, and the context documents.
+- `[KB]` owns Git evidence, the top-level Agent Launcher, environment/dependency tracking, and assurance.
+- `[AC]` owns identity/delegation, policy, credential brokering, GitHub/outcomes, constrained recovery, Change Passport, and CLI.
+
+`[SD]` reviews each handoff for scope, correctness, contracts, security, migrations, failure behavior, and missing adversarial coverage. Rejected defects return to their original owner; `[SD]` does not overwrite `[KB]` or `[AC]` feature code. Only accepted handoffs enter an `[SD]` integration window. Frontend paths are unassigned and frozen until a later phase.
 
 ### `[SD]` - 2026-09-18 23:13:27 -04:00 - Proposal scope restored and work repartitioned
 
