@@ -186,21 +186,31 @@ class AgentLauncher:
         truncated = False
         pid: int | None = None
         last_notify = [0.0]
+        raw_stdout = bytearray()
+        raw_stderr = bytearray()
 
         def on_chunk(stdout_delta: bytes, stderr_delta: bytes) -> None:
             # Part C: surface partial output while the run is still in
             # flight, through the same redaction pass the final result
             # already goes through -- this is not a new redaction path.
+            #
+            # Redaction runs on the *full accumulated raw buffer* every call,
+            # not just the new delta: a secret can be split across two reads
+            # by OS/pipe timing (e.g. a slow or flushed write mid-string),
+            # and redacting each delta in isolation would never recognize
+            # either half as the secret, leaking it into stored evidence.
+            # Raw accumulators are capped at output_limit_bytes so this
+            # cannot grow unboundedly even for a very chatty process.
             if not stdout_delta and not stderr_delta:
                 return
             with self._lock:
+                if stdout_delta and len(raw_stdout) < output_limit_bytes:
+                    raw_stdout.extend(stdout_delta[: output_limit_bytes - len(raw_stdout)])
+                if stderr_delta and len(raw_stderr) < output_limit_bytes:
+                    raw_stderr.extend(stderr_delta[: output_limit_bytes - len(raw_stderr)])
                 current = state.record
-                new_stdout = current.stdout
-                new_stderr = current.stderr
-                if stdout_delta:
-                    new_stdout = (new_stdout + self._text(stdout_delta, secrets))[:output_limit_bytes]
-                if stderr_delta:
-                    new_stderr = (new_stderr + self._text(stderr_delta, secrets))[:output_limit_bytes]
+                new_stdout = self._text(bytes(raw_stdout), secrets)
+                new_stderr = self._text(bytes(raw_stderr), secrets)
                 if new_stdout == current.stdout and new_stderr == current.stderr:
                     return
                 state.record = current.model_copy(

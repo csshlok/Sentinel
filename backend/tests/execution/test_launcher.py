@@ -181,6 +181,50 @@ def test_incremental_output_is_persisted_before_completion(tmp_path, monkeypatch
     assert len(set(growing)) > 1, "stdout should have grown across more than one in-flight update"
 
 
+def test_secret_split_across_chunk_boundary_is_still_redacted(tmp_path, monkeypatch):
+    """A secret written in two separate flushes (so it can arrive in two
+    separate incremental on_chunk deltas) must still be redacted once fully
+    accumulated, not just in the final aggregate -- redacting each delta in
+    isolation (against the complete secret string) would never recognize
+    either half alone, so the *combined* text would carry the complete,
+    unredacted secret forever after, even though every individual delta was
+    "checked". A snapshot taken before the second half has even arrived is
+    expected to show the harmless partial prefix (nothing to redact yet);
+    what matters is that once the full secret is present, it never survives
+    unredacted in what's persisted.
+    """
+
+    from backend.app.execution import launcher as module
+    monkeypatch.setattr(module, "CHUNK_NOTIFY_INTERVAL_SECONDS", 0.01)
+    secret = "sk-canary-abcdef123456"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
+    launcher = AgentLauncher(adapters={
+        "claude": AgentAdapter("claude", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
+    seen_running_stdout: list[str] = []
+    launcher.on_update = lambda run: seen_running_stdout.append(
+        run.stdout) if run.status is AgentRunStatus.RUNNING else None
+    code = (
+        "import os, sys, time\n"
+        "secret = os.environ['ANTHROPIC_API_KEY']\n"
+        "half = len(secret) // 2\n"
+        "sys.stdout.write(secret[:half]); sys.stdout.flush()\n"
+        "time.sleep(0.3)\n"
+        "sys.stdout.write(secret[half:]); sys.stdout.flush()\n"
+    )
+    run = launcher.launch(CHANGE, str(tmp_path), AgentLaunchRequest(
+        adapter="claude", executable="python", timeout_seconds=10,
+        args=["-c", code], environment_keys=["ANTHROPIC_API_KEY"]), 1000)
+    assert run.status is AgentRunStatus.PASSED
+    assert secret not in run.stdout
+    # No in-flight snapshot ever carried the *complete* secret unredacted --
+    # a partial prefix before the second half arrives is expected and fine.
+    assert all(secret not in s for s in seen_running_stdout)
+    assert any("[REDACTED]" in s for s in seen_running_stdout), (
+        "at least one in-flight snapshot should show the secret already "
+        "redacted once fully accumulated, not only the final result"
+    )
+
+
 def test_stop_unknown_and_attached(tmp_path):
     launcher = AgentLauncher()
     with pytest.raises(AppError) as info:
