@@ -130,6 +130,22 @@ This activates `DRAFT -> ACTIVE` (now authority-gated for real) and the full `RE
 
 Full commands and results, the two contract-gap resolutions, the one known inherited limitation (`CredentialBroker`'s in-process-only grant cache loses live tokens across a restart, failing safe), and exactly what remains `[AC]`'s to build (AC-6 CLI, AC-7 TUI, both now unblocked) are recorded in `OVERALL_CONTEXT.md`. `python -m pytest`: **258 passed, 1 skipped**, no regressions; 3 new `[SD]` acceptance tests in `backend/tests/acceptance/test_runtime_routes.py` exercise the full identity → GitHub PR → outcome → recovery → Passport path against a real disposable Git repository and a local HTTP transport fake (no network, no real credential). `[KB]`'s environment/dependency/assurance evidence remains genuinely absent and is reported as Passport `limitations`, not fabricated.
 
+### `[AC]` - 2026-09-19 01:30 -04:00 - AC-6 complete; AC-7 first vertical slice (both blockers resolved by `[SD]`'s `c616f37`)
+
+#### AC-6: complete
+
+`backend/app/cli/` — `ApiClient` (thin JSON client, reuses the existing generic `HttpTransport` seam, no new HTTP dependency) plus a Typer app with `change`/`actor`/`delegation`/`github`/`outcome`/`recovery`/`passport` command groups covering every Gate-3 route. Stable exit codes (0 success, 1 API error, 2 connection error), `--json` single-object output, `NO_COLOR`/`--no-color`/non-TTY handling built in from the start.
+
+Tests: `backend/tests/cli/test_client.py` and `test_main.py` (fake-transport unit tests for every error path), plus `test_smoke.py` — one real end-to-end test against a live `uvicorn` server on an ephemeral port with a real temporary Git repository, not a fake.
+
+#### AC-7: first vertical slice, not the full spec
+
+`backend/app/tui/app.py`'s `ChangeDashboard` — a working Textual app listing Changes through the same `ApiClient`, lifecycle state shown as colour-plus-symbol (never colour alone), honest empty/error/connection-failure states. Detail view, lifecycle stepper, evidence tables, assurance/outcome panels, contract/delegation forms, and the recovery preview/confirmation screen (highest priority — the backend logic for it already exists and is tested) are not yet built. Textual `Pilot` interaction testing is also not possible yet: no async pytest runner is configured in this project. Full itemized remaining work is in `backend/app/cli/AC_REMAINING_WORK.md`.
+
+#### Validation
+
+Full repository suite passed with no regressions after both additions (`python -m pytest`).
+
 ### `[AC]` - 2026-09-19 00:50:26 -04:00 - Person 3 AC-0..AC-5 complete; AC-6/AC-7 blocked
 
 #### Completed scope

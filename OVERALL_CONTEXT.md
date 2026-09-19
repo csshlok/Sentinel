@@ -204,6 +204,14 @@ Every mutating route now runs `DelegationPolicyEngine.evaluate` (the frozen `Pol
 
 **What is still not done**: AC-6 (scriptable CLI) and AC-7 (interactive terminal UI) themselves are `[AC]`'s exclusive `backend/app/cli/` and `backend/app/tui/` paths and were not touched by this record — only their two named blockers were cleared. `[KB]`'s `GitStatePort`/`AgentLauncherPort`/`EnvironmentPort`/`DependencyPort`/`AssurancePort` streams remain unimplemented, so environment passports, dependency reports, and assurance runs stay genuinely absent from the Passport's evidence and are correctly reported as `limitations`, not fabricated.
 
+### `[AC]` - 2026-09-19 01:30 -04:00 - AC-6 complete; AC-7 first vertical slice
+
+After `[SD]`'s `c616f37` added `typer`/`rich`/`textual` to `pyproject.toml` and wired Gate 3 routes for every AC domain, both prior blockers were resolved. `[AC]` implemented **AC-6 in full**: `backend/app/cli/` — `ApiClient` (thin JSON client over the existing generic `HttpTransport` seam, no new HTTP dependency) plus a Typer app covering every Gate-3 route across `change`/`actor`/`delegation`/`github`/`outcome`/`recovery`/`passport` command groups, stable exit codes (0/1/2), `--json` machine-readable output, and `NO_COLOR`/`--no-color`/non-TTY handling from the start. Tested with fake-transport unit tests for every error path plus one real end-to-end test against a live `uvicorn` server on an ephemeral port with a real temporary Git repository — not a fake.
+
+**AC-7 has a real first screen**, not the full spec: `backend/app/tui/app.py`'s `ChangeDashboard` lists Changes through the same `ApiClient`, with lifecycle state shown as a colour-plus-symbol pair (never colour alone) and honest empty/error/connection-failure states. The detail view, lifecycle stepper, evidence tables, assurance/outcome panels, contract/delegation forms, and — highest priority — the recovery preview/confirmation screen are not yet built. Textual `Pilot`-based interaction testing is also not yet possible: this project has no async pytest runner configured. All of this is itemized with exact next steps in `backend/app/cli/AC_REMAINING_WORK.md`.
+
+Verification: full repository suite passed with no regressions after both additions (exact count in `PROJECT_CONTEXT.md`).
+
 ### `[AC]` - 2026-09-19 00:50:26 -04:00 - Person 3 identity/policy/broker/outcomes/recovery/passport stream (AC-0..AC-5)
 
 `[AC]` completed AC-0 through AC-5 of the Person 3 track against the frozen contracts introduced in `[SD]`'s Phase 1 commit. Work was limited to `backend/app/{identity,policy,credentials,providers,outcomes,recovery,passport}/` and matching test paths; no shared contract, migration, or another owner's concrete module was edited.
