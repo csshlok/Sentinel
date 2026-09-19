@@ -160,6 +160,28 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-19 03:48:18 -04:00 - Gate 6 release-matrix record (backend/CLI scope)
+
+`BACKEND_IMPLEMENTATION_PLAN.md` §14 Gate 6 and §19's definition of done, checked against the evidence already produced this session plus one fresh live-server smoke check (real `uvicorn`, not `TestClient`: fresh temp database, `GET /api/v1/health` → `200 {"status":"ok"}` with no auth header; `GET /api/v1/capabilities` → `401` with no header, `200` with the real token, 19 capability entries; `GET /openapi.json` → 44 routes; server started and shut down cleanly).
+
+| §19 item | Status | Evidence |
+| --- | --- | --- |
+| 1. Contract + actor/agent + authority visible before activation | PASS | `test_change_lifecycle_transitions_use_real_evidence`: `ACTIVE` genuinely blocked without a live delegation, succeeds once one exists |
+| 2. Launch/attach without claiming descendant supervision | PASS | `AgentRun.descendant_control_available` is `Literal[False]` in the frozen contract; asserted in `test_evidence_routes.py` |
+| 3. Git/environment/dependency checkpoints real, persisted, comparable, visibly fresh/stale | PASS | `backend/tests/kb_flow/`, `test_evidence_routes.py` (`latest_checkpoint_fresh`, staleness after edit) |
+| 4. Assurance evidence-selected, bounded, gates lifecycle | PASS | `RuntimeLifecycleFacts` + `test_full_flow_through_the_api_and_lifecycle_guards` (both guarded transitions blocked then unblocked by real evidence) |
+| 5. Credentials brokered, never in agent env/app data | PASS | `resolve_secret` sole egress point; grep audit (this session's Gate 2 review) found zero `print`/`logging` of secret material across `credentials/`, `execution/`, `environment/` |
+| 6. PR/CI tied to correct commit SHA | PASS | `OutcomeTracker.mismatched_sha_discarded`; `test_grant_bound_to_different_change_is_rejected` and CI SHA-matching covered in `outcomes` unit tests |
+| 7. Passport exports real evidence, limitations, recovery status | PASS | `test_identity_provider_outcome_recovery_passport_flow`, `test_full_flow_through_the_api_and_lifecycle_guards` |
+| 8. Recovery: preview/approval, conflict-safe, verified | PASS | `GitRecoveryEngine` temp-worktree conflict check; real merge-conflict test in `recovery/`; `RECOVERED` reached end-to-end via the API |
+| 9. API/CLI/TUI show real missing/stale/unsupported/denied/failed/partial states | **PARTIAL** | API and CLI: PASS (extensive coverage, including this session's failure-injection tests). TUI: dashboard, detail, recovery, and Passport screens exist and are honest about state; lifecycle stepper, Git/dependency tables, assurance panel, and contract/delegation forms are not yet built (`[AC]`'s own admission, `OVERALL_CONTEXT.md` `[AC]` records) |
+| 10. No event journal/process supervisor/filesystem tracker/tool registry/replay in code, storage, API, or claims | PASS | `test_no_removed_subsystem_endpoints_are_exposed`; full read of every new module this session found no such capability implemented or implied |
+| 11. Existing data upgrades successfully; complete backend release matrix passes | PASS | `test_migrations.py` (legacy → current schema, data preserved); this record itself is the release-matrix pass — clean-clone-equivalent (every test builds a fresh DB), upgrade, restart (`test_state_persists_across_a_real_app_restart`, `test_full_persisted_flow_survives_a_restart`), end-to-end (`kb_flow`, `test_evidence_routes.py`, CLI smoke), security-boundary (policy denial, grant-binding, auth 401 cases), and failure-injection (provider 5xx/404/no-remote, stale-evidence, timeout) suites all pass together: **560 passed, 1 skipped**, plus the live-server check above |
+| 12. Terminal UI passes keyboard/resize/no-colour/plain-output/critical-flow interaction tests | **NOT DONE** | No Textual `Pilot` interaction tests exist yet (`[AC]`'s own admission: "this project has no async pytest runner configured"); resize/no-colour behavior not recorded |
+| 13. Browser web UI deferred, does not block backend acceptance | PASS | No browser frontend code exists; nothing in scope depends on it |
+
+**Disposition: ACCEPT for backend and CLI scope.** Items 1–8, 10, 11, and 13 pass with real, reproducible evidence. Items 9 and 12 are **partial**, entirely because `[AC]`'s terminal UI is an explicitly-acknowledged partial vertical slice (dashboard/detail/recovery/Passport screens built; lifecycle stepper, evidence tables, assurance panel, contract/delegation forms, and all Textual interaction/accessibility testing not yet built) — not a backend defect, and not something `[SD]` can complete from outside `[AC]`'s exclusive `backend/app/tui/` path. The backend, CLI, and API surface are release-ready; full product-level definition of done remains open pending the rest of AC-7.
+
 ### `[SD]` - 2026-09-19 03:40:16 -04:00 - Fixed a real `[KB]` environment bug, formal Gate 2 review of the `[KB]` stream, and API authentication (plan section 17)
 
 Three items, done together because the second and third depend on the first being resolved first.

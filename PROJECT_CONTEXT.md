@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[SD]` - 2026-09-19 03:48:18 -04:00 - Gate 6 release-matrix record: ACCEPT for backend/CLI scope
+
+Checked all 13 definition-of-done items (§19) against this session's evidence plus a fresh live-`uvicorn` smoke check (health open with no auth, capabilities 401 without a token and 200 with the real one, 44 routes). 11 of 13 items PASS with reproducible evidence (contract/authority, launcher non-supervision, real checkpoints, evidence-gated lifecycle, brokered credentials, SHA-bound outcomes, real Passport, conflict-safe verified recovery, no removed-subsystem code, clean-clone/upgrade/restart/end-to-end/security/failure-injection suites all passing together at **560 passed, 1 skipped**, deferred browser UI). Items 9 and 12 are **partial/not done** — entirely because `[AC]`'s terminal UI is an acknowledged partial slice (no lifecycle stepper, evidence tables, assurance panel, contract/delegation forms, or Textual interaction tests yet); not a backend defect. **Disposition: backend and CLI are release-ready; full product-level definition of done stays open pending the rest of AC-7.** Full item-by-item table in `OVERALL_CONTEXT.md`.
+
 ### `[SD]` - 2026-09-19 03:40:16 -04:00 - Fixed a real `[KB]` bug, formal Gate 2 review of `[KB]`, and API authentication
 
 `[KB]`'s self-reported pass counts (509/544/560) were not reproducible here: a real, environment-dependent bug in `backend/app/execution/runner.py` (`minimal_environment()` strips `APPDATA`, breaking per-user-site-installed tools like `pytest` on this machine) made every assurance check silently fail. Fixed by re-injecting `APPDATA`/`USERPROFILE` in `BoundedVerificationRunner.run`, mirroring the identical pattern `[KB]` already uses in `git/adapter.py` for `HOME`/`USERPROFILE`. With only that fix, the full suite reaches exactly **560 passed, 1 skipped**, confirming the fix and ruling out any other hidden regression.
