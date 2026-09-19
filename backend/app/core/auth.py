@@ -18,7 +18,10 @@ database, and never echoed back in any response, log, or error.
 from __future__ import annotations
 
 import hmac
+import os
 import secrets
+import stat
+import subprocess
 from pathlib import Path
 
 from fastapi import Header
@@ -26,6 +29,39 @@ from fastapi import Header
 from backend.app.core.errors import AppError
 
 TOKEN_FILENAME = "api_token"
+
+
+def _restrict_to_current_user(token_path: Path) -> None:
+    """Best-effort ACL/mode restriction (threat model finding #12).
+
+    Previously a plain `Path.write_text` with no ACL/mode set: another
+    local OS account could read the shared bearer token if the parent
+    directory wasn't already private. `os.chmod` is a real restriction on
+    POSIX (correct there even though this product targets Windows first)
+    and a harmless no-op on Windows, where the actual restriction is
+    `icacls /inheritance:r` (strip inherited ACEs) plus an explicit grant
+    limited to the current user. Never raises: a failure here (icacls
+    missing, no permission to change ACLs, a restricted sandbox) must not
+    break API startup over a defense-in-depth hardening step -- the token
+    file still lives under the per-user database directory either way.
+    """
+
+    try:
+        os.chmod(token_path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+    if os.name == "nt":
+        username = os.environ.get("USERNAME")
+        if not username:
+            return
+        try:
+            subprocess.run(
+                ["icacls", str(token_path), "/inheritance:r",
+                 "/grant:r", f"{username}:F"],
+                capture_output=True, shell=False, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def load_or_create_api_token(database_path: Path) -> str:
@@ -36,9 +72,11 @@ def load_or_create_api_token(database_path: Path) -> str:
     if token_path.exists():
         existing = token_path.read_text(encoding="utf-8").strip()
         if existing:
+            _restrict_to_current_user(token_path)
             return existing
     token = secrets.token_urlsafe(32)
     token_path.write_text(token, encoding="utf-8")
+    _restrict_to_current_user(token_path)
     return token
 
 
