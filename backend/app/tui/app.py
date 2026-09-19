@@ -205,7 +205,7 @@ class ChangeDashboard(App):
             change_id = self._change_ids[table.cursor_row]
         except IndexError:
             return
-        self.push_screen(ToolTrustScreen(change_id, self.api_url))
+        self.push_screen(ToolTrustScreen(change_id, self.api_url, actor_id=self.actor_id))
 
 
 def main() -> None:

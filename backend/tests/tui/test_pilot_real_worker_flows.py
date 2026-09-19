@@ -228,6 +228,55 @@ async def test_tools_screen_real_load_when_no_tool_observed(live_change) -> None
 
 
 @pytest.mark.anyio
+async def test_tools_screen_real_approve_decision_reaches_the_api(live_change) -> None:
+    """Drives the real interactive approve flow: select the observed tool
+
+    row, press the Approve button, and confirm the trust state shown by the
+    screen actually changed via a real round trip through
+    POST /tools/{id}/trust -- not a stubbed worker method.
+    """
+
+    from textual.widgets import Button, DataTable
+
+    from backend.app.cli.client import ApiClient
+
+    api_url, change_id, actor_id, _human_id = live_change
+    client = ApiClient(api_url)
+    client.launch_agent(
+        change_id, actor_id=actor_id, executable="python",
+        args=["-c", "print('registered')"],
+    )
+
+    app = ChangeDashboard(api_url=api_url, actor_id=actor_id)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _select_first_row(pilot)
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, ToolTrustScreen)
+
+        table = pilot.app.query_one(DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        approve = pilot.app.query_one("#approve", Button)
+        assert approve.disabled is False
+        await pilot.click("#approve")
+        await pilot.pause()
+        await pilot.pause()
+
+        tools = client.list_tools_for_change(change_id)["items"]
+        assert tools[0]["trust_state"] == "APPROVED"
+
+        result_text = str(pilot.app.query_one("#result").renderable)
+        assert "APPROVE" in result_text
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_full_tour_of_every_screen_in_one_session(live_change) -> None:
     """One session visiting every screen in sequence, the way a real user
     would, rather than one isolated screen per test — catches state that
