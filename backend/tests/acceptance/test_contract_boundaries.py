@@ -48,20 +48,19 @@ def test_delegation_requires_a_valid_time_window_and_use_count() -> None:
 
 
 def test_no_removed_subsystem_endpoints_are_exposed() -> None:
-    """The four approved cuts (`OVERALL_CONTEXT.md`) must never surface a
-    route: no event/effect journal, process supervisor, filesystem
-    tracker/snapshot, tool registry, or replay endpoint, at any path depth.
-    Guards `[SD]`'s own composition in `main.py`/`router.py` against
-    accidentally reintroducing one of these as a future route is added."""
+    """The two subsystems that remain cut (`AGENT_COORDINATION.md`: process
+    supervisor, filesystem tracker) must never surface a route, at any path
+    depth. The event/effect journal, replay, and tool registry are no longer
+    forbidden here -- see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` -- and
+    are asserted present instead, by
+    `test_journal_and_tool_registry_routes_are_present` below. Guards
+    `[SD]`'s own composition in `main.py`/`router.py` against reintroducing
+    a still-cut subsystem as a future route is added."""
 
     app = create_app()
     paths = app.openapi()["paths"].keys()
 
     forbidden_fragments = (
-        "/events",
-        "/effects",
-        "/replay",
-        "/tools",
         "/processes",
         "/snapshots",
     )
@@ -72,6 +71,26 @@ def test_no_removed_subsystem_endpoints_are_exposed() -> None:
         if fragment in path
     ]
     assert offending == []
+
+
+def test_journal_and_tool_registry_routes_are_present() -> None:
+    """Complements the forbidden-route check above: the bounded journal/
+    replay/tool-registry capabilities this reversal adds must actually be
+    wired, not silently dropped by a future refactor."""
+
+    app = create_app()
+    paths = set(app.openapi()["paths"].keys())
+
+    assert any(
+        path.startswith("/api/v1/changes/") and path.endswith("/events")
+        for path in paths
+    )
+    assert any(
+        path.startswith("/api/v1/changes/") and path.endswith("/replay")
+        for path in paths
+    )
+    assert "/api/v1/changes/{change_id}/replay/verify" in paths
+    assert "/api/v1/changes/{change_id}/replay/export" in paths
 
 
 def test_expected_route_families_are_present() -> None:

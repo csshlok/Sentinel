@@ -26,6 +26,7 @@ from backend.app.contracts.models import (
     AssurancePlan,
     AssuranceRunActionRequest,
     AssuranceRunListResponse,
+    ChainVerificationResult,
     DependencyReport,
     GitCheckpointComparison,
     GitCheckpointListResponse,
@@ -42,6 +43,8 @@ from backend.app.contracts.models import (
     Delegation,
     DelegationCreateRequest,
     DelegationListResponse,
+    JournalEventListResponse,
+    JournalEventType,
     OutcomeListResponse,
     OutcomeRefreshRequest,
     ProviderConnectionStatus,
@@ -50,6 +53,7 @@ from backend.app.contracts.models import (
     PullRequestActionRequest,
     RecoveryExecuteRequest,
     RecoveryPlan,
+    ReplayTimeline,
     RepositoryInfo,
     RepositoryPathRequest,
     VerificationRequest,
@@ -560,5 +564,53 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def get_assurance_facts(change_id: UUID) -> AssuranceFacts:
         return runtime.evidence.facts(change_id)
+
+    # -- Event/Effect Journal + Replay (trace-only; see A.7 non-goals) --------
+
+    @router.get(
+        "/changes/{change_id}/events",
+        response_model=JournalEventListResponse,
+        tags=["journal"],
+    )
+    def list_journal_events(
+        change_id: UUID,
+        event_type: JournalEventType | None = None,
+        since_seq: Annotated[int, Query(ge=1)] = 1,
+        limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
+    ) -> JournalEventListResponse:
+        service.get(change_id)  # 404s honestly for an unknown Change
+        timeline = runtime.replay.reconstruct(change_id)
+        items = [
+            e for e in timeline.events
+            if e.seq >= since_seq and (event_type is None or e.event_type is event_type)
+        ][:limit]
+        return JournalEventListResponse(items=items, count=len(items))
+
+    @router.get(
+        "/changes/{change_id}/replay",
+        response_model=ReplayTimeline,
+        tags=["journal"],
+    )
+    def get_replay(change_id: UUID) -> ReplayTimeline:
+        service.get(change_id)
+        return runtime.replay.reconstruct(change_id)
+
+    @router.get(
+        "/changes/{change_id}/replay/verify",
+        response_model=ChainVerificationResult,
+        tags=["journal"],
+    )
+    def verify_replay(change_id: UUID) -> ChainVerificationResult:
+        service.get(change_id)
+        return runtime.replay.verify_chain(change_id)
+
+    @router.get(
+        "/changes/{change_id}/replay/export",
+        response_model=ReplayTimeline,
+        tags=["journal"],
+    )
+    def export_replay(change_id: UUID) -> ReplayTimeline:
+        service.get(change_id)
+        return runtime.replay.export(change_id)
 
     return router

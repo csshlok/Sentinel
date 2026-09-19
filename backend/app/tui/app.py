@@ -17,6 +17,7 @@ from backend.app.tui.evidence_screen import EvidenceScreen
 from backend.app.tui.outcome_screen import OutcomeScreen
 from backend.app.tui.passport_screen import PassportScreen
 from backend.app.tui.recovery_screen import RecoveryScreen
+from backend.app.tui.timeline_screen import TimelineScreen
 
 _STATE_SYMBOLS = {
     "DRAFT": ("o", "white"),
@@ -48,6 +49,7 @@ class ChangeDashboard(App):
         ("o", "outcomes", "Outcomes"),
         ("d", "delegations", "Delegations"),
         ("c", "contract", "Edit contract"),
+        ("t", "timeline", "Timeline"),
         ("q", "quit", "Quit"),
     ]
 
@@ -182,6 +184,16 @@ class ChangeDashboard(App):
         except IndexError:
             return
         self.push_screen(DelegationScreen(change_id, self.api_url, grantor_id=self.grantor_id))
+
+    def action_timeline(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(TimelineScreen(change_id, self.api_url))
 
 
 def main() -> None:

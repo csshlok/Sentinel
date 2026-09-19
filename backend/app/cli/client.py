@@ -400,3 +400,21 @@ class ApiClient:
     def assurance_facts(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/assurance/facts",
                              timeout_seconds=120)
+
+    # -- events / replay (Event/Effect Journal) --
+    def list_events(
+        self, change_id: UUID, *, event_type: str | None = None, since_seq: int = 1
+    ) -> Any:
+        query = f"?since_seq={since_seq}"
+        if event_type:
+            query += f"&event_type={event_type}"
+        return self._request("GET", f"/api/v1/changes/{change_id}/events{query}")
+
+    def get_replay(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/replay")
+
+    def verify_replay(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/replay/verify")
+
+    def export_replay(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/replay/export")

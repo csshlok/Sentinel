@@ -140,6 +140,37 @@ def test_evidence_agent_assurance_commands_call_the_right_routes(monkeypatch, ar
     assert call["method"] == method and call["url"].endswith("/api/v1" + path)
 
 
+@pytest.mark.parametrize(("argv", "method", "path"), [
+    (["events", "show", CHANGE], "GET", f"/changes/{CHANGE}/events?since_seq=1"),
+    (["replay", "show", CHANGE], "GET", f"/changes/{CHANGE}/replay"),
+    (["replay", "verify", CHANGE], "GET", f"/changes/{CHANGE}/replay/verify"),
+    (["replay", "export", CHANGE], "GET", f"/changes/{CHANGE}/replay/export"),
+])
+def test_events_and_replay_commands_call_the_right_routes(monkeypatch, argv, method, path):
+    result, call = _invoke(monkeypatch, {"ok": True}, argv)
+    assert result == {"ok": True}
+    assert call["method"] == method and call["url"].endswith("/api/v1" + path)
+
+
+def test_events_show_type_filter_is_forwarded(monkeypatch):
+    result, call = _invoke(
+        monkeypatch, {"ok": True}, ["events", "show", CHANGE, "--type", "change.created"]
+    )
+    assert result == {"ok": True}
+    assert call["url"].endswith(f"/api/v1/changes/{CHANGE}/events?since_seq=1&event_type=change.created")
+
+
+def test_replay_export_writes_to_file(monkeypatch, tmp_path):
+    out_path = tmp_path / "bundle.json"
+    payload = {"change_id": CHANGE, "events": [], "effects": [], "chain_verified": True}
+    result, call = _invoke(
+        monkeypatch, payload, ["replay", "export", CHANGE, "--out", str(out_path)]
+    )
+    assert result == {"written_to": str(out_path)}
+    assert call["method"] == "GET" and call["url"].endswith(f"/api/v1/changes/{CHANGE}/replay/export")
+    assert json.loads(out_path.read_text(encoding="utf-8")) == payload
+
+
 def test_agent_launch_sends_arguments_and_waits_longer_than_the_agent(monkeypatch):
     result, call = _invoke(monkeypatch, {"status": "PASSED"}, [
         "agent", "launch", CHANGE, ACTOR, "python", "--timeout", "120", "--env", "KEEP_ME",

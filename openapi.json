@@ -900,6 +900,55 @@
         "title": "CapabilityState",
         "type": "string"
       },
+      "ChainVerificationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "checked_events": {
+            "minimum": 0.0,
+            "title": "Checked Events",
+            "type": "integer"
+          },
+          "first_break_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Break Seq"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "change_id",
+          "verified",
+          "checked_events"
+        ],
+        "title": "ChainVerificationResult",
+        "type": "object"
+      },
       "ChangeCancelRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2586,6 +2635,241 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "JournalEffect": {
+        "additionalProperties": false,
+        "description": "A structured before/produced digest transition attached to one event.\n\nNarrower than the PDF's generic filesystem/process effect model: only\ncovers resources that already carry a comparable digest today (see A.2).",
+        "properties": {
+          "before_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Digest"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "produced_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced Digest"
+          },
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "restoration_class": {
+            "$ref": "#/components/schemas/RestorationClass"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "change_id",
+          "resource_type",
+          "resource_id",
+          "restoration_class"
+        ],
+        "title": "JournalEffect",
+        "type": "object"
+      },
+      "JournalEvent": {
+        "additionalProperties": false,
+        "description": "One immutable, hash-chained row in a Change's causal timeline.\n\nThe chain is scoped per Change (`seq` is monotonic within `change_id`,\nstarting at 1): see A.3/A.7 of the plan for why, and for the explicit\nlimitation that this proves within-Change tamper evidence only, not\ncross-Change tamper evidence.",
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "event_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Event Hash",
+            "type": "string"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/JournalEventType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "prev_event_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Event Hash"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "subject_type": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Type"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "seq",
+          "event_type",
+          "occurred_at",
+          "event_hash"
+        ],
+        "title": "JournalEvent",
+        "type": "object"
+      },
+      "JournalEventListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JournalEvent"
+            },
+            "maxItems": 100000,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "JournalEventListResponse",
+        "type": "object"
+      },
+      "JournalEventType": {
+        "description": "Closed, namespaced set of mutations this backend can honestly journal.\n\nEvery member corresponds to a mutation of an entity this backend already\nmodels (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no\n`filesystem.write` or `process.spawn` member: the filesystem tracker and\nprocess supervisor stay cut, so those effects are never claimed here.",
+        "enum": [
+          "change.created",
+          "change.contract_updated",
+          "change.transitioned",
+          "change.git_summary_refreshed",
+          "change.legacy_verification_run",
+          "change.deleted",
+          "delegation.issued",
+          "delegation.revoked",
+          "credential.grant.issued",
+          "credential.grant.revoked",
+          "credential.secret.resolved",
+          "git.checkpoint.captured",
+          "agent.launched",
+          "agent.attached",
+          "agent.stop_requested",
+          "agent.completed",
+          "environment.passport.captured",
+          "dependency.report.captured",
+          "assurance.plan.created",
+          "assurance.check.completed",
+          "provider.pull_request.created",
+          "provider.pull_request.refreshed",
+          "provider.ci_refreshed",
+          "outcome.recorded",
+          "recovery.plan.created",
+          "recovery.action.completed",
+          "recovery.plan.completed",
+          "passport.built",
+          "policy.decision.denied",
+          "tool.manifest.registered",
+          "tool.trust.decided",
+          "tool.trust.invalidated"
+        ],
+        "title": "JournalEventType",
+        "type": "string"
+      },
       "Outcome": {
         "additionalProperties": false,
         "properties": {
@@ -3114,6 +3398,68 @@
         "title": "RecoveryStatus",
         "type": "string"
       },
+      "ReplayTimeline": {
+        "additionalProperties": false,
+        "description": "Deterministic reconstruction of a Change's causal timeline.\n\nTrace-only: no re-execution of any kind. See A.7 for the full list of\nexplicit non-goals, echoed in `limitations` on every response.",
+        "properties": {
+          "chain_verified": {
+            "title": "Chain Verified",
+            "type": "boolean"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/JournalEffect"
+            },
+            "maxItems": 200000,
+            "title": "Effects",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/JournalEvent"
+            },
+            "maxItems": 200000,
+            "title": "Events",
+            "type": "array"
+          },
+          "first_break_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Break Seq"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "change_id",
+          "chain_verified",
+          "generated_at"
+        ],
+        "title": "ReplayTimeline",
+        "type": "object"
+      },
       "RepositoryInfo": {
         "additionalProperties": false,
         "properties": {
@@ -3163,6 +3509,18 @@
         ],
         "title": "RepositoryPathRequest",
         "type": "object"
+      },
+      "RestorationClass": {
+        "enum": [
+          "exact",
+          "conditional",
+          "compensating",
+          "stageable",
+          "none",
+          "unknown"
+        ],
+        "title": "RestorationClass",
+        "type": "string"
       },
       "ReviewState": {
         "enum": [
@@ -4868,6 +5226,104 @@
         ]
       }
     },
+    "/api/v1/changes/{change_id}/events": {
+      "get": {
+        "operationId": "list_journal_events_api_v1_changes__change_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/JournalEventType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_seq",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Since Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEventListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Journal Events",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
     "/api/v1/changes/{change_id}/evidence": {
       "get": {
         "operationId": "get_evidence_api_v1_changes__change_id__evidence_get",
@@ -5944,6 +6400,183 @@
         "summary": "Refresh Change",
         "tags": [
           "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/replay": {
+      "get": {
+        "operationId": "get_replay_api_v1_changes__change_id__replay_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayTimeline"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Replay",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/replay/export": {
+      "get": {
+        "operationId": "export_replay_api_v1_changes__change_id__replay_export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayTimeline"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Replay",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/replay/verify": {
+      "get": {
+        "operationId": "verify_replay_api_v1_changes__change_id__replay_verify_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainVerificationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Replay",
+        "tags": [
+          "journal"
         ]
       }
     },

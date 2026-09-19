@@ -29,6 +29,7 @@ from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
+from backend.app.core.replay_service import ReplayService
 from backend.app.core.router import build_router
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
@@ -269,6 +270,7 @@ def _build_runtime_services(
         evidence=EvidenceAdminService(
             evidence_service, policy, service, IdempotencyStore(database)
         ),
+        replay=ReplayService(database),
     )
 
 

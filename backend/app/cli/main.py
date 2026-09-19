@@ -32,6 +32,8 @@ passport_app = typer.Typer(no_args_is_help=True)
 evidence_app = typer.Typer(no_args_is_help=True)
 agent_app = typer.Typer(no_args_is_help=True)
 assurance_app = typer.Typer(no_args_is_help=True)
+events_app = typer.Typer(no_args_is_help=True)
+replay_app = typer.Typer(no_args_is_help=True)
 app.add_typer(change_app, name="change")
 app.add_typer(actor_app, name="actor")
 app.add_typer(delegation_app, name="delegation")
@@ -42,6 +44,8 @@ app.add_typer(passport_app, name="passport")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(agent_app, name="agent")
 app.add_typer(assurance_app, name="assurance")
+app.add_typer(events_app, name="events")
+app.add_typer(replay_app, name="replay")
 
 EXIT_OK = 0
 EXIT_API_ERROR = 1
@@ -482,6 +486,56 @@ def assurance_evaluate(change_id: UUID, plan_id: UUID, api_url: str = ApiUrlOpti
 def assurance_facts(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Show the lifecycle facts that assurance evidence currently supports."""
     _run(lambda: ApiClient(api_url).assurance_facts(change_id), as_json=json_, no_color=no_color)
+
+
+@events_app.command("show")
+def events_show(
+    change_id: UUID,
+    type_: str = typer.Option(None, "--type", help="Filter by exact JournalEventType value."),
+    since_seq: int = typer.Option(1, "--since-seq"),
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Show the raw journal for a Change (paginated, filterable)."""
+    _run(
+        lambda: ApiClient(api_url).list_events(change_id, event_type=type_, since_seq=since_seq),
+        as_json=json_, no_color=no_color,
+    )
+
+
+@replay_app.command("show")
+def replay_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Reconstruct a Change's causal timeline (trace-only; no re-execution)."""
+    _run(lambda: ApiClient(api_url).get_replay(change_id), as_json=json_, no_color=no_color)
+
+
+@replay_app.command("verify")
+def replay_verify(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Recompute and verify the per-Change hash chain."""
+    _run(lambda: ApiClient(api_url).verify_replay(change_id), as_json=json_, no_color=no_color)
+
+
+@replay_app.command("export")
+def replay_export(
+    change_id: UUID,
+    out: str = typer.Option(None, "--out", help="Write the redacted bundle to this file instead of stdout."),
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Export a redacted, self-contained replay bundle for external debugging."""
+    if not out:
+        _run(lambda: ApiClient(api_url).export_replay(change_id), as_json=json_, no_color=no_color)
+        return
+
+    def write_to_file() -> dict:
+        bundle = ApiClient(api_url).export_replay(change_id)
+        with open(out, "w", encoding="utf-8") as handle:
+            json.dump(bundle, handle, indent=2, sort_keys=True)
+        return {"written_to": out}
+
+    _run(write_to_file, as_json=json_, no_color=no_color)
 
 
 def main() -> None:

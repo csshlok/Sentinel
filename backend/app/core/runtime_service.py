@@ -52,6 +52,7 @@ from backend.app.core.errors import (
     recovery_plan_not_found,
 )
 from backend.app.core.journal import JournalWriter
+from backend.app.core.replay_service import ReplayService
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
     OutcomeRepository,
@@ -534,3 +535,4 @@ class RuntimeServices:
     recovery: RecoveryService
     passport: PassportService
     evidence: EvidenceAdminService
+    replay: ReplayService
