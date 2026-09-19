@@ -1,91 +1,102 @@
-# Change Assurance Runtime - Project Context
+# Change Assurance - Project Context
+
+## Relationship to overall context
+
+This document defines the active two-day implementation slice. Read `OVERALL_CONTEXT.md` first for stable product principles, vocabulary, the CML working standard, and decision authority. This document may narrow that direction but must not silently contradict it.
 
 ## Goal
 
-Build a Windows-first, repository-scoped prototype that makes an AI-assisted coding change observable, reviewable, and safely recoverable. This is a two-day vertical-slice demo, not a production security runtime.
+Build a two-day, repository-scoped prototype that helps a developer review an AI-assisted code change before accepting it. The prototype is a local Git review dashboard, not an execution security runtime.
 
 ## The demo promise
 
-A developer can select a local Git repository, describe an intended change, run one command or coding-agent session through the app, and then:
+A developer can select a local Git repository, enter the intended change, let a coding agent or developer work outside the app, and then use the app to:
 
-1. See what changed in the repository and what command/test evidence was recorded.
-2. Review a chronological timeline of the run.
-3. Undo supported agent-produced file changes safely.
-4. Preserve a later human edit as a recovery conflict instead of overwriting it.
+1. See the current Git status and diff.
+2. Understand which files changed and the size/type of the change.
+3. Run one configured test or build command and see its final result.
+4. Review intent, source changes, and verification evidence in one UI.
+5. Decide whether the change is ready for human review.
 
-The intended live demo is:
+## Intended live demo
 
-1. Create a Change with an intent statement.
-2. Run a controlled command against a sample Git repository.
-3. Record command output, exit status, Git state, and file before/after content or hashes.
-4. Show the Change Review and Timeline.
-5. Manually edit one agent-touched file after the run.
-6. Choose Undo: restore safe paths and show the manually edited path as a conflict.
+1. Open a sample Git repository in the app.
+2. Create a Change with a short intent statement.
+3. Use Codex, another agent, or a manual edit outside the app to modify the repository.
+4. Refresh the Change Review to load Git status and diff.
+5. Run the configured verification command.
+6. Show the summarized files, diff, test/build result, and review readiness.
 
 ## Required scope
 
-- Local existing Git repository.
-- One generic shell-command runner; a Codex wrapper is optional if time permits.
-- Durable local Change record and event timeline.
-- Repository file create, modify, and delete detection.
-- Before/produced/current comparison for recovery.
-- Safe recovery for supported local repository file effects.
-- Test/build command result captured as evidence.
-- A UI with Change list, Change Review, Timeline, and Recovery views.
+- Select and validate an existing local Git repository.
+- Create a lightweight Change record with an ID, title/intent, repository path, and timestamps.
+- Read Git branch, HEAD, working-tree status, diff statistics, and patch content.
+- Classify changed paths using simple rules such as source, test, dependency, configuration, and documentation.
+- Run one user-configured test or build command as a one-shot subprocess.
+- Store only the final verification command, exit code, duration, and output needed by the UI.
+- Provide a UI with Change List, New Change, Change Review, Diff, and Verification Result views.
+- Clearly show missing evidence and unsupported capabilities.
 
-## Explicit non-goals
+## Cut from this prototype
 
-Do not implement or imply that this prototype provides:
+The following subsystems are intentionally removed from the two-day build:
 
-- A real credential broker, secret storage, or GitHub authorization flow.
-- OS sandboxing, Windows Job Object enforcement, or guaranteed process-tree control.
-- Full host-machine environment monitoring or recovery.
-- MCP/tool supply-chain trust, signing, or policy enforcement.
-- Recovery of package installs, external APIs, deployments, CI, or cloud effects.
-- Deterministic replay, agent-response replay, or multi-agent execution.
-- Cross-platform support.
+- Event/effect journal and causal timeline.
+- Process supervisor, descendant-process attribution, and process cleanup.
+- Filesystem observation, before-images, snapshots, file-effect attribution, and recovery/undo.
+- Tool registry, MCP inventory, tool manifests, signatures, and trust decisions.
 
-Unknown or unsupported effects must be shown as unknown/unsupported, never described as safely reversible.
+## Other non-goals
+
+- Credential brokering, secret storage, or GitHub authorization.
+- OS sandboxing or Windows Job Object enforcement.
+- Host-machine environment provenance or recovery.
+- Package-install attribution or external API effect tracking.
+- CI, pull-request, deployment, or cloud integration.
+- Replay of commands, tools, agents, or filesystem state.
+- Cross-platform behavioral guarantees.
 
 ## Product language
 
-Preferred: "repository-scoped Change Assurance prototype", "supported local file recovery", "timeline reconstructed from recorded events".
+Preferred terms:
 
-Avoid: "secure sandbox", "complete rollback", "tracks everything", "guaranteed recovery", or "production-ready runtime".
+- "Git-based Change Review prototype"
+- "working-tree changes"
+- "verification result"
+- "ready for human review"
+
+Do not claim:
+
+- Complete observation or attribution.
+- Safe execution or sandboxing.
+- Replay, rollback, or recovery.
+- Process-tree visibility.
+- Tool or credential trust enforcement.
+- Production readiness.
 
 ## Suggested architecture
-
-Keep the system deliberately small and local:
 
 ```text
 Web UI
   -> Local API/service
-       -> Change store (SQLite or simple durable local store)
-       -> Command runner
-       -> Repository snapshot/reconciliation service
-       -> Recovery planner/executor
+       -> Lightweight Change store
+       -> Read-only Git inspection adapter
+       -> One-shot verification command runner
 ```
 
-The authoritative recovery rule for each touched file is:
-
-```text
-before    = content at Change start
-produced  = content immediately after the Change
-current   = content when Undo is requested
-
-if current == produced: restore before safely
-else:                   report a conflict; do not overwrite current
-```
+The coding agent does not run inside or through this prototype. It modifies the selected repository independently; the app reviews the resulting Git working tree.
 
 ## Core data concepts
 
-- **Change**: id, title/intent, repository path, status, timestamps.
-- **Event**: ordered timeline item such as command started, command exited, test result, or file reconciled.
-- **File effect**: canonical repository-relative path, operation, before state, produced state, current state, recovery classification.
-- **Recovery plan**: safe actions, conflicts, execution result, and verification result.
-- **Evidence**: command, stdout/stderr reference, exit code, test/build result, Git baseline/after state.
+- **Change**: ID, title, intent, repository path, created time, and last refresh time.
+- **Git summary**: branch, HEAD, changed paths, status, additions/deletions, and patch.
+- **Path classification**: source, test, dependency, configuration, documentation, or other.
+- **Verification result**: command, start/end time, exit code, duration, result status, and bounded output.
+- **Review state**: ready, failed verification, or missing evidence. This is a UI summary, not a correctness guarantee.
 
 ## Definition of done
 
-The project is ready to demo only when it can complete the six-step demo promise above on a fresh sample repository, including the conflict case. A visually complete UI without verified safe-path recovery is not done.
+The project is demo-ready when a user can create a Change for a sample repository, modify that repository outside the app, refresh and inspect its Git diff, run one verification command, and view a clear review summary. No demo path or UI text may imply event journaling, process supervision, filesystem tracking, tool trust, or recovery.
 
+The final demo must use real backend responses and a real Git repository. Mock data, hardcoded health/readiness labels, and placeholder success values are allowed during isolated UI development only and must be removed before acceptance.
