@@ -162,15 +162,15 @@ def test_agent_run_persistence_attach_and_stop_after_restart(tmp_path):
     service = h.service()
     attached = service.attach_agent(h.view(), AgentAttachRequest(adapter="claude", external_run_id="e1"))
     assert attached.status is AgentRunStatus.ATTACHED
-    stopped = service.stop_agent(attached.id)
+    stopped = service.stop_agent(h.change_id, attached.id)
     assert stopped.status is AgentRunStatus.ATTACHED
     restarted = h.service()
-    note = restarted.stop_agent(attached.id)              # unknown to the new process
+    note = restarted.stop_agent(h.change_id, attached.id)  # unknown to the new process
     assert any("restart" in item for item in note.limitations) or any(
         "cannot be stopped" in item for item in note.limitations)
-    assert restarted.stop_agent(attached.id).limitations == note.limitations
+    assert restarted.stop_agent(h.change_id, attached.id).limitations == note.limitations
     with pytest.raises(AppError) as info:
-        restarted.stop_agent(uuid4())
+        restarted.stop_agent(h.change_id, uuid4())
     assert info.value.code == "AGENT_RUN_NOT_FOUND"
     assert len(restarted.agent_runs(h.change_id)) == 1
 

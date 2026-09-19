@@ -15,6 +15,7 @@ processes, which the launcher cannot observe across restarts.
 
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from pydantic import Field
@@ -25,11 +26,12 @@ from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
     AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan, AssuranceRun,
     ChangeView, ContractModel, DependencyReport, EnvironmentDrift, EnvironmentPassport,
-    GitCheckpoint, GitCheckpointComparison,
+    GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass,
 )
 from backend.app.core.errors import AppError
+from backend.app.core.journal import JournalWriter
 from backend.app.dependencies.tracker import DependencyTracker
-from backend.app.environment.tracker import EnvironmentTracker
+from backend.app.environment.tracker import EnvironmentTracker, passport_digest
 from backend.app.execution.launcher import AgentLauncher
 from backend.app.git.state import GitStateTracker
 
@@ -79,6 +81,19 @@ class AssuranceFacts(ContractModel):
 
 
 class EvidenceService:
+    """Composes the [KB] ports; also the sole emission point for the [KB]
+    portion of the Event/Effect Journal (J1).
+
+    `GitStateTracker`, `EnvironmentTracker`, `DependencyTracker`,
+    `AssuranceEngine` and `AgentLauncher` are all pure/no-database domain
+    classes (see EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md A.6): this class is
+    where their results are persisted, so it is also where the plan's own
+    text says the journal call "in practice" belongs. `journal` is optional
+    so existing callers/tests that construct `EvidenceService` without one
+    keep working unchanged; every emission call site below is a no-op when
+    it is `None`.
+    """
+
     def __init__(
         self,
         store: EvidenceStore,
@@ -89,6 +104,7 @@ class EvidenceService:
         dependencies: DependencyTracker | None = None,
         assurance: AssuranceEngine | None = None,
         patch_limit_bytes: int = DEFAULT_PATCH_LIMIT,
+        journal: JournalWriter | None = None,
     ) -> None:
         self._store = store
         self._git = git_state or GitStateTracker()
@@ -101,6 +117,7 @@ class EvidenceService:
         self._patch_limit = patch_limit_bytes
         self._assurance = assurance or AssuranceEngine(git_state=self._git,
                                                        patch_limit_bytes=patch_limit_bytes)
+        self._journal = journal
 
     # -- baseline and current evidence --------------------------------------
 
@@ -119,6 +136,8 @@ class EvidenceService:
         environment = self._environment.capture(change.id, change.repository_path)
         self._store.save_checkpoint(checkpoint)
         self._store.save_environment(environment)
+        self._journal_checkpoint_captured(checkpoint, before_digest=None)
+        self._journal_environment_captured(environment, before_digest=None)
         return EvidenceSnapshot(checkpoint=checkpoint, environment=environment,
                                 limitations=list(environment.limitations))
 
@@ -130,6 +149,8 @@ class EvidenceService:
         if baseline is None or base_env is None:
             raise AppError("BASELINE_MISSING",
                            "Capture a baseline before capturing current evidence.", status_code=409)
+        prior_checkpoint = self._store.latest_checkpoint(change.id)
+        prior_environment = self._store.latest_environment(change.id)
         checkpoint = self._git.capture(change.id, name, change.repository_path,
                                        self._revision(change), self._patch_limit)
         environment = self._environment.capture(change.id, change.repository_path)
@@ -145,6 +166,15 @@ class EvidenceService:
         self._store.save_checkpoint(checkpoint)
         self._store.save_environment(environment)
         self._store.save_dependency_report(dependencies)
+        self._journal_checkpoint_captured(
+            checkpoint,
+            before_digest=prior_checkpoint.status_digest if prior_checkpoint else None,
+        )
+        self._journal_environment_captured(
+            environment,
+            before_digest=passport_digest(prior_environment) if prior_environment else None,
+        )
+        self._journal_dependency_report_captured(dependencies)
         return EvidenceSnapshot(checkpoint=checkpoint, comparison=comparison,
                                 environment=environment, drift=drift, dependencies=dependencies,
                                 limitations=limitations)
@@ -200,20 +230,46 @@ class EvidenceService:
         self, change: ChangeView, request: AgentLaunchRequest,
         output_limit_bytes: int = DEFAULT_OUTPUT_LIMIT,
     ) -> AgentRun:
-        """Launch a top-level agent (blocking) and persist the aggregate result."""
+        """Launch a top-level agent (blocking) and persist the aggregate result.
+
+        `AgentLauncher.launch` blocks until the run is terminal, so
+        `agent.launched` and `agent.completed` are both emitted here, in that
+        order, once the call returns -- there is no separate journal-visible
+        "in flight" moment for a synchronous launch.
+        """
 
         run = self._launcher.launch(change.id, change.repository_path, request, output_limit_bytes)
         self._store.save_agent_run(run)
+        self._journal_append(
+            change.id, JournalEventType.AGENT_LAUNCHED,
+            subject_type="agent_run", subject_id=run.id,
+            payload={"adapter": request.adapter, "executable": request.executable},
+        )
+        self._journal_append(
+            change.id, JournalEventType.AGENT_COMPLETED,
+            subject_type="agent_run", subject_id=run.id,
+            payload={"status": run.status.value, "exit_code": run.exit_code,
+                     "duration_ms": run.duration_ms},
+        )
         return run
 
     def attach_agent(self, change: ChangeView, request: AgentAttachRequest) -> AgentRun:
         run = self._launcher.attach(change.id, request)
         self._store.save_agent_run(run)
+        self._journal_append(
+            change.id, JournalEventType.AGENT_ATTACHED,
+            subject_type="agent_run", subject_id=run.id,
+            payload={"adapter": request.adapter, "external_run_id": request.external_run_id},
+        )
         return run
 
-    def stop_agent(self, run_id: UUID) -> AgentRun:
+    def stop_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
         """Stop a run started by this process; persist whatever state results."""
 
+        self._journal_append(
+            change_id, JournalEventType.AGENT_STOP_REQUESTED,
+            subject_type="agent_run", subject_id=run_id, payload={},
+        )
         stored = self._store.get_agent_run(run_id)
         try:
             run = self._launcher.stop(run_id)
@@ -242,6 +298,12 @@ class EvidenceService:
             change, checkpoint, self._store.latest_environment(change.id),
             self._dependencies_for(change.id, checkpoint))
         self._store.save_plan(plan, contract_digest(change))
+        self._journal_append(
+            change.id, JournalEventType.ASSURANCE_PLAN_CREATED,
+            subject_type="assurance_plan", subject_id=plan.id,
+            payload={"checks_count": len(plan.checks),
+                     "coverage_gaps_count": len(plan.coverage_gaps)},
+        )
         return plan
 
     def run_assurance(
@@ -250,6 +312,16 @@ class EvidenceService:
         plan = self._load_plan(change, plan_id)
         runs = self._assurance.run(change, plan, change.repository_path, output_limit_bytes)
         self._store.save_runs(runs)
+        for run in runs:
+            output_digest = hashlib.sha256(
+                (run.stdout + "\x00" + run.stderr).encode("utf-8", errors="replace")
+            ).hexdigest()
+            self._journal_append(
+                change.id, JournalEventType.ASSURANCE_CHECK_COMPLETED,
+                subject_type="assurance_run", subject_id=run.id,
+                payload={"check_id": run.check_id, "status": run.status.value,
+                         "duration_ms": run.duration_ms, "output_digest": output_digest},
+            )
         return runs
 
     def evaluate(self, change: ChangeView, plan_id: UUID) -> AssuranceEvaluation:
@@ -287,6 +359,54 @@ class EvidenceService:
             reasons=[*evaluation.freshness_reasons,
                      *[f"Required check '{c}' has no passing result." for c in evaluation.missing_required],
                      *[f"Check '{c}' failed." for c in evaluation.failed]][:64])
+
+    # -- journal --------------------------------------------------------------
+
+    def _journal_append(self, change_id: UUID, event_type: JournalEventType, **kwargs) -> None:
+        if self._journal is None:
+            return
+        self._journal.append(change_id, event_type, **kwargs)
+
+    def _journal_checkpoint_captured(
+        self, checkpoint: GitCheckpoint, *, before_digest: str | None
+    ) -> None:
+        if self._journal is None:
+            return
+        event = self._journal.append(
+            checkpoint.change_id, JournalEventType.GIT_CHECKPOINT_CAPTURED,
+            subject_type="git_checkpoint", subject_id=checkpoint.id,
+            payload={"name": checkpoint.name, "head_sha": checkpoint.head_sha,
+                     "branch": checkpoint.branch},
+        )
+        self._journal.append_effect(
+            event, resource_type="git_checkpoint", resource_id=checkpoint.id,
+            restoration_class=RestorationClass.NONE,
+            before_digest=before_digest, produced_digest=checkpoint.status_digest,
+        )
+
+    def _journal_environment_captured(
+        self, environment: EnvironmentPassport, *, before_digest: str | None
+    ) -> None:
+        if self._journal is None:
+            return
+        event = self._journal.append(
+            environment.change_id, JournalEventType.ENVIRONMENT_PASSPORT_CAPTURED,
+            subject_type="environment_passport", subject_id=environment.id,
+            payload={"status": environment.status.value, "fact_count": len(environment.facts)},
+        )
+        self._journal.append_effect(
+            event, resource_type="environment_passport", resource_id=environment.id,
+            restoration_class=RestorationClass.UNKNOWN,
+            before_digest=before_digest, produced_digest=passport_digest(environment),
+        )
+
+    def _journal_dependency_report_captured(self, report: DependencyReport) -> None:
+        self._journal_append(
+            report.change_id, JournalEventType.DEPENDENCY_REPORT_CAPTURED,
+            subject_type="dependency_report", subject_id=report.id,
+            payload={"changes_count": len(report.changes),
+                     "unsupported_ecosystems_count": len(report.unsupported_ecosystems)},
+        )
 
     # -- helpers ------------------------------------------------------------
 

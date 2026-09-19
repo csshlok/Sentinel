@@ -157,7 +157,7 @@ class EvidenceAdminService:
         if all(run.id != run_id for run in self.evidence.agent_runs(change_id)):
             raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist for this Change.",
                            status_code=404)
-        return self.evidence.stop_agent(run_id)
+        return self.evidence.stop_agent(change_id, run_id)
 
     def list_agent_runs(self, change_id: UUID) -> list[AgentRun]:
         self.change_service.get(change_id)

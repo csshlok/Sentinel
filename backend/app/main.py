@@ -27,6 +27,7 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
+from backend.app.core.journal import JournalWriter
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
 from backend.app.core.router import build_router
 from backend.app.core.runtime_repositories import (
@@ -109,8 +110,9 @@ def create_app(
         resolved_settings.database_path
     )
     database = Database(resolved_settings.database_path)
+    journal = JournalWriter(database)
     repository = ChangeRepository(database)
-    evidence_service = evidence or EvidenceService(EvidenceStore(database))
+    evidence_service = evidence or EvidenceService(EvidenceStore(database), journal=journal)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
         DelegationRepository(database),
         ProviderOperationRepository(database),

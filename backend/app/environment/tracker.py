@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import platform
 import re
@@ -75,6 +76,26 @@ def _default_runner(argv: list[str], cwd: Path) -> tuple[int | None, str]:
     if result.timed_out or result.incomplete:
         return None, ""
     return result.returncode, result.stdout.decode("utf-8", errors="replace")
+
+
+def passport_digest(passport: EnvironmentPassport) -> str:
+    """Deterministic composite digest over a passport's facts.
+
+    Used only as the journal's `JournalEffect.produced_digest` for
+    `environment.passport.captured` events (A.6). Covers each fact's key,
+    status and either its plain value or its already-redacted fingerprint --
+    never a raw sensitive value, since sensitive facts never carry one.
+    """
+
+    body = {
+        "facts": sorted(
+            (fact.key, fact.status.value, fact.value, fact.fingerprint)
+            for fact in passport.facts
+        ),
+    }
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class EnvironmentTracker:
