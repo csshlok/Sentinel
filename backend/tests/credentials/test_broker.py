@@ -96,6 +96,52 @@ def test_resolve_secret_denies_revoked_grant() -> None:
     assert excinfo.value.code == "CREDENTIAL_GRANT_DENIED"
 
 
+def test_grant_lookup_survives_a_fresh_broker_with_no_in_memory_cache() -> None:
+    """Reproduces the audit finding: a grant issued through one broker
+
+    instance (simulating a pre-restart process) must still be resolvable and
+    revocable through a brand new broker instance (simulating post-restart)
+    that has never seen it in memory, as long as a durable grant_lookup is
+    configured -- exactly the composition `main.py` now wires via
+    `CredentialGrantRepository.get`.
+    """
+
+    store = InMemoryCredentialStore()
+    clock = _FakeClock(datetime.now(UTC))
+    durable: dict = {}
+
+    original = CredentialBroker(store, clock=clock, grant_lookup=durable.get)
+    original.store_provider_secret("github", CANARY_SECRET)
+    grant = original.issue_grant(uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS)
+    durable[grant.id] = grant  # simulates CredentialGrantRepository.create persisting it
+
+    restarted = CredentialBroker(store, clock=clock, grant_lookup=durable.get)
+    assert restarted.get_grant(grant.id) == grant
+    assert restarted.resolve_secret(grant.id, scope="github.pr.create") == CANARY_SECRET
+
+    # CredentialAdminService.revoke_grant persists the revocation right after
+    # calling broker.revoke(); the durable store (not the broker's own
+    # in-memory copy) is what resolve_secret must honor on a future lookup,
+    # since a grant_lookup hit always takes precedence.
+    revoked = restarted.revoke(grant.id)
+    assert revoked.revoked_at is not None
+    durable[grant.id] = revoked
+    with pytest.raises(AppError) as excinfo:
+        restarted.resolve_secret(grant.id, scope="github.pr.create")
+    assert excinfo.value.code == "CREDENTIAL_GRANT_DENIED"
+
+
+def test_grant_lookup_miss_falls_back_to_the_in_memory_cache() -> None:
+    clock = _FakeClock(datetime.now(UTC))
+    broker = CredentialBroker(
+        InMemoryCredentialStore(), clock=clock, grant_lookup=lambda _grant_id: None
+    )
+    broker.store_provider_secret("github", CANARY_SECRET)
+    grant = broker.issue_grant(uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS)
+
+    assert broker.resolve_secret(grant.id, scope="github.pr.create") == CANARY_SECRET
+
+
 def test_resolve_secret_denies_wrong_scope() -> None:
     broker, _ = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)

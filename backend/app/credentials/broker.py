@@ -42,11 +42,22 @@ class CredentialBroker:
         *,
         clock: Callable[[], datetime] = _default_clock,
         journal: JournalWriter | None = None,
+        grant_lookup: Callable[[UUID], CredentialGrant | None] | None = None,
     ) -> None:
         self.store = store
         self._clock = clock
         self._grants: dict[UUID, CredentialGrant] = {}
         self._journal = journal
+        # Grants are durably persisted by `CredentialGrantRepository`
+        # (composition-layer, `[SD]`-owned), but this broker previously
+        # consulted only its own in-process `_grants` cache -- so every
+        # grant became unreachable to `revoke`/`resolve_secret` the moment
+        # the process restarted, even though it was still visible through
+        # `GET`-style lookups backed by that repository. `grant_lookup`
+        # (typically `CredentialGrantRepository.get`) is the durable source
+        # of truth when supplied; the in-memory cache remains for callers
+        # (mainly tests) that construct this broker standalone.
+        self._grant_lookup = grant_lookup
 
     def store_provider_secret(self, provider: str, token: str) -> None:
         self.store.put(self._secret_key(provider), token)
@@ -74,8 +85,15 @@ class CredentialBroker:
         self._grants[grant.id] = grant
         return grant
 
+    def _get_grant(self, grant_id: UUID) -> CredentialGrant | None:
+        if self._grant_lookup is not None:
+            durable = self._grant_lookup(grant_id)
+            if durable is not None:
+                return durable
+        return self._grants.get(grant_id)
+
     def revoke(self, grant_id: UUID) -> CredentialGrant:
-        grant = self._grants.get(grant_id)
+        grant = self._get_grant(grant_id)
         if grant is None:
             raise grant_not_found(str(grant_id))
         if grant.revoked_at is not None:
@@ -85,10 +103,10 @@ class CredentialBroker:
         return revoked
 
     def get_grant(self, grant_id: UUID) -> CredentialGrant | None:
-        return self._grants.get(grant_id)
+        return self._get_grant(grant_id)
 
     def resolve_secret(self, grant_id: UUID, *, scope: str) -> str:
-        grant = self._grants.get(grant_id)
+        grant = self._get_grant(grant_id)
         if grant is None:
             raise grant_not_found(str(grant_id))
         now = self._clock()

@@ -240,9 +240,12 @@ def _build_runtime_services(
     delegations = DelegationRepository(database)
     identity = IdentityAdminService(actors, delegations, journal=resolved_journal)
 
-    broker = CredentialBroker(credential_store, journal=resolved_journal)
+    credential_grants = CredentialGrantRepository(database)
+    broker = CredentialBroker(
+        credential_store, journal=resolved_journal, grant_lookup=credential_grants.get
+    )
     credentials = CredentialAdminService(
-        broker, actors, CredentialGrantRepository(database), journal=resolved_journal
+        broker, actors, credential_grants, journal=resolved_journal
     )
 
     policy = DelegationPolicyEngine(delegations)

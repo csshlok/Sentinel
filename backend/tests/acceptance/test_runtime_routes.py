@@ -567,6 +567,52 @@ def test_state_persists_across_a_real_app_restart(tmp_path) -> None:
         assert refetched_plan.json()["id"] == plan_id
 
 
+def test_credential_grants_are_usable_and_revocable_across_a_real_app_restart(tmp_path) -> None:
+    """Reproduces the audit finding: CredentialBroker cached grants only in
+
+    process memory, so a grant issued before a restart became invisible to
+    the broker afterward even though it was still durably persisted --
+    resolve_secret raised CREDENTIAL_GRANT_NOT_FOUND and revoke_grant did
+    too, despite GET-style lookups still finding the grant.
+    """
+
+    db_path = tmp_path / "restart_credentials.sqlite3"
+    settings = Settings(database_path=db_path)
+    repo_path, baseline_sha, current_sha = _init_repo(tmp_path)
+
+    app1, client1 = _build_client(
+        tmp_path, repo_path, current_sha, FakeHttpTransport([]), settings=settings
+    )
+    with client1:
+        change_id = client1.post(
+            "/api/v1/changes",
+            json={
+                "title": "Grant survives a restart",
+                "intent": "Prove credential grants outlive one app instance",
+                "repository_path": repo_path,
+            },
+        ).json()["id"]
+        actor_id = client1.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
+        ).json()["id"]
+        client1.post("/api/v1/providers/github/connect", json={"token": "gh-secret-token"})
+        grant_id = client1.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.create"], "ttl_seconds": 3600},
+        ).json()["id"]
+
+    del app1, client1
+    app2, client2 = _build_client(
+        tmp_path, repo_path, current_sha, FakeHttpTransport([]), settings=settings
+    )
+    with client2:
+        revoked = client2.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants/{grant_id}/revoke"
+        )
+        assert revoked.status_code == 200, revoked.text
+        assert revoked.json()["revoked_at"] is not None
+
+
 def _init_repo_without_github_remote(tmp_path) -> str:
     repo = tmp_path / "repo-no-remote"
     repo.mkdir()
