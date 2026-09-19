@@ -41,7 +41,11 @@ binding (`r`), and honest empty/error/connection-failure states — no
 fabricated data. `backend/tests/tui/test_app.py` covers the pure
 `state_label()` formatting and app/client construction.
 
-**Not yet done**, in the order the plan lists them (section 13.3 AC-7):
+**Done since the last update:**
+
+7. **Recovery preview/confirmation** screen — `backend/app/tui/recovery_screen.py`'s `RecoveryScreen`. Pressing `v` on a selected row in `ChangeDashboard` pushes it. It previews the real `RecoveryPlan` (`format_plan()`, a pure/tested function: supported vs. blocked actions, conflicts, unsupported effects — never a fabricated "safe" summary), requires a non-empty typed approval token before "Confirm Recovery" enables (approval is never inferred), and calls the real `POST .../recovery/{plan_id}/execute` on confirm. `ChangeDashboard` now takes an `actor_id` (via `--actor-id` on `python -m backend.app.tui.app`); without one, the screen shows an explicit unsupported-state message instead of silently proceeding. Tests: `backend/tests/tui/test_recovery_screen.py` (5 tests, all on the pure `format_plan()` logic and construction).
+
+**Still not done**, in the order the plan lists them (section 13.3 AC-7):
 
 1. Change **detail** view (drill into one row: full evidence, contract, delegations).
 2. Lifecycle **stepper** widget reflecting `ChangeLifecycleState`/`LifecycleFacts`.
@@ -49,14 +53,13 @@ fabricated data. `backend/tests/tui/test_app.py` covers the pure
 4. Assurance progress/results panel.
 5. PR/CI **outcome** panel (`OutcomeListResponse`).
 6. Guided **Change Contract** and **delegation** creation forms (currently CLI-only via `delegation create`).
-7. **Recovery preview/confirmation** screen — this is the highest-value remaining piece: `GitRecoveryEngine` already returns a `RecoveryPlan` with `unsupported_effects`/`conflicts`/`actions[].supported`, which is exactly the data a confirmation screen needs; it just needs a Textual screen with an explicit approve/cancel action wired to `POST .../recovery/{plan_id}/execute`.
+7. ~~Recovery preview/confirmation screen~~ — done, see above.
 8. **Passport export** screen/keybinding (`PassportBuilder` already produces byte-stable canonical JSON).
-9. Interaction-test coverage with Textual's `Pilot`/`run_test()` — **not yet added** because this project has no async pytest runner configured (`pytest-asyncio`/`anyio` pytest mode is not in `pyproject.toml`'s test extras). Adding that is a small, safe dependency addition `[SD]` can make alongside any future `pyproject.toml` change; until then, TUI testing is limited to synchronous unit tests of pure logic and construction, not actual keyboard/rendering interaction.
+9. Interaction-test coverage with Textual's `Pilot`/`run_test()` — **still not added** because this project has no async pytest runner configured (`pytest-asyncio`/`anyio` pytest mode is not in `pyproject.toml`'s test extras). All TUI tests so far (dashboard, recovery screen) are synchronous unit tests of pure logic and construction, not actual keyboard/rendering interaction — that remains an honest, documented gap.
 10. Small-terminal/resize, `NO_COLOR`/`--no-color`, and plain non-TTY behavior for the TUI specifically (the CLI already has this; the TUI inherits Textual's own terminal-capability detection but this has not been manually verified at 80x24/120x30 per the plan's acceptance requirement).
 
 ## Recommended next step
 
-Pick up at item 7 (recovery preview/confirmation) — it is the single
-screen with the highest product value per the "killer demo" framing in
-the original proposal, and every piece of backend logic it needs
-already exists and is tested.
+Passport export (item 8) is the next highest-value, lowest-effort
+piece: `PassportBuilder` already exists and is fully tested, and the
+API route (`POST/GET .../passport`) is already wired.
