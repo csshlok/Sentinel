@@ -66,14 +66,84 @@ def test_attach_is_replay_safe_and_keys_are_scoped_per_change(tmp_path):
     assert elsewhere.status_code == 201 and elsewhere.json()["id"] != first.json()["id"]
 
 
-def test_policy_is_checked_before_a_replay_is_served(tmp_path):
+def test_a_foreign_actor_cannot_reuse_someone_elses_idempotency_key(tmp_path):
+    """A different actor's body under the same key is refused before any replay,
+
+    never served the first actor's stored result. The mismatched-body check in
+    ``IdempotencyStore.claim`` catches this before authorization would even run
+    -- the same ``IDEMPOTENCY_KEY_REUSED`` path already covered for a same
+    -actor differing request, since the body includes the requesting actor.
+    """
+
     repo = make_repo(tmp_path / "repo", FILES)
     client = build(tmp_path)
     change, agent, human = setup_change(client, repo, ["agent.launch"])
     url = f"/api/v1/changes/{change['id']}/agents/launch"
     client.post(url, json=launch_body(agent), headers={"Idempotency-Key": KEY})
     stranger = client.post(url, json=launch_body(human), headers={"Idempotency-Key": KEY})
-    assert stranger.status_code == 403        # authority is re-checked, never bypassed by a replay
+    assert stranger.status_code == 409
+    assert stranger.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert client.get(f"/api/v1/changes/{change['id']}/agents").json()["count"] == 1
+
+
+def test_authority_is_re_checked_for_every_non_replayed_request(tmp_path):
+    """An actor with no delegation is denied on a fresh key, not silently allowed
+
+    because some other request happened to be cached. This is the actual
+    security property replay safety must not weaken: authorization always
+    runs for a request that is not an exact replay of a completed one.
+    """
+
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, agent, human = setup_change(client, repo, ["agent.launch"])
+    url = f"/api/v1/changes/{change['id']}/agents/launch"
+    client.post(url, json=launch_body(agent), headers={"Idempotency-Key": KEY})
+
+    stranger = client.post(url, json=launch_body(human),
+                           headers={"Idempotency-Key": "launch-key-0002"})
+    assert stranger.status_code == 403
+    assert client.get(f"/api/v1/changes/{change['id']}/agents").json()["count"] == 1
+
+
+def test_a_replayed_request_does_not_spend_a_second_delegation_use(tmp_path):
+    """The bug this test guards: authorizing before the idempotency claim meant
+
+    every retry of an already-completed request re-evaluated policy and, once
+    delegation ``uses`` are consumed on allow, spent another use even though
+    no new action ran. A ``use_limit=1`` delegation must survive any number of
+    replays of the same request and still be usable exactly once.
+    """
+
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    created = client.post("/api/v1/changes", json={
+        "title": "add feature", "intent": "exercise replay safety",
+        "repository_path": str(repo), "contract": {"required_checks": ["pytest"]}})
+    change = created.json()
+    human = client.post("/api/v1/actors", json={"kind": "HUMAN", "display_name": "Owner"}).json()
+    agent = client.post("/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}).json()
+    delegation = client.post("/api/v1/delegations", json={
+        "grantor_id": human["id"], "grantee_id": agent["id"], "change_id": change["id"],
+        "scopes": ["agent.launch"], "ttl_seconds": 3600, "use_limit": 1}).json()
+    assert delegation["use_limit"] == 1
+
+    url = f"/api/v1/changes/{change['id']}/agents/launch"
+    first = client.post(url, json=launch_body(agent["id"]), headers={"Idempotency-Key": KEY})
+    assert first.status_code == 201, first.text
+    for _ in range(3):
+        again = client.post(url, json=launch_body(agent["id"]), headers={"Idempotency-Key": KEY})
+        assert again.status_code == 201
+        assert again.json() == first.json()
+
+    # The delegation still has its one use recorded, not four.
+    delegations = client.get(f"/api/v1/changes/{change['id']}/delegations").json()
+    assert delegations["items"][0]["uses"] == 1
+
+    # And that one use is still enough to authorize a genuinely new request.
+    second = client.post(url, json=launch_body(agent["id"], "print('second')"),
+                         headers={"Idempotency-Key": "launch-key-0003"})
+    assert second.status_code == 403
 
 
 def test_idempotency_store_claim_complete_release(tmp_path):

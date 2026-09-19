@@ -86,3 +86,38 @@ def test_delegation_lifecycle(tmp_path) -> None:
     assert repository.revoke(delegation.id, now + timedelta(minutes=10)) is None
     assert repository.revoke(uuid4(), now) is None
     assert repository.record_use(uuid4()) is None
+
+
+def test_consume_use_is_atomic_against_the_use_limit(tmp_path) -> None:
+    database = _database(tmp_path)
+    repository = DelegationRepository(database)
+    now = datetime.now(UTC)
+    change_id = uuid4()
+    _create_change_row(database, change_id)
+    delegation = Delegation(
+        id=uuid4(), grantor_id=uuid4(), grantee_id=uuid4(), change_id=change_id,
+        repository_path=REPO_PATH, scopes=["agent.launch"], issued_at=now,
+        expires_at=now + timedelta(hours=1), use_limit=1,
+    )
+    repository.create(delegation)
+
+    first = repository.consume_use(delegation.id)
+    assert first is not None and first.uses == 1
+
+    # The limit is enforced by the same UPDATE that increments, not a
+    # separate read-then-write check, so a second consume against an
+    # exhausted delegation cannot succeed even under a race.
+    second = repository.consume_use(delegation.id)
+    assert second is None
+    assert repository.get(delegation.id).uses == 1
+
+    assert repository.consume_use(uuid4()) is None
+
+    revoked_delegation = Delegation(
+        id=uuid4(), grantor_id=uuid4(), grantee_id=uuid4(), change_id=change_id,
+        repository_path=REPO_PATH, scopes=["agent.launch"], issued_at=now,
+        expires_at=now + timedelta(hours=1), use_limit=None,
+    )
+    repository.create(revoked_delegation)
+    repository.revoke(revoked_delegation.id, now + timedelta(minutes=1))
+    assert repository.consume_use(revoked_delegation.id) is None

@@ -133,6 +133,36 @@ class DelegationRepository:
                 return None
         return self.get(delegation_id)
 
+    def consume_use(self, delegation_id: UUID) -> Delegation | None:
+        """Atomically increment ``uses`` iff the delegation still has one to spend.
+
+        Guards the read-then-write race a plain ``record_use`` after a separate
+        ``evaluate_delegation`` check would allow: the limit check and the
+        increment happen in one ``UPDATE ... WHERE`` statement inside an
+        immediate transaction, so two concurrent requests against a
+        ``use_limit=1`` delegation cannot both succeed. Returns ``None`` (not
+        an exception) when the delegation is revoked or already exhausted, so
+        the caller can fall back to the next candidate delegation or a denial.
+        """
+
+        with self.database.connection(immediate=True) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE delegations
+                SET uses = uses + 1
+                WHERE id = ?
+                  AND revoked_at IS NULL
+                  AND (use_limit IS NULL OR uses < use_limit)
+                """,
+                (str(delegation_id),),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegations WHERE id = ?", (str(delegation_id),)
+            ).fetchone()
+        return self._from_row(row)
+
     @staticmethod
     def _to_values(delegation: Delegation) -> tuple[str | int | None, ...]:
         return (

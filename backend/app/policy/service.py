@@ -80,7 +80,23 @@ class DelegationPolicyEngine:
                 now=now,
             )
             if decision.allowed:
-                return self._evaluate_operation(change, operation, parameters)
+                operation_decision = self._evaluate_operation(change, operation, parameters)
+                if not operation_decision.allowed:
+                    # Authority exists, but the operation itself is denied
+                    # (forbidden path, ceiling, risk). That denial does not
+                    # depend on which delegation matched, so it is final; a
+                    # use must not be spent on a request that was refused.
+                    return operation_decision
+                consumed = self.delegations.consume_use(delegation.id)
+                if consumed is None:
+                    # Lost a race against a concurrent request, or another
+                    # request exhausted this delegation between the read
+                    # above and this atomic consume. Fall through to the
+                    # next candidate delegation rather than granting an
+                    # operation no remaining use actually authorizes.
+                    best_reason = DelegationDenialReason.EXHAUSTED
+                    continue
+                return operation_decision
             if decision.denial_reason is not None:
                 best_reason = decision.denial_reason
 

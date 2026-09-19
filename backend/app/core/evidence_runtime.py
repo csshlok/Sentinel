@@ -110,10 +110,21 @@ class EvidenceAdminService:
         return [AgentAdapterInfo.model_validate(item) for item in self.evidence.adapters(path)]
 
     def _once(self, scope: str, key: str | None, body: dict[str, object],
-              action: Callable[[], T], adapter: TypeAdapter[T]) -> T:
-        """Run ``action`` at most once per idempotency key; replays return the stored result."""
+              action: Callable[[], T], adapter: TypeAdapter[T],
+              *, authorize: Callable[[], None] | None = None) -> T:
+        """Run ``action`` at most once per idempotency key; replays return the stored result.
+
+        ``authorize`` (when given) runs only on the path that actually
+        executes ``action`` -- never on a replay short-circuited by the
+        stored result. Authorizing before the idempotency claim would spend
+        a delegation's limited ``uses`` again on every retry of an already
+        -completed request, which defeats both the use limit and the point
+        of idempotency; authorizing here keeps the claim as the single gate.
+        """
 
         if key is None or self.idempotency is None:
+            if authorize is not None:
+                authorize()
             return action()
         digest = hashlib.sha256(json.dumps(
             body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
@@ -121,6 +132,8 @@ class EvidenceAdminService:
         if stored is not None:
             return adapter.validate_json(stored)
         try:
+            if authorize is not None:
+                authorize()
             result = action()
         except BaseException:
             self.idempotency.release(scope, key)
@@ -133,23 +146,29 @@ class EvidenceAdminService:
         output_limit_bytes: int, idempotency_key: str | None = None,
     ) -> AgentRun:
         change = self.change_service.get(change_id)
-        self._authorize(actor_id, change, LAUNCH_SCOPE,
-                        {"adapter": request.adapter, "executable": request.executable})
         body = {"actor": str(actor_id), "launch": request.model_dump(mode="json"),
                 "limit": output_limit_bytes}
-        return self._once(f"agent.launch:{change_id}", idempotency_key, body,
-                          lambda: self.evidence.launch_agent(change, request, output_limit_bytes),
-                          _RUN)
+        return self._once(
+            f"agent.launch:{change_id}", idempotency_key, body,
+            lambda: self.evidence.launch_agent(change, request, output_limit_bytes),
+            _RUN,
+            authorize=lambda: self._authorize(
+                actor_id, change, LAUNCH_SCOPE,
+                {"adapter": request.adapter, "executable": request.executable}),
+        )
 
     def attach_agent(
         self, change_id: UUID, actor_id: UUID, request: AgentAttachRequest,
         idempotency_key: str | None = None,
     ) -> AgentRun:
         change = self.change_service.get(change_id)
-        self._authorize(actor_id, change, ATTACH_SCOPE, {"adapter": request.adapter})
         body = {"actor": str(actor_id), "attach": request.model_dump(mode="json")}
-        return self._once(f"agent.attach:{change_id}", idempotency_key, body,
-                          lambda: self.evidence.attach_agent(change, request), _RUN)
+        return self._once(
+            f"agent.attach:{change_id}", idempotency_key, body,
+            lambda: self.evidence.attach_agent(change, request), _RUN,
+            authorize=lambda: self._authorize(actor_id, change, ATTACH_SCOPE,
+                                               {"adapter": request.adapter}),
+        )
 
     def stop_agent(self, change_id: UUID, run_id: UUID, actor_id: UUID) -> AgentRun:
         change = self.change_service.get(change_id)
@@ -185,11 +204,13 @@ class EvidenceAdminService:
         idempotency_key: str | None = None,
     ) -> list[AssuranceRun]:
         change = self.change_service.get(change_id)
-        self._authorize(actor_id, change, ASSURANCE_RUN_SCOPE, {"plan_id": str(plan_id)})
         body = {"actor": str(actor_id), "plan": str(plan_id), "limit": output_limit_bytes}
         return self._once(
             f"assurance.run:{change_id}", idempotency_key, body,
-            lambda: self.evidence.run_assurance(change, plan_id, output_limit_bytes), _RUNS)
+            lambda: self.evidence.run_assurance(change, plan_id, output_limit_bytes), _RUNS,
+            authorize=lambda: self._authorize(actor_id, change, ASSURANCE_RUN_SCOPE,
+                                               {"plan_id": str(plan_id)}),
+        )
 
     def evaluate(self, change_id: UUID, plan_id: UUID) -> AssuranceEvaluation:
         return self.evidence.evaluate(self.change_service.get(change_id), plan_id)

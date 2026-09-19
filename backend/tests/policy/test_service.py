@@ -56,6 +56,7 @@ def _delegate(
     change_id,
     now: datetime,
     scopes: list[str],
+    use_limit: int | None = None,
 ) -> Delegation:
     delegation = Delegation(
         id=uuid4(),
@@ -66,6 +67,7 @@ def _delegate(
         scopes=scopes,
         issued_at=now - timedelta(minutes=1),
         expires_at=now + timedelta(hours=1),
+        use_limit=use_limit,
     )
     repository.create(delegation)
     return delegation
@@ -189,3 +191,42 @@ def test_denies_risk_above_contract_ceiling_and_requires_approval(tmp_path) -> N
     assert decision.allowed is False
     assert decision.reason_code == "RISK_TOO_HIGH"
     assert decision.required_approval is True
+
+
+def test_use_limit_is_actually_enforced_across_calls(tmp_path) -> None:
+    now = datetime.now(UTC)
+    engine, repository, database = _engine(tmp_path, now)
+    actor_id = uuid4()
+    change = _change(database)
+    delegation = _delegate(
+        repository, actor_id=actor_id, change_id=change.id, now=now,
+        scopes=["agent.launch"], use_limit=1,
+    )
+
+    first = engine.evaluate(actor_id, change, "agent.launch", {})
+    assert first.allowed is True
+    assert repository.get(delegation.id).uses == 1
+
+    second = engine.evaluate(actor_id, change, "agent.launch", {})
+    assert second.allowed is False
+    assert second.reason_code == "AUTHORITY_EXHAUSTED"
+    # The second, denied attempt must not have consumed a further use.
+    assert repository.get(delegation.id).uses == 1
+
+
+def test_a_denied_operation_does_not_consume_a_delegation_use(tmp_path) -> None:
+    now = datetime.now(UTC)
+    engine, repository, database = _engine(tmp_path, now)
+    actor_id = uuid4()
+    change = _change(database, forbidden_paths=["secrets"])
+    delegation = _delegate(
+        repository, actor_id=actor_id, change_id=change.id, now=now,
+        scopes=["git.recovery.commit"], use_limit=1,
+    )
+
+    decision = engine.evaluate(
+        actor_id, change, "git.recovery.commit", {"target_path": "secrets/prod.env"}
+    )
+
+    assert decision.allowed is False
+    assert repository.get(delegation.id).uses == 0
