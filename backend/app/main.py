@@ -12,13 +12,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.app.contracts.models import ErrorDetail, ErrorEnvelope, HealthResponse
-from backend.app.contracts.ports import GitInspectionPort, VerificationPort
+from backend.app.contracts.ports import (
+    GitInspectionPort,
+    LifecycleFactsPort,
+    VerificationPort,
+)
 from backend.app.core.change_repository import ChangeRepository
 from backend.app.core.change_service import ChangeService
 from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.core.router import build_router
+from backend.app.core.unavailable_adapters import UnavailableLifecycleFacts
 from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.verification.runner import SubprocessVerificationRunner
 
@@ -44,6 +49,8 @@ def create_app(
     settings: Settings | None = None,
     git_inspection: GitInspectionPort | None = None,
     verification: VerificationPort | None = None,
+    lifecycle_facts: LifecycleFactsPort | None = None,
+    configured_capabilities: set[str] | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
     database = Database(resolved_settings.database_path)
@@ -52,7 +59,9 @@ def create_app(
         repository=repository,
         git_inspection=git_inspection or GitRepositoryInspector(),
         verification=verification or SubprocessVerificationRunner(),
+        lifecycle_facts=lifecycle_facts or UnavailableLifecycleFacts(),
         settings=resolved_settings,
+        configured_capabilities=configured_capabilities,
     )
 
     @asynccontextmanager
@@ -69,8 +78,8 @@ def create_app(
         CORSMiddleware,
         allow_origins=[resolved_settings.ui_origin],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "Idempotency-Key"],
     )
 
     @app.exception_handler(AppError)

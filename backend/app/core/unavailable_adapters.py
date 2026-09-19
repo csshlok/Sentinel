@@ -1,7 +1,9 @@
 """Explicit placeholders used until parallel adapters are handed off."""
 
 from backend.app.contracts.models import (
+    ChangeView,
     GitSummary,
+    LifecycleFacts,
     RepositoryInfo,
     VerificationRequest,
     VerificationResult,
@@ -26,3 +28,7 @@ class UnavailableVerification:
     ) -> VerificationResult:
         raise adapter_unavailable("verification")
 
+
+class UnavailableLifecycleFacts:
+    def get_facts(self, change: ChangeView, target_state: str) -> LifecycleFacts:
+        raise adapter_unavailable("lifecycle evidence composition")

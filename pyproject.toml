@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "change-assurance"
 version = "0.1.0"
-description = "Local Git-based Change Review prototype"
+description = "Local-first Change Assurance Runtime"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -17,6 +17,7 @@ dependencies = [
 test = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
 ]
 
 [tool.setuptools.packages.find]
@@ -26,4 +27,3 @@ include = ["backend*"]
 addopts = "-q"
 pythonpath = ["."]
 testpaths = ["backend/tests"]
-

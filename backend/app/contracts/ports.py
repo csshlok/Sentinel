@@ -1,11 +1,31 @@
-"""Stable adapter protocols for parallel backend implementation."""
+"""Frozen protocol boundaries for independently owned backend modules."""
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from backend.app.contracts.models import (
+    AgentAttachRequest,
+    AgentLaunchRequest,
+    AgentRun,
+    AssurancePlan,
+    AssuranceRun,
+    ChangePassport,
+    ChangeView,
+    CredentialGrant,
+    DependencyReport,
+    EnvironmentDrift,
+    EnvironmentPassport,
+    GitCheckpoint,
+    GitCheckpointComparison,
     GitSummary,
+    LifecycleFacts,
+    Outcome,
+    PolicyDecision,
+    ProviderOperation,
+    ProviderOperationRequest,
+    RecoveryPlan,
     RepositoryInfo,
     VerificationRequest,
     VerificationResult,
@@ -14,6 +34,8 @@ from backend.app.contracts.models import (
 
 @runtime_checkable
 class GitInspectionPort(Protocol):
+    """Compatibility port implemented by the existing Git adapter."""
+
     def validate_repository(self, path: str) -> RepositoryInfo:
         """Validate a path and return its canonical committed Git repository."""
 
@@ -23,6 +45,8 @@ class GitInspectionPort(Protocol):
 
 @runtime_checkable
 class VerificationPort(Protocol):
+    """Compatibility port implemented by the existing verification runner."""
+
     def run(
         self,
         repository_path: str,
@@ -31,3 +55,153 @@ class VerificationPort(Protocol):
     ) -> VerificationResult:
         """Run one bounded verification command in the repository root."""
 
+
+@runtime_checkable
+class GitStatePort(Protocol):
+    def capture(
+        self,
+        change_id: UUID,
+        name: str,
+        repository_path: str,
+        evidence_revision: int,
+        patch_limit_bytes: int,
+    ) -> GitCheckpoint:
+        """Capture a read-only Git checkpoint."""
+
+    def compare(
+        self, baseline: GitCheckpoint, current: GitCheckpoint
+    ) -> GitCheckpointComparison:
+        """Compare two checkpoints without mutating the repository."""
+
+
+@runtime_checkable
+class AgentLauncherPort(Protocol):
+    def launch(
+        self,
+        change_id: UUID,
+        repository_path: str,
+        request: AgentLaunchRequest,
+        output_limit_bytes: int,
+    ) -> AgentRun:
+        """Launch and observe only the top-level invocation."""
+
+    def attach(self, change_id: UUID, request: AgentAttachRequest) -> AgentRun:
+        """Record declared metadata for an externally launched invocation."""
+
+    def stop(self, run_id: UUID) -> AgentRun:
+        """Request cancellation of the top-level invocation when supported."""
+
+
+@runtime_checkable
+class EnvironmentPort(Protocol):
+    def capture(self, change_id: UUID, repository_path: str) -> EnvironmentPassport:
+        """Capture a redacted, bounded environment passport."""
+
+    def compare(
+        self, baseline: EnvironmentPassport, current: EnvironmentPassport
+    ) -> EnvironmentDrift:
+        """Compare passports without claiming causal attribution."""
+
+
+@runtime_checkable
+class DependencyPort(Protocol):
+    def scan(
+        self,
+        change_id: UUID,
+        checkpoint: GitCheckpoint,
+        repository_path: str,
+    ) -> DependencyReport:
+        """Compare supported manifests and lockfiles."""
+
+
+@runtime_checkable
+class AssurancePort(Protocol):
+    def discover(
+        self,
+        change: ChangeView,
+        checkpoint: GitCheckpoint,
+        environment: EnvironmentPassport | None,
+        dependencies: DependencyReport | None,
+    ) -> AssurancePlan:
+        """Build an evidence-selected assurance plan."""
+
+    def run(
+        self,
+        change: ChangeView,
+        plan: AssurancePlan,
+        repository_path: str,
+        output_limit_bytes: int,
+    ) -> list[AssuranceRun]:
+        """Execute bounded checks and return structured results."""
+
+
+@runtime_checkable
+class LifecycleFactsPort(Protocol):
+    def get_facts(self, change: ChangeView, target_state: str) -> LifecycleFacts:
+        """Compose authoritative server-side facts for a transition."""
+
+
+@runtime_checkable
+class CredentialStorePort(Protocol):
+    def put(self, key: str, secret: str) -> None:
+        """Store a durable secret outside application persistence."""
+
+    def get(self, key: str) -> str | None:
+        """Return a secret only to the broker boundary."""
+
+    def delete(self, key: str) -> bool:
+        """Remove a broker-owned secret."""
+
+
+@runtime_checkable
+class CredentialBrokerPort(Protocol):
+    def issue_grant(
+        self, actor_id: UUID, change_id: UUID, scopes: list[str], ttl_seconds: int
+    ) -> CredentialGrant:
+        """Issue a short-lived internal capability grant."""
+
+    def revoke(self, grant_id: UUID) -> CredentialGrant:
+        """Revoke an internal grant."""
+
+
+@runtime_checkable
+class PolicyPort(Protocol):
+    def evaluate(
+        self,
+        actor_id: UUID,
+        change: ChangeView,
+        operation: str,
+        parameters: dict[str, object],
+    ) -> PolicyDecision:
+        """Return an explainable, default-deny policy decision."""
+
+
+@runtime_checkable
+class ProviderPort(Protocol):
+    def execute(
+        self, request: ProviderOperationRequest, grant: CredentialGrant
+    ) -> ProviderOperation:
+        """Execute one brokered provider operation."""
+
+
+@runtime_checkable
+class OutcomePort(Protocol):
+    def refresh(self, change: ChangeView) -> list[Outcome]:
+        """Refresh provider outcomes tied to exact commit identities."""
+
+
+@runtime_checkable
+class RecoveryPort(Protocol):
+    def plan(self, change: ChangeView) -> RecoveryPlan:
+        """Preview supported compensations and all known limitations."""
+
+    def execute(
+        self, change: ChangeView, plan: RecoveryPlan, approval_token: str
+    ) -> RecoveryPlan:
+        """Execute an approved recovery plan without rewriting history."""
+
+
+@runtime_checkable
+class PassportPort(Protocol):
+    def build(self, change: ChangeView) -> ChangePassport:
+        """Build a deterministic Passport from retained evidence."""
