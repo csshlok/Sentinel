@@ -311,6 +311,7 @@ def github_pr_close(
 @outcome_app.command("refresh")
 def outcome_refresh(
     change_id: UUID,
+    actor_id: UUID,
     grant_id: UUID,
     check: list[str] = typer.Option([], "--check"),
     api_url: str = ApiUrlOption,
@@ -318,7 +319,8 @@ def outcome_refresh(
     no_color: bool = NoColorOption,
 ) -> None:
     _run(
-        lambda: ApiClient(api_url).refresh_outcomes(change_id, grant_id=grant_id, required_check_names=check),
+        lambda: ApiClient(api_url).refresh_outcomes(
+            change_id, actor_id=actor_id, grant_id=grant_id, required_check_names=check),
         as_json=json_,
         no_color=no_color,
     )

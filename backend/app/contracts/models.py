@@ -931,6 +931,7 @@ class PullRequestCloseActionRequest(ContractModel):
 
 
 class OutcomeRefreshRequest(ContractModel):
+    actor_id: UUID
     grant_id: UUID
     required_check_names: list[ShortText] = Field(default_factory=list, max_length=64)
 

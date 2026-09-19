@@ -3007,6 +3007,11 @@
       "OutcomeRefreshRequest": {
         "additionalProperties": false,
         "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
           "grant_id": {
             "format": "uuid",
             "title": "Grant Id",
@@ -3024,6 +3029,7 @@
           }
         },
         "required": [
+          "actor_id",
           "grant_id"
         ],
         "title": "OutcomeRefreshRequest",

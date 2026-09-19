@@ -28,6 +28,16 @@ from backend.tests.core.fakes import FakeGitInspection
 from backend.tests.providers.fakes import FakeHttpTransport, json_response
 
 
+def _grantor_id(client) -> str:
+    """Threat model finding #5: grantor_id must now resolve to a real
+
+    Actor, so a synthetic uuid4() no longer works as a delegation grantor
+    in tests; this creates a real one.
+    """
+    return client.post(
+        "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Grantor"}
+    ).json()["id"]
+
 def _run(repo, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(repo), *args], capture_output=True, text=True, shell=False
@@ -178,7 +188,7 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
         delegation = client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["github.pr.create", "recovery.execute", "github.repo.read"],
@@ -252,7 +262,8 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
 
         outcomes = client.post(
             f"/api/v1/changes/{change_id}/outcomes/refresh",
-            json={"grant_id": read_grant_id, "required_check_names": ["build"]},
+            json={"actor_id": actor_id, "grant_id": read_grant_id,
+                  "required_check_names": ["build"]},
         )
         assert outcomes.status_code == 200
         assert outcomes.json()["count"] == 1
@@ -317,6 +328,42 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
         )
 
 
+def test_delegation_creation_rejects_self_delegation_and_unknown_grantor(tmp_path) -> None:
+    """Threat model finding #5: grantor_id was never validated -- an actor
+
+    could name itself as its own grantor (self-issuing unlimited authority)
+    or name a nonexistent UUID (making the delegation's attribution
+    meaningless for audit purposes). Both must now be refused.
+    """
+
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
+    del app
+
+    with client:
+        change_id = client.post("/api/v1/changes", json={
+            "title": "Grantor validation", "intent": "Exercise finding #5",
+            "repository_path": repo_path,
+        }).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Actor"}
+        ).json()["id"]
+
+        self_delegation = client.post("/api/v1/delegations", json={
+            "grantor_id": actor_id, "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["agent.launch"], "ttl_seconds": 3600,
+        })
+        assert self_delegation.status_code == 422
+        assert self_delegation.json()["error"]["code"] == "SELF_DELEGATION_NOT_PERMITTED"
+
+        unknown_grantor = client.post("/api/v1/delegations", json={
+            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["agent.launch"], "ttl_seconds": 3600,
+        })
+        assert unknown_grantor.status_code == 404
+        assert unknown_grantor.json()["error"]["code"] == "ACTOR_NOT_FOUND"
+
+
 def test_policy_denies_operation_without_matching_delegation(tmp_path) -> None:
     """Threat model finding #1: issuing a CredentialGrant now itself requires
 
@@ -363,7 +410,7 @@ def test_policy_denies_operation_without_matching_delegation(tmp_path) -> None:
         # A delegation for a *different* scope does not let the actor mint
         # a grant for github.pr.create either.
         client.post("/api/v1/delegations", json={
-            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
             "scopes": ["github.repo.read"], "ttl_seconds": 3600,
         })
         still_denied = client.post(
@@ -404,7 +451,7 @@ def test_grant_bound_to_different_change_is_rejected(tmp_path) -> None:
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_b,
                 "scopes": ["github.pr.create"],
@@ -417,7 +464,7 @@ def test_grant_bound_to_different_change_is_rejected(tmp_path) -> None:
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_a,
                 "scopes": ["github.pr.create"],
@@ -486,7 +533,7 @@ def test_change_lifecycle_transitions_use_real_evidence(tmp_path) -> None:
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["recovery.execute"],
@@ -566,7 +613,7 @@ def test_state_persists_across_a_real_app_restart(tmp_path) -> None:
         client1.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client1),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["recovery.execute"],
@@ -628,7 +675,7 @@ def test_credential_grants_are_usable_and_revocable_across_a_real_app_restart(tm
             "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
         ).json()["id"]
         client1.post("/api/v1/delegations", json={
-            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "grantor_id": _grantor_id(client1), "grantee_id": actor_id, "change_id": change_id,
             "scopes": ["github.pr.create"], "ttl_seconds": 3600,
         })
         client1.post("/api/v1/providers/github/connect", json={"token": "gh-secret-token"})
@@ -680,7 +727,7 @@ def test_close_pull_request_compensates_the_changes_own_created_pr(tmp_path) -> 
             "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
         ).json()["id"]
         client.post("/api/v1/delegations", json={
-            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
             "scopes": ["github.pr.create", "github.pr.close"], "ttl_seconds": 3600,
         })
         client.post("/api/v1/providers/github/connect", json={"token": "token"})
@@ -717,6 +764,58 @@ def test_close_pull_request_compensates_the_changes_own_created_pr(tmp_path) -> 
         assert replay.json()["id"] == closed.json()["id"]
 
 
+def test_outcome_refresh_is_bound_to_the_calling_actor(tmp_path) -> None:
+    """Threat model finding #4: OutcomeService.refresh only checked
+
+    grant.change_id, not who was calling -- any actor holding any grant
+    bound to a Change (issued to a *different* actor) could read its
+    GitHub PR/CI status. Now uses require_grant (actor+Change binding) and
+    is policy-gated like every other provider read.
+    """
+
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
+    del app
+
+    with client:
+        change_id = client.post("/api/v1/changes", json={
+            "title": "Outcome binding", "intent": "Exercise actor-bound outcome refresh",
+            "repository_path": repo_path,
+        }).json()["id"]
+
+        owner_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Owner"}
+        ).json()["id"]
+        stranger_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Stranger"}
+        ).json()["id"]
+        client.post("/api/v1/delegations", json={
+            "grantor_id": _grantor_id(client), "grantee_id": owner_id, "change_id": change_id,
+            "scopes": ["github.repo.read"], "ttl_seconds": 3600,
+        })
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": owner_id, "scopes": ["github.repo.read"], "ttl_seconds": 900},
+        ).json()["id"]
+
+        # The owner can use their own grant.
+        as_owner = client.post(
+            f"/api/v1/changes/{change_id}/outcomes/refresh",
+            json={"actor_id": owner_id, "grant_id": grant_id, "required_check_names": []},
+        )
+        assert as_owner.status_code == 200
+
+        # A different actor cannot use the owner's grant, even though it is
+        # bound to this same Change.
+        as_stranger = client.post(
+            f"/api/v1/changes/{change_id}/outcomes/refresh",
+            json={"actor_id": stranger_id, "grant_id": grant_id, "required_check_names": []},
+        )
+        assert as_stranger.status_code == 403
+        assert as_stranger.json()["error"]["code"] == "CREDENTIAL_GRANT_BINDING_INVALID"
+
+
 def test_close_pull_request_without_a_created_pr_is_refused(tmp_path) -> None:
     repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
     app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
@@ -730,7 +829,7 @@ def test_close_pull_request_without_a_created_pr_is_refused(tmp_path) -> None:
             "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
         ).json()["id"]
         client.post("/api/v1/delegations", json={
-            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
             "scopes": ["github.pr.close"], "ttl_seconds": 3600,
         })
         client.post("/api/v1/providers/github/connect", json={"token": "token"})
@@ -787,7 +886,7 @@ def test_provider_operation_records_failure_after_exhausted_retries(tmp_path) ->
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["github.pr.create"],
@@ -862,7 +961,7 @@ def test_provider_operation_records_immediate_failure_for_not_found(tmp_path) ->
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["github.pr.create"],
@@ -926,7 +1025,7 @@ def test_pull_request_route_returns_stable_error_when_repository_has_no_github_r
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["github.pr.create"],
@@ -997,7 +1096,7 @@ def test_idempotency_key_reused_for_a_genuinely_different_pr_is_rejected(tmp_pat
         client.post(
             "/api/v1/delegations",
             json={
-                "grantor_id": str(uuid4()),
+                "grantor_id": _grantor_id(client),
                 "grantee_id": actor_id,
                 "change_id": change_id,
                 "scopes": ["github.pr.create"],

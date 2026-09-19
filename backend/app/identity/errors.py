@@ -21,3 +21,12 @@ def delegation_not_found(delegation_id: str) -> AppError:
         status_code=404,
         details={"delegation_id": delegation_id},
     )
+
+
+def self_delegation_not_permitted(actor_id: str) -> AppError:
+    return AppError(
+        "SELF_DELEGATION_NOT_PERMITTED",
+        "An actor cannot delegate authority to itself.",
+        status_code=422,
+        details={"actor_id": actor_id},
+    )

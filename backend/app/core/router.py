@@ -348,6 +348,7 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     ) -> OutcomeListResponse:
         items = runtime.outcomes.refresh(
             change_id,
+            actor_id=request.actor_id,
             grant_id=request.grant_id,
             required_check_names=request.required_check_names,
         )

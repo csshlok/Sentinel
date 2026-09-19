@@ -175,7 +175,9 @@ class ChangeDashboard(App):
             change_id = self._change_ids[table.cursor_row]
         except IndexError:
             return
-        self.push_screen(OutcomeScreen(change_id, self.api_url, grant_id=self.grant_id))
+        self.push_screen(
+            OutcomeScreen(change_id, self.api_url, grant_id=self.grant_id, actor_id=self.actor_id)
+        )
 
     def action_delegations(self) -> None:
         table = self.query_one(DataTable)

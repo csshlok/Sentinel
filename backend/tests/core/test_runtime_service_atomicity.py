@@ -104,12 +104,16 @@ def test_a_journal_failure_rolls_back_delegation_creation(tmp_path) -> None:
         Actor(id=uuid4(), kind=ActorKind.AGENT, display_name="Agent",
               created_at=now, updated_at=now)
     )
+    grantor = actors.create(
+        Actor(id=uuid4(), kind=ActorKind.HUMAN, display_name="Grantor",
+              created_at=now, updated_at=now)
+    )
     service = IdentityAdminService(actors, delegations, journal=_ExplodingJournal())
 
     with pytest.raises(RuntimeError, match="journal backend unavailable"):
         service.create_delegation(
             DelegationCreateRequest(
-                grantor_id=uuid4(), grantee_id=grantee.id, change_id=change_id,
+                grantor_id=grantor.id, grantee_id=grantee.id, change_id=change_id,
                 scopes=["agent.launch"], ttl_seconds=3600,
             ),
             repository_path=REPO_PATH,
@@ -128,11 +132,15 @@ def test_a_journal_failure_rolls_back_delegation_revocation(tmp_path) -> None:
         Actor(id=uuid4(), kind=ActorKind.AGENT, display_name="Agent",
               created_at=now, updated_at=now)
     )
+    grantor = actors.create(
+        Actor(id=uuid4(), kind=ActorKind.HUMAN, display_name="Grantor",
+              created_at=now, updated_at=now)
+    )
     # Issue the delegation through a working journal first.
     service = IdentityAdminService(actors, delegations)
     delegation = service.create_delegation(
         DelegationCreateRequest(
-            grantor_id=uuid4(), grantee_id=grantee.id, change_id=change_id,
+            grantor_id=grantor.id, grantee_id=grantee.id, change_id=change_id,
             scopes=["agent.launch"], ttl_seconds=3600,
         ),
         repository_path=REPO_PATH,

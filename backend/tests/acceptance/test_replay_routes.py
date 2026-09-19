@@ -19,6 +19,16 @@ from backend.tests.acceptance.test_runtime_routes import _build_client, _init_re
 from backend.tests.providers.fakes import FakeHttpTransport
 
 
+def _grantor_id(client) -> str:
+    """Threat model finding #5: grantor_id must now resolve to a real
+
+    Actor, so a synthetic uuid4() no longer works as a delegation grantor
+    in tests; this creates a real one.
+    """
+    return client.post(
+        "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Grantor"}
+    ).json()["id"]
+
 def test_replay_reconstructs_events_in_actual_execution_order(tmp_path) -> None:
     repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
     app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
@@ -34,7 +44,7 @@ def test_replay_reconstructs_events_in_actual_execution_order(tmp_path) -> None:
         ).json()["id"]
         client.post(
             "/api/v1/delegations",
-            json={"grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            json={"grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
                   "scopes": ["recovery.execute"], "ttl_seconds": 3600},
         )
         transitioned = client.post(
@@ -92,7 +102,7 @@ def test_replay_verify_detects_a_direct_file_level_tamper(tmp_path) -> None:
         ).json()["id"]
         client.post(
             "/api/v1/delegations",
-            json={"grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            json={"grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
                   "scopes": ["recovery.execute"], "ttl_seconds": 3600},
         )
         client.post(
@@ -149,7 +159,7 @@ def test_replay_export_round_trip_preserves_redaction(tmp_path) -> None:
         ).json()["id"]
         client.post(
             "/api/v1/delegations",
-            json={"grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            json={"grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
                   "scopes": ["github.pr.create"], "ttl_seconds": 3600},
         )
         client.post("/api/v1/providers/github/connect", json={"token": secret_token})

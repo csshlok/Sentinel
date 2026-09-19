@@ -24,8 +24,11 @@ def authorized_actor(client: TestClient, change_id: str) -> str:
     actor_id = client.post(
         "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Owner"}
     ).json()["id"]
+    grantor_id = client.post(
+        "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Grantor"}
+    ).json()["id"]
     client.post("/api/v1/delegations", json={
-        "grantor_id": actor_id, "grantee_id": actor_id, "change_id": change_id,
+        "grantor_id": grantor_id, "grantee_id": actor_id, "change_id": change_id,
         "scopes": ["change.legacy_verify"], "ttl_seconds": 3600,
     })
     return actor_id

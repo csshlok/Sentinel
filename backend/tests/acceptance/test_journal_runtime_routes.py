@@ -26,6 +26,16 @@ from backend.tests.acceptance.test_runtime_routes import (
 from backend.tests.providers.fakes import FakeHttpTransport, json_response
 
 
+def _grantor_id(client) -> str:
+    """Threat model finding #5: grantor_id must now resolve to a real
+
+    Actor, so a synthetic uuid4() no longer works as a delegation grantor
+    in tests; this creates a real one.
+    """
+    return client.post(
+        "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Grantor"}
+    ).json()["id"]
+
 def _events(database: Database, change_id: str) -> list:
     with database.connection() as connection:
         rows = connection.execute(
@@ -89,7 +99,7 @@ def test_full_ac_flow_produces_a_correctly_chained_and_ordered_journal(tmp_path)
 
         delegation = client.post(
             "/api/v1/delegations",
-            json={"grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            json={"grantor_id": _grantor_id(client), "grantee_id": actor_id, "change_id": change_id,
                   "scopes": ["github.pr.create", "recovery.execute", "github.repo.read"],
                   "ttl_seconds": 3600},
         )
@@ -121,7 +131,8 @@ def test_full_ac_flow_produces_a_correctly_chained_and_ordered_journal(tmp_path)
 
         outcomes = client.post(
             f"/api/v1/changes/{change_id}/outcomes/refresh",
-            json={"grant_id": read_grant_id, "required_check_names": ["build"]},
+            json={"actor_id": actor_id, "grant_id": read_grant_id,
+                  "required_check_names": ["build"]},
         )
         assert outcomes.status_code == 200
 

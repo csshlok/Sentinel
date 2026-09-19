@@ -266,12 +266,14 @@ class ApiClient:
 
     # -- outcomes --
     def refresh_outcomes(
-        self, change_id: UUID, *, grant_id: UUID, required_check_names: list[str] | None = None
+        self, change_id: UUID, *, actor_id: UUID, grant_id: UUID,
+        required_check_names: list[str] | None = None,
     ) -> Any:
         return self._request(
             "POST",
             f"/api/v1/changes/{change_id}/outcomes/refresh",
             json_body={
+                "actor_id": str(actor_id),
                 "grant_id": str(grant_id),
                 "required_check_names": required_check_names or [],
             },

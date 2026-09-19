@@ -37,10 +37,14 @@ class OutcomeScreen(Screen):
 
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("f", "refresh_outcomes", "Refresh from GitHub")]
 
-    def __init__(self, change_id: str, api_url: str, grant_id: str | None = None) -> None:
+    def __init__(
+        self, change_id: str, api_url: str, grant_id: str | None = None,
+        actor_id: str | None = None,
+    ) -> None:
         super().__init__()
         self.change_id = change_id
         self.grant_id = grant_id
+        self.actor_id = actor_id
         self.client = ApiClient(api_url)
 
     def compose(self) -> ComposeResult:
@@ -90,12 +94,18 @@ class OutcomeScreen(Screen):
                 "[yellow]No grant id configured; launch with --grant-id to enable refresh.[/yellow]"
             )
             return
+        if not self.actor_id:
+            status.update(
+                "[yellow]No actor id configured; launch with --actor-id to enable refresh.[/yellow]"
+            )
+            return
         self.run_worker(self._refresh, thread=True, exclusive=True)
 
     def _refresh(self) -> None:
         status = self.query_one("#status", Static)
         try:
-            self.client.refresh_outcomes(self.change_id, grant_id=self.grant_id)
+            self.client.refresh_outcomes(
+                self.change_id, actor_id=self.actor_id, grant_id=self.grant_id)
         except ApiConnectionError as error:
             self.app.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
             return

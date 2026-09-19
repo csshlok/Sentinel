@@ -267,7 +267,7 @@ def _build_runtime_services(
     outcome_tracker = OutcomeTracker(github_provider)
     outcomes = OutcomeService(
         outcome_tracker, broker, service, credentials, OutcomeRepository(database),
-        journal=resolved_journal,
+        policy=policy, journal=resolved_journal,
     )
 
     recovery_engine = GitRecoveryEngine(database)

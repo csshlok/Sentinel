@@ -64,7 +64,11 @@ from backend.app.core.runtime_repositories import (
 )
 from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.credentials.broker import CredentialBroker
-from backend.app.identity.errors import actor_not_found, delegation_not_found
+from backend.app.identity.errors import (
+    actor_not_found,
+    delegation_not_found,
+    self_delegation_not_permitted,
+)
 from backend.app.identity.repository import ActorRepository, DelegationRepository
 from backend.app.outcomes.outcome_port import GitHubOutcomeTracker
 from backend.app.outcomes.tracker import OutcomeTracker
@@ -111,6 +115,14 @@ class IdentityAdminService:
     def create_delegation(
         self, request: DelegationCreateRequest, *, repository_path: str
     ) -> Delegation:
+        # Threat model finding #5: grantor_id was accepted as-is -- never
+        # validated to exist, and never checked against self-delegation.
+        # An actor could self-issue an unlimited-use, year-long delegation
+        # by naming itself (or a nonexistent UUID) as its own grantor,
+        # since nothing here ever resolved that identity.
+        if request.grantor_id == request.grantee_id:
+            raise self_delegation_not_permitted(str(request.grantee_id))
+        self.get_actor(request.grantor_id)
         self.get_actor(request.grantee_id)
         now = self._clock()
         delegation = Delegation(
@@ -454,6 +466,7 @@ class OutcomeService:
         credentials: CredentialAdminService,
         outcomes: OutcomeRepository,
         *,
+        policy: PolicyPort,
         journal: JournalWriter | None = None,
     ) -> None:
         self.tracker = tracker
@@ -461,23 +474,33 @@ class OutcomeService:
         self.change_service = change_service
         self.credentials = credentials
         self.outcomes = outcomes
+        self.policy = policy
         self._journal = journal
 
     def refresh(
         self,
         change_id: UUID,
         *,
+        actor_id: UUID,
         grant_id: UUID,
         required_check_names: list[str],
     ) -> list[Outcome]:
+        # Threat model finding #4: unlike create_pull_request (require_grant
+        # + _enforce_policy), refresh previously only checked
+        # grant.change_id via a raw get_grant lookup -- any actor holding
+        # any grant bound to this Change, regardless of who it was actually
+        # issued to, could read its GitHub PR/CI status, unattributed in
+        # the journal. require_grant binds the grant to the calling actor
+        # too, and the read is now policy-gated like every other
+        # provider operation.
         change = self.change_service.get(change_id)
-        grant = self.credentials.get_grant(grant_id)
-        if grant.change_id != change_id:
-            raise grant_binding_invalid(str(grant_id))
+        grant = self.credentials.require_grant(grant_id, actor_id=actor_id, change_id=change_id)
+        _enforce_policy(self.policy, actor_id, change, "github.repo.read", {},
+                        journal=self._journal)
         port: OutcomePort = GitHubOutcomeTracker(
             self.tracker,
             self.broker,
-            read_grant_id=grant_id,
+            read_grant_id=grant.id,
             required_check_names=required_check_names,
         )
         results = port.refresh(change)
@@ -486,7 +509,7 @@ class OutcomeService:
             # GitHub) but still worth a timeline entry per PDF §9.2.
             self._journal.append(
                 change_id, JournalEventType.PROVIDER_CI_REFRESHED,
-                subject_type="change", subject_id=change_id,
+                actor_id=actor_id, subject_type="change", subject_id=change_id,
                 payload={"required_check_names": required_check_names,
                          "results_count": len(results)},
             )
