@@ -88,9 +88,20 @@ def test_change_refresh_and_verify_flow(tmp_path) -> None:
         assert refreshed.status_code == 200
         assert refreshed.json()["review_state"] == "MISSING_EVIDENCE"
 
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "HUMAN", "display_name": "Owner"}
+        ).json()["id"]
+        client.post("/api/v1/delegations", json={
+            "grantor_id": actor_id, "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["change.legacy_verify"], "ttl_seconds": 3600,
+        })
+
         verified = client.post(
             f"/api/v1/changes/{change_id}/verify",
-            json={"executable": "pytest", "args": ["-q"], "timeout_seconds": 30},
+            json={
+                "actor_id": actor_id,
+                "verification": {"executable": "pytest", "args": ["-q"], "timeout_seconds": 30},
+            },
         )
         assert verified.status_code == 200
         assert verified.json()["review_state"] == "READY_FOR_HUMAN_REVIEW"

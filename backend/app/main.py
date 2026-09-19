@@ -126,8 +126,9 @@ def create_app(
         EvidenceStore(database), journal=journal,
         launcher=AgentLauncher(tool_registry=tool_registry),
     )
+    change_delegations = DelegationRepository(database)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
-        DelegationRepository(database),
+        change_delegations,
         ProviderOperationRepository(database),
         OutcomeRepository(database),
         RecoveryRepository(database),
@@ -139,6 +140,7 @@ def create_app(
         verification=verification or SubprocessVerificationRunner(),
         lifecycle_facts=resolved_lifecycle_facts,
         settings=resolved_settings,
+        policy=DelegationPolicyEngine(change_delegations),
         configured_capabilities=configured_capabilities
         or set(_DEFAULT_CONFIGURED_CAPABILITIES),
     )

@@ -934,6 +934,11 @@ class RecoveryExecuteRequest(ContractModel):
     approval_token: Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
+class VerificationActionRequest(ContractModel):
+    actor_id: UUID
+    verification: VerificationRequest
+
+
 class AgentLaunchActionRequest(ContractModel):
     actor_id: UUID
     launch: AgentLaunchRequest

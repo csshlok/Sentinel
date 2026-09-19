@@ -63,6 +63,15 @@ def test_high_output_is_bounded_and_marked_truncated() -> None:
 
 
 def test_stdout_and_stderr_share_one_byte_budget() -> None:
+    """The combined budget bounds total retained bytes; it is not necessarily
+
+    split evenly between the two streams (execution._process.capture's own
+    documented behavior -- without a separate stderr_limit, one stream can
+    take the whole shared budget before the other is drained). The actual
+    safety property this guards is the total bound, matching
+    BoundedVerificationRunner's use of the same primitive.
+    """
+
     runner = SubprocessVerificationRunner()
     request = VerificationRequest(
         executable="python",
@@ -80,8 +89,6 @@ def test_stdout_and_stderr_share_one_byte_budget() -> None:
 
     total = len(result.stdout.encode("utf-8")) + len(result.stderr.encode("utf-8"))
     assert total <= 101
-    assert result.stdout
-    assert result.stderr
     assert result.output_truncated is True
 
 
@@ -113,6 +120,48 @@ def test_invalid_utf8_cannot_expand_past_output_budget() -> None:
     result = runner.run(".", request, output_limit_bytes=100)
 
     assert len(result.stdout.encode("utf-8")) <= 100
+    assert result.output_truncated is True
+
+
+def test_the_daemon_process_environment_does_not_reach_the_child() -> None:
+    """Reproduces the audit finding: the prior `subprocess.run(...)` call had
+
+    no `env=` argument, so the child inherited this process's entire
+    environment -- any secret present there was reachable by an arbitrary
+    allowlisted command run through the legacy /verify route.
+    """
+
+    import os
+
+    runner = SubprocessVerificationRunner()
+    os.environ["VERIFICATION_RUNNER_ENV_LEAK_CANARY"] = "must-not-leak"
+    try:
+        result = _run(
+            runner,
+            "import os; print(os.environ.get('VERIFICATION_RUNNER_ENV_LEAK_CANARY', 'ABSENT'))",
+        )
+    finally:
+        del os.environ["VERIFICATION_RUNNER_ENV_LEAK_CANARY"]
+    assert "must-not-leak" not in result.stdout
+    assert "ABSENT" in result.stdout
+
+
+def test_output_is_bounded_during_capture_not_only_in_the_stored_result() -> None:
+    """A command that writes far more than the limit must not force this
+
+    process to buffer the full amount before truncating -- capture() drains
+    and discards past the retained budget as it reads, unlike the prior
+    `subprocess.run(capture_output=True)` which bordered on unbounded
+    buffering for a sufficiently verbose command.
+    """
+
+    runner = SubprocessVerificationRunner()
+    request = VerificationRequest(
+        executable="python",
+        args=["-c", "import sys; sys.stdout.write('x' * 20_000_000)"],
+    )
+    result = runner.run(".", request, output_limit_bytes=1024)
+    assert len(result.stdout.encode("utf-8")) <= 1024
     assert result.output_truncated is True
 
 

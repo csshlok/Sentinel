@@ -25,12 +25,13 @@ from backend.app.contracts.models import (
 from backend.app.contracts.ports import (
     GitInspectionPort,
     LifecycleFactsPort,
+    PolicyPort,
     VerificationPort,
 )
 from backend.app.core.capabilities import build_capabilities
 from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.config import Settings
-from backend.app.core.errors import change_not_found
+from backend.app.core.errors import change_not_found, policy_denied
 from backend.app.core.lifecycle import validate_transition
 from backend.app.core.review_service import determine_review_state
 
@@ -47,6 +48,7 @@ class ChangeService:
         lifecycle_facts: LifecycleFactsPort,
         settings: Settings,
         *,
+        policy: PolicyPort | None = None,
         configured_capabilities: set[str] | None = None,
         clock: Clock = utc_now,
     ) -> None:
@@ -55,6 +57,7 @@ class ChangeService:
         self.verification = verification
         self.lifecycle_facts = lifecycle_facts
         self.settings = settings
+        self.policy = policy
         self.configured_capabilities = configured_capabilities or {
             "change_lifecycle",
             "git_inspection",
@@ -210,6 +213,7 @@ class ChangeService:
     def verify(
         self,
         change_id: UUID,
+        actor_id: UUID,
         request: VerificationRequest,
         *,
         idempotency_key: str | None = None,
@@ -218,8 +222,27 @@ class ChangeService:
         scope = f"change:{change_id}:legacy-verification"
         replay = self.repository.replay(scope, idempotency_key, request_hash)
         if isinstance(replay, StoredChange):
+            # An exact replay of an already-completed request returns the
+            # stored result without re-authorizing, matching the fix for the
+            # same double-consumption class of bug in
+            # EvidenceAdminService._once: this early return already runs
+            # before any authorization check, so it inherits that property
+            # rather than needing its own copy of it.
             return self._to_view(replay)
         stored = self._get_stored(change_id)
+        change_view = self._to_view(stored)
+        if self.policy is None:
+            # Fail closed rather than silently skip authorization: this
+            # executes an arbitrary allowlisted command against the
+            # repository, exactly like the delegation-gated agent-launch
+            # and assurance-run routes, and must never run unauthorized.
+            raise policy_denied(
+                "POLICY_UNAVAILABLE",
+                "Legacy verification is unavailable because no policy engine is configured.",
+            )
+        decision = self.policy.evaluate(actor_id, change_view, "change.legacy_verify", {})
+        if not decision.allowed:
+            raise policy_denied(decision.reason_code, decision.explanation)
         result = self.verification.run(
             stored.repository_path,
             request,

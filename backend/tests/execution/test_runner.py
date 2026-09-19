@@ -197,7 +197,7 @@ def test_api_flow_with_real_git_and_bounded_runner(tmp_path):
     from fastapi.testclient import TestClient
     from backend.app.core.config import Settings
     from backend.app.main import create_app
-    from backend.tests.integration.test_change_flow import committed_repository
+    from backend.tests.integration.test_change_flow import authorized_actor, committed_repository, verify_body
     repo = committed_repository(tmp_path)
     settings = Settings(database_path=tmp_path / "owner-flow.sqlite3")
     app = create_app(settings=settings, verification=BoundedVerificationRunner())
@@ -210,9 +210,10 @@ def test_api_flow_with_real_git_and_bounded_runner(tmp_path):
         identifier = response.json()["id"]
         (repo / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
         assert client.post(f"/api/v1/changes/{identifier}/refresh").json()["review_state"] == "MISSING_EVIDENCE"
-        response = client.post(f"/api/v1/changes/{identifier}/verify", json={
-            "executable": "python", "args": ["-c", "import app; assert app.VALUE == 2"],
-        })
+        actor_id = authorized_actor(client, identifier)
+        response = client.post(f"/api/v1/changes/{identifier}/verify",
+                               json=verify_body(actor_id, "python",
+                                                ["-c", "import app; assert app.VALUE == 2"]))
         assert response.status_code == 200
         assert response.json()["review_state"] == "READY_FOR_HUMAN_REVIEW"
     with TestClient(

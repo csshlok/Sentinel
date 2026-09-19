@@ -3987,6 +3987,25 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerificationActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationRequest"
+          }
+        },
+        "required": [
+          "actor_id",
+          "verification"
+        ],
+        "title": "VerificationActionRequest",
+        "type": "object"
+      },
       "VerificationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -7185,7 +7204,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VerificationRequest"
+                "$ref": "#/components/schemas/VerificationActionRequest"
               }
             }
           },

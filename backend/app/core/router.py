@@ -60,7 +60,7 @@ from backend.app.contracts.models import (
     ToolManifestListResponse,
     ToolTrustDecision,
     ToolTrustRequest,
-    VerificationRequest,
+    VerificationActionRequest,
 )
 from backend.app.core.change_service import ChangeService
 from backend.app.core.runtime_service import RuntimeServices
@@ -185,11 +185,12 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def verify_change(
         change_id: UUID,
-        request: VerificationRequest,
+        request: VerificationActionRequest,
         idempotency_key: IdempotencyHeader = None,
     ) -> ChangeView:
         return service.verify(
-            change_id, request, idempotency_key=idempotency_key
+            change_id, request.actor_id, request.verification,
+            idempotency_key=idempotency_key,
         )
 
     @router.delete(
