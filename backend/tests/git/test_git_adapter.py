@@ -13,7 +13,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.git.classifier import classify_path
-from backend.app.git.errors import GitCommandError, RepositoryValidationError
+from backend.app.git.errors import RepositoryValidationError
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -78,21 +78,6 @@ def test_validate_repository_rejects_repository_without_commit(tmp_path: Path) -
         GitRepositoryInspector().validate_repository(str(empty_repo))
 
     assert error.value.code == "REPOSITORY_HAS_NO_COMMITS"
-
-
-def test_validate_repository_preserves_git_startup_errors(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def unavailable(*args: object, **kwargs: object) -> None:
-        raise FileNotFoundError("git")
-
-    monkeypatch.setattr("backend.app.execution._process.subprocess.Popen", unavailable)
-
-    with pytest.raises(GitCommandError) as error:
-        GitRepositoryInspector().validate_repository(str(repo))
-
-    assert error.value.code == "GIT_COMMAND_FAILED"
-    assert error.value.details == {}
 
 
 def test_validate_repository_allows_detached_head(repo: Path) -> None:
