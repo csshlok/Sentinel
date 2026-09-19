@@ -49,7 +49,7 @@ The current build implements the proposal without a time-box, except for these f
 
 Replay is also unavailable because it depends on the removed event journal. Descendant attribution and cleanup depend on the removed process supervisor. Uncommitted local recovery depends on filesystem tracking. Tool trust depends on the tool registry. These consequences must remain visible in APIs, UI copy, Passport limitations, and recovery previews.
 
-The already implemented Git review backend is the migration foundation, not the final scope. The active backend phase adds the retained lifecycle, authority, evidence, assurance, outcomes, recovery, and CLI capabilities around it. Web UI implementation is deferred until the backend contracts and acceptance suite are stable.
+The already implemented Git review backend is the migration foundation, not the final scope. The active phase adds the retained lifecycle, authority, evidence, assurance, outcomes, recovery, scriptable CLI, and interactive terminal UI around it. Browser web UI implementation is deferred until the backend contracts and acceptance suite are stable.
 
 ## Product invariants
 
@@ -113,7 +113,7 @@ The available local CML export contains application UI and an audit, but not the
 ## Architecture boundary
 
 ```text
-CLI / API clients -> Authenticated local API -> Change lifecycle and policy
+Terminal UI / CLI / API clients -> Authenticated local API -> Change lifecycle and policy
                                       -> Identity and credential broker -> GitHub
                                       -> Top-level Agent Launcher
                                       -> Git/environment/dependency evidence
@@ -125,7 +125,7 @@ CLI / API clients -> Authenticated local API -> Change lifecycle and policy
 
 The Agent Launcher invokes or references only the top-level agent. No component supervises the descendant process tree, intercepts filesystem operations, or records a causal event stream.
 
-The web UI is a later consumer of this boundary and is not part of the active backend implementation phase.
+The interactive terminal UI is the current human interface. A browser web UI is a later consumer of this boundary and is not part of the active implementation phase.
 
 ## Quality bar
 
@@ -160,11 +160,17 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-18 23:24:10 -04:00 - Terminal UI clarified as active scope
+
+Only the browser web UI is deferred. `[AC]` owns both scriptable CLI commands and a polished interactive terminal UI using Typer, Rich, and Textual. The terminal experience must provide visual hierarchy, semantic colours, panels, tables, progress, guided forms, recovery confirmation, and Passport export while sourcing all decisions from the API.
+
+Terminal accessibility and automation are mandatory: statuses pair colour with text/symbols; keyboard navigation, resize/small-terminal behavior, `NO_COLOR`/`--no-color`, plain non-TTY output, and JSON output are acceptance requirements. `[SD]` independently verifies these behaviors before integration.
+
 ### `[SD]` - 2026-09-18 23:20:58 -04:00 - Backend verification ownership
 
-The active phase now defers all UI work. `[SD]` owns shared contracts/core, migrations, application composition, independent acceptance tests, review decisions, and final backend integration. `[KB]` implements the evidence/execution/assurance stream; `[AC]` implements identity/authority, broker/provider outcomes, recovery, Passport, and CLI.
+The active phase defers browser UI work. `[SD]` owns shared contracts/core, migrations, application composition, independent acceptance tests, review decisions, and final backend integration. `[KB]` implements the evidence/execution/assurance stream; `[AC]` implements identity/authority, broker/provider outcomes, recovery, Passport, CLI, and the interactive terminal UI.
 
-Every `[KB]` and `[AC]` handoff must pass an independent `[SD]` review before integration. `[SD]` adds black-box/adversarial tests and returns defects to the owning contributor rather than modifying feature-owned paths. The frontend remains unassigned until a later scope update.
+Every `[KB]` and `[AC]` handoff must pass an independent `[SD]` review before integration. `[SD]` adds black-box/adversarial tests and returns defects to the owning contributor rather than modifying feature-owned paths. The browser frontend remains unassigned until a later scope update.
 
 ### `[SD]` - 2026-09-18 23:13:27 -04:00 - Proposal implementation scope reset
 

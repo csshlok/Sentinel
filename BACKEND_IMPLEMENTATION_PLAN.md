@@ -1,8 +1,8 @@
-# Change Assurance Runtime - Backend Implementation and Verification Plan
+# Change Assurance Runtime - Backend, Terminal UI, and Verification Plan
 
 ## 1. Authority and outcome
 
-This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. UI implementation is deferred to a later phase; it is not assigned or required for current backend acceptance. Only these four subsystems are removed from the product architecture:
+This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. The interactive terminal UI is part of this phase; only the browser-based web UI is deferred. Only these four subsystems are removed from the product architecture:
 
 1. Event/effect journal.
 2. Process supervisor.
@@ -42,8 +42,8 @@ These cuts also mean:
 - GitHub pull-request and CI outcome tracking.
 - Constrained Git/provider recovery with dry-run, approval, and post-action verification.
 - A Change Passport containing intent, authority, evidence, assurance, outcomes, limitations, and recovery status.
-- A CLI backed by the versioned API.
-- A stable API suitable for a later UI phase; no frontend work occurs in this plan.
+- A scriptable CLI and polished interactive terminal UI backed by the versioned API.
+- A stable API suitable for a later browser UI phase; no web frontend work occurs in this plan.
 
 ### 3.1 Proposal coverage matrix
 
@@ -63,13 +63,13 @@ These cuts also mean:
 | Replay engine | Remove as dependency | None | Cannot be implemented without the event journal/process/filesystem evidence |
 | Git/PR/CI continuity | Keep | `[KB]` + `[AC]` | Git evidence by `[KB]`; provider outcomes by `[AC]` |
 | Change Passport | Keep | `[AC]` | Aggregated retained evidence plus limitations |
-| CLI | Keep | `[AC]` | Complete backend workflow and unsupported states through the local API |
-| Web UI | Deferred | None in this phase | Implement only after backend contracts and acceptance are complete |
+| CLI and terminal UI | Keep | `[AC]` | Scriptable commands plus a visual interactive workflow through the local API |
+| Browser web UI | Deferred | None in this phase | Implement only after backend contracts and acceptance are complete |
 
 ## 4. Architecture
 
 ```text
-CLI / API clients (web UI deferred)
+Interactive terminal UI / CLI / API clients (browser UI deferred)
       |
       v
 Local authenticated API
@@ -95,8 +95,11 @@ No component is renamed to conceal a removed subsystem. `ExecutionSummary` is on
 ## 5. Technology baseline
 
 - Python 3.12+, FastAPI, Pydantic v2, SQLite, and explicit schema migrations.
-- OpenAPI is frozen and validated so a later React/TypeScript UI can generate a typed client.
-- Typer for the local CLI.
+- OpenAPI is frozen and validated so every interface consumes the same contracts.
+- Typer for scriptable CLI commands and command routing.
+- Rich for colour, tables, panels, progress, syntax/diff rendering, prompts, and consistent status semantics.
+- Textual for the keyboard-driven interactive terminal application and reusable terminal components.
+- Colour is never the only status signal. `NO_COLOR`, `--no-color`, non-TTY/plain output, and machine-readable JSON output are supported.
 - Subprocess argument arrays, `shell=False`, bounded output, and bounded runtime.
 - Windows Credential Manager behind a narrow credential-store port; tests use an in-memory fake.
 - GitHub REST APIs behind a provider port. Durable secrets never enter Change records, logs, result payloads, or agent environments.
@@ -246,8 +249,13 @@ Exclusive paths: `backend/app/identity/`, `policy/`, `credentials/`, `providers/
    - Mark uncommitted files, environment changes, and unknown effects unsupported.
 6. **P3.6 Change Passport**
    - Aggregate intent, actors, authority, evidence references, assurance, outcomes, limitations, and recovery status under the frozen Passport contract.
-7. **P3.7 CLI**
-   - Implement create/status/checkpoint/assure/outcome/recovery/passport flows through the API without bypassing policy.
+7. **P3.7 CLI and interactive terminal UI**
+   - Implement scriptable `create`, `status`, `checkpoint`, `assure`, `outcome`, `recovery`, and `passport` commands through the API without bypassing policy.
+   - Build an interactive terminal dashboard with Change list/detail, lifecycle stepper, evidence summary cards, coloured status badges, Git/dependency tables, assurance progress/results, PR/CI panels, and Passport export.
+   - Provide guided Change Contract and delegation forms plus explicit recovery preview/confirmation screens.
+   - Use a restrained semantic palette: success, warning, failure, informational, muted, and selected/focus states. Always pair colour with text and symbols.
+   - Support keyboard-only navigation, small terminals, resize behavior, scrollable long output, plain/non-TTY mode, `NO_COLOR`, and JSON output.
+   - Keep business rules in the API; the terminal UI renders server state and never invents readiness or authorization.
 
 ## 12. Parallel execution and intersection gates
 
@@ -351,7 +359,9 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 - Disposable-repository recovery tests for isolation, approval, conflict safety, idempotency, and verification.
 - API tests for all envelopes and forbidden endpoint absence.
 - CLI/API end-to-end, restart-persistence, clean-clone, and upgrade smoke tests.
-- UI/browser/accessibility testing is deferred with UI implementation.
+- Rich rendering tests for colour/no-colour/plain/JSON output and terminal widths.
+- Textual component/snapshot and interaction tests for keyboard navigation, forms, loading, empty, stale, denied, failed, partial, and unsupported states.
+- Browser UI and browser accessibility testing are deferred; terminal accessibility remains required.
 
 ## 17. Definition of done
 
@@ -363,10 +373,11 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 6. PR and CI results are tied to the correct commit SHA.
 7. The Passport exports real intent, actors, authority, checkpoints, deviations, assurance, outcomes, limitations, and recovery status.
 8. Supported recovery requires preview/approval, is conflict-safe, and is verified.
-9. API and CLI show real missing, stale, unsupported, denied, failed, and partial states.
+9. API, CLI, and interactive terminal UI show real missing, stale, unsupported, denied, failed, and partial states.
 10. Event journal, process supervisor, filesystem tracker, tool registry, and replay are absent from code, storage, API, and claims.
 11. Existing data upgrades successfully and the complete backend release matrix passes.
-12. UI implementation remains deferred and does not block backend acceptance.
+12. The terminal UI passes keyboard, resize, no-colour, plain-output, and critical-flow interaction tests.
+13. Browser web UI implementation remains deferred and does not block backend acceptance.
 
 ## 18. Handoff format
 

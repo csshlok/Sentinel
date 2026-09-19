@@ -35,8 +35,8 @@ A developer can define a bounded Change, delegate scoped authority to an agent, 
 - Assurance discovery, selection, bounded execution, contract deviation, and evidence coverage.
 - GitHub PR/CI outcomes tied to exact commit SHAs.
 - Constrained Git commit/provider recovery with preview, approval, conflict checks, and verification.
-- Versioned Change Passport, CLI, capabilities reporting, and explicit unsupported states.
-- A frozen OpenAPI contract suitable for a later UI phase; frontend implementation is deferred.
+- Versioned Change Passport, scriptable CLI, interactive terminal UI, capabilities reporting, and explicit unsupported states.
+- A frozen OpenAPI contract suitable for a later browser UI phase; web frontend implementation is deferred.
 
 ## Approved cuts
 
@@ -82,7 +82,7 @@ Do not claim:
 ## Active architecture
 
 ```text
-CLI / API clients (web UI deferred)
+Interactive terminal UI / CLI / API clients (browser UI deferred)
   -> Authenticated local API
        -> Change lifecycle, contracts, identity, policy
        -> Credential broker and GitHub outcomes
@@ -110,21 +110,27 @@ The Agent Launcher may start or attach to a top-level invocation, but it does no
 
 ## Definition of done
 
-The backend phase meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end through the API and CLI using real data, migrations preserve existing data, authority and credentials are enforced, evidence freshness gates lifecycle state, every relevant failure or unsupported condition is represented, and recovery stays inside its documented Git/provider boundary.
+The backend/terminal phase meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end through the API, CLI, and interactive terminal UI using real data; migrations preserve existing data; authority and credentials are enforced; evidence freshness gates lifecycle state; every relevant failure or unsupported condition is represented; and recovery stays inside its documented Git/provider boundary.
 
-No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. UI implementation and browser acceptance are not part of this phase and cannot block backend completion.
+No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. The terminal UI is required; browser UI implementation and browser acceptance are not part of this phase.
 
 ## Current implementation status
 
+### `[SD]` - 2026-09-18 23:24:10 -04:00 - Interactive terminal UI added
+
+The browser web UI remains deferred, but the CLI is now explicitly user-facing and includes an interactive terminal UI owned by `[AC]`. It will use Typer for commands, Rich for coloured visual output, and Textual for keyboard-driven screens and components.
+
+Required terminal experiences include a Change dashboard, lifecycle stepper, evidence/status cards, Git and dependency tables, assurance progress/results, PR/CI panels, guided contract/delegation forms, recovery preview/confirmation, and Passport export. Colour must be semantic and restrained, always paired with text/symbols. `NO_COLOR`, `--no-color`, small-terminal/resize handling, plain non-TTY output, and JSON output are acceptance requirements rather than optional polish.
+
 ### `[SD]` - 2026-09-18 23:20:58 -04:00 - Verification and integration role established
 
-UI implementation is deferred. `[SD]` is now the independent verifier and integration owner for all backend work submitted by `[KB]` and `[AC]`.
+Browser UI implementation is deferred; the CLI and terminal UI remain active. `[SD]` is the independent verifier and integration owner for all backend work submitted by `[KB]` and `[AC]`.
 
 - `[SD]` owns shared contracts/core, migrations, application composition, independent acceptance tests, code-review findings, release verification, and the context documents.
 - `[KB]` owns Git evidence, the top-level Agent Launcher, environment/dependency tracking, and assurance.
-- `[AC]` owns identity/delegation, policy, credential brokering, GitHub/outcomes, constrained recovery, Change Passport, and CLI.
+- `[AC]` owns identity/delegation, policy, credential brokering, GitHub/outcomes, constrained recovery, Change Passport, CLI, and terminal UI.
 
-`[SD]` reviews each handoff for scope, correctness, contracts, security, migrations, failure behavior, and missing adversarial coverage. Rejected defects return to their original owner; `[SD]` does not overwrite `[KB]` or `[AC]` feature code. Only accepted handoffs enter an `[SD]` integration window. Frontend paths are unassigned and frozen until a later phase.
+`[SD]` reviews each handoff for scope, correctness, contracts, security, migrations, failure behavior, and missing adversarial coverage. Rejected defects return to their original owner; `[SD]` does not overwrite `[KB]` or `[AC]` feature code. Only accepted handoffs enter an `[SD]` integration window. Browser frontend paths are unassigned and frozen until a later phase.
 
 ### `[SD]` - 2026-09-18 23:13:27 -04:00 - Proposal scope restored and work repartitioned
 

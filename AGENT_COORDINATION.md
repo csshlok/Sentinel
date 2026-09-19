@@ -22,11 +22,11 @@ The PDF proposal is product authority; the context documents record the approved
 | --- | --- | --- | --- |
 | Person 1 | `[SD]` | Independent verification, shared contracts/core, migrations, integration, release acceptance | `backend/app/contracts/`, `backend/app/core/`, `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, context/plan documents |
 | Person 2 | `[KB]` | Git evidence, agent launcher, environment/dependency tracking, assurance | `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, matching unit tests |
-| Person 3 | `[AC]` | Identity, policy, credential broker, GitHub/outcomes, recovery, Passport, CLI | `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, matching owner unit/contract tests |
+| Person 3 | `[AC]` | Identity, policy, credential broker, GitHub/outcomes, recovery, Passport, CLI and terminal UI | `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, `tui/`, matching owner unit/contract tests |
 
 No additional implementation tag creates a fourth owner. `[INTEGRATION]` is a temporary activity led by `[SD]`, not a separate person or permission to edit arbitrary files.
 
-`frontend/` is unassigned and frozen during this backend phase. No person may create, modify, or integrate UI code until a later plan explicitly assigns it.
+`frontend/` is reserved for the deferred browser UI and is unassigned/frozen. The user-facing terminal UI is active work owned exclusively by `[AC]` under `backend/app/tui/`; terminal presentation tests stay in `[AC]`'s matching test path until `[SD]` adds independent acceptance coverage.
 
 ## Root files and documentation
 
