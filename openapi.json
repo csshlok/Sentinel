@@ -1237,11 +1237,53 @@
               }
             ]
           },
+          "replay_checked_events": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Checked Events"
+          },
+          "replay_first_break_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay First Break Seq"
+          },
+          "replay_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Verified"
+          },
           "schema_version": {
             "const": 1,
             "default": 1,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "tool_trust_summary": {
+            "items": {
+              "$ref": "#/components/schemas/ToolTrustSummaryEntry"
+            },
+            "maxItems": 10000,
+            "title": "Tool Trust Summary",
+            "type": "array"
           }
         },
         "required": [
@@ -3849,6 +3891,61 @@
         ],
         "title": "ToolTrustState",
         "type": "string"
+      },
+      "ToolTrustSummaryEntry": {
+        "additionalProperties": false,
+        "description": "One tool observed for a Change, as surfaced on the Change Passport.\n\nMirrors the PDF \u00a730 Passport \"TOOLS\" block (e.g. `Codex CLI: approved`)\nbut built from real `ToolManifest`/`DriftReport` data (see\nEVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md \u00a7B.8) rather than a placeholder.",
+        "properties": {
+          "drifted": {
+            "title": "Drifted",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "signature_state": {
+            "$ref": "#/components/schemas/ToolSignatureState"
+          },
+          "tool_id": {
+            "format": "uuid",
+            "title": "Tool Id",
+            "type": "string"
+          },
+          "trust_state": {
+            "$ref": "#/components/schemas/ToolTrustState"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_id",
+          "name",
+          "version",
+          "trust_state",
+          "signature_state",
+          "drifted"
+        ],
+        "title": "ToolTrustSummaryEntry",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {

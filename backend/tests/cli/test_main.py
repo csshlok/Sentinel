@@ -234,3 +234,40 @@ def test_evidence_read_commands(monkeypatch, argv, method, suffix):
 def test_mutating_evidence_commands_forward_the_idempotency_key(monkeypatch, argv):
     _, call = _invoke(monkeypatch, {}, [*argv, "--idempotency-key", "key-12345678"])
     assert call["headers"]["Idempotency-Key"] == "key-12345678"
+
+
+TOOL = "33333333-3333-3333-3333-333333333333"
+
+
+@pytest.mark.parametrize(("argv", "method", "path"), [
+    (["tool", "list"], "GET", "/tools"),
+    (["tool", "show", TOOL], "GET", f"/tools/{TOOL}"),
+    (["tool", "for-change", CHANGE], "GET", f"/changes/{CHANGE}/tools"),
+])
+def test_tool_read_commands_call_the_right_routes(monkeypatch, argv, method, path):
+    result, call = _invoke(monkeypatch, {"ok": True}, argv)
+    assert result == {"ok": True}
+    assert call["method"] == method and call["url"].endswith("/api/v1" + path)
+
+
+def test_tool_trust_sends_decision_body(monkeypatch):
+    result, call = _invoke(
+        monkeypatch, {"decision": "APPROVE"},
+        ["tool", "trust", TOOL, "APPROVE", "--actor-id", ACTOR,
+         "--scope", "exact_version", "--reason", "Reviewed", "--change-id", CHANGE],
+    )
+    assert result == {"decision": "APPROVE"}
+    assert call["method"] == "POST" and call["url"].endswith(f"/api/v1/tools/{TOOL}/trust")
+    body = json.loads(call["body"])
+    assert body == {
+        "actor_id": ACTOR, "decision": "APPROVE", "scope": "exact_version",
+        "reason": "Reviewed", "change_id": CHANGE,
+    }
+
+
+def test_tool_trust_omits_optional_fields_when_not_given(monkeypatch):
+    _, call = _invoke(
+        monkeypatch, {}, ["tool", "trust", TOOL, "DENY", "--actor-id", ACTOR],
+    )
+    body = json.loads(call["body"])
+    assert body == {"actor_id": ACTOR, "decision": "DENY", "scope": "exact_version"}

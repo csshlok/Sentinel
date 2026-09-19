@@ -34,6 +34,7 @@ agent_app = typer.Typer(no_args_is_help=True)
 assurance_app = typer.Typer(no_args_is_help=True)
 events_app = typer.Typer(no_args_is_help=True)
 replay_app = typer.Typer(no_args_is_help=True)
+tool_app = typer.Typer(no_args_is_help=True)
 app.add_typer(change_app, name="change")
 app.add_typer(actor_app, name="actor")
 app.add_typer(delegation_app, name="delegation")
@@ -46,6 +47,7 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(assurance_app, name="assurance")
 app.add_typer(events_app, name="events")
 app.add_typer(replay_app, name="replay")
+app.add_typer(tool_app, name="tool")
 
 EXIT_OK = 0
 EXIT_API_ERROR = 1
@@ -536,6 +538,46 @@ def replay_export(
         return {"written_to": out}
 
     _run(write_to_file, as_json=json_, no_color=no_color)
+
+
+@tool_app.command("list")
+def tool_list(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """List every tool the registry has observed (bounded scope: launcher executables + declared manifests)."""
+    _run(lambda: ApiClient(api_url).list_tools(), as_json=json_, no_color=no_color)
+
+
+@tool_app.command("show")
+def tool_show(tool_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show one tool's manifest and current trust state."""
+    _run(lambda: ApiClient(api_url).get_tool(tool_id), as_json=json_, no_color=no_color)
+
+
+@tool_app.command("for-change")
+def tool_for_change(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """List the tools observed for one Change."""
+    _run(lambda: ApiClient(api_url).list_tools_for_change(change_id), as_json=json_, no_color=no_color)
+
+
+@tool_app.command("trust")
+def tool_trust(
+    tool_id: UUID,
+    decision: str,
+    actor_id: UUID = typer.Option(..., "--actor-id"),
+    scope: str = typer.Option("exact_version", "--scope", help="exact_version | publisher_policy"),
+    reason: str = typer.Option(None, "--reason"),
+    change_id: UUID = typer.Option(None, "--change-id"),
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Record an APPROVE/DENY trust decision for a tool."""
+    _run(
+        lambda: ApiClient(api_url).decide_tool_trust(
+            tool_id, actor_id=actor_id, decision=decision, scope=scope,
+            reason=reason, change_id=change_id,
+        ),
+        as_json=json_, no_color=no_color,
+    )
 
 
 def main() -> None:

@@ -620,6 +620,38 @@ class EvidenceReference(ContractModel):
     captured_at: AwareDatetime | None = None
 
 
+class ToolTrustState(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    OBSERVED = "OBSERVED"
+    PROVISIONAL = "PROVISIONAL"
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+
+
+class ToolSignatureState(StrEnum):
+    VALID = "valid"
+    INVALID = "invalid"
+    UNSIGNED = "unsigned"
+    UNKNOWN = "unknown"
+
+
+class ToolTrustSummaryEntry(ContractModel):
+    """One tool observed for a Change, as surfaced on the Change Passport.
+
+    Mirrors the PDF §30 Passport "TOOLS" block (e.g. `Codex CLI: approved`)
+    but built from real `ToolManifest`/`DriftReport` data (see
+    EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md §B.8) rather than a placeholder.
+    """
+
+    tool_id: UUID
+    name: ShortText
+    version: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+    publisher: str | None = Field(default=None, max_length=256)
+    trust_state: ToolTrustState
+    signature_state: ToolSignatureState
+    drifted: bool
+
+
 class ChangePassport(ContractModel):
     id: UUID
     change_id: UUID
@@ -631,6 +663,10 @@ class ChangePassport(ContractModel):
     outcomes: list[UUID] = Field(default_factory=list, max_length=10000)
     limitations: list[str] = Field(default_factory=list, max_length=256)
     recovery_status: RecoveryStatus | None = None
+    tool_trust_summary: list[ToolTrustSummaryEntry] = Field(default_factory=list, max_length=10000)
+    replay_verified: bool | None = None
+    replay_checked_events: int | None = Field(default=None, ge=0)
+    replay_first_break_seq: int | None = None
     generated_at: AwareDatetime
     canonical_digest: Digest
 
@@ -754,21 +790,6 @@ class ChainVerificationResult(ContractModel):
     checked_events: int = Field(ge=0)
     first_break_seq: int | None = None
     reason: str | None = Field(default=None, max_length=1000)
-
-
-class ToolTrustState(StrEnum):
-    UNKNOWN = "UNKNOWN"
-    OBSERVED = "OBSERVED"
-    PROVISIONAL = "PROVISIONAL"
-    APPROVED = "APPROVED"
-    DENIED = "DENIED"
-
-
-class ToolSignatureState(StrEnum):
-    VALID = "valid"
-    INVALID = "invalid"
-    UNSIGNED = "unsigned"
-    UNKNOWN = "unknown"
 
 
 class ToolTrustDecisionKind(StrEnum):

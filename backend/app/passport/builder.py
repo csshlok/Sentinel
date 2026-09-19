@@ -23,8 +23,11 @@ from backend.app.contracts.models import (
     EvidenceReference,
     EvidenceStatus,
     RecoveryStatus,
+    ToolTrustSummaryEntry,
 )
 from backend.app.core.database import Database
+from backend.app.core.replay_service import ReplayService
+from backend.app.core.tool_registry_service import ToolRegistryService
 from backend.app.identity.repository import DelegationRepository
 
 # (table, id_column, timestamp_column, evidence_kind)
@@ -57,10 +60,14 @@ class PassportBuilder:
         database: Database,
         delegations: DelegationRepository,
         *,
+        tools: ToolRegistryService | None = None,
+        replay: ReplayService | None = None,
         clock: Callable[[], datetime] = _default_clock,
     ) -> None:
         self.database = database
         self.delegations = delegations
+        self.tools = tools or ToolRegistryService(database)
+        self.replay = replay or ReplayService(database)
         self._clock = clock
 
     def build(self, change: ChangeView) -> ChangePassport:
@@ -87,6 +94,23 @@ class PassportBuilder:
         if recovery_status is None:
             limitations.append("No recovery plan has been created for this Change.")
 
+        tool_trust_summary = self._tool_trust_summary(change.id)
+        if not tool_trust_summary:
+            limitations.append("No tools have been observed for this Change.")
+
+        replay_verified, replay_checked_events, replay_first_break_seq = (
+            self._replay_summary(change.id)
+        )
+        if replay_verified is None:
+            limitations.append(
+                "No journal events have been recorded for this Change; "
+                "replay verification is not meaningful."
+            )
+        elif not replay_verified:
+            limitations.append(
+                f"Replay chain verification failed at seq={replay_first_break_seq}."
+            )
+
         content = {
             "schema_version": 1,
             "change_id": str(change.id),
@@ -105,6 +129,21 @@ class PassportBuilder:
             "outcomes": sorted(str(outcome_id) for outcome_id in outcome_ids),
             "limitations": sorted(limitations),
             "recovery_status": recovery_status.value if recovery_status else None,
+            "tool_trust_summary": [
+                {
+                    "tool_id": str(entry.tool_id),
+                    "name": entry.name,
+                    "version": entry.version,
+                    "publisher": entry.publisher,
+                    "trust_state": entry.trust_state.value,
+                    "signature_state": entry.signature_state.value,
+                    "drifted": entry.drifted,
+                }
+                for entry in sorted(tool_trust_summary, key=lambda item: str(item.tool_id))
+            ],
+            "replay_verified": replay_verified,
+            "replay_checked_events": replay_checked_events,
+            "replay_first_break_seq": replay_first_break_seq,
         }
         canonical_json = json.dumps(
             content, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -121,6 +160,10 @@ class PassportBuilder:
             outcomes=outcome_ids,
             limitations=sorted(limitations),
             recovery_status=recovery_status,
+            tool_trust_summary=tool_trust_summary,
+            replay_verified=replay_verified,
+            replay_checked_events=replay_checked_events,
+            replay_first_break_seq=replay_first_break_seq,
             generated_at=self._clock(),
             canonical_digest=digest,
         )
@@ -181,3 +224,27 @@ class PassportBuilder:
                 (str(change_id),),
             ).fetchone()
         return RecoveryStatus(row["status"]) if row is not None else None
+
+    def _tool_trust_summary(self, change_id: UUID) -> list[ToolTrustSummaryEntry]:
+        manifests = self.tools.list_for_change(change_id)
+        summary: list[ToolTrustSummaryEntry] = []
+        for manifest in manifests:
+            drift = self.tools.check_drift(manifest.id, change_id=change_id)
+            summary.append(
+                ToolTrustSummaryEntry(
+                    tool_id=manifest.id,
+                    name=manifest.name,
+                    version=manifest.version,
+                    publisher=manifest.publisher,
+                    trust_state=manifest.trust_state,
+                    signature_state=manifest.signature_state,
+                    drifted=drift.drifted,
+                )
+            )
+        return summary
+
+    def _replay_summary(self, change_id: UUID) -> tuple[bool | None, int | None, int | None]:
+        result = self.replay.verify_chain(change_id)
+        if result.checked_events == 0:
+            return None, None, None
+        return result.verified, result.checked_events, result.first_break_seq

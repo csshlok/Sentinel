@@ -30,6 +30,7 @@ from backend.app.tui.evidence_screen import EvidenceScreen
 from backend.app.tui.outcome_screen import OutcomeScreen
 from backend.app.tui.passport_screen import PassportScreen
 from backend.app.tui.recovery_screen import RecoveryScreen
+from backend.app.tui.tool_trust_screen import ToolTrustScreen
 from backend.tests.support_kb import make_repo
 
 
@@ -207,6 +208,26 @@ async def test_passport_screen_real_load_when_none_exists(live_change) -> None:
 
 
 @pytest.mark.anyio
+async def test_tools_screen_real_load_when_no_tool_observed(live_change) -> None:
+    """No tool has been observed for this Change yet: the real backend
+    returns an empty list, not an error. Must render the honest empty
+    state, not crash."""
+
+    api_url, change_id, actor_id, _human_id = live_change
+    app = ChangeDashboard(api_url=api_url, actor_id=actor_id)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _select_first_row(pilot)
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, ToolTrustScreen)
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_full_tour_of_every_screen_in_one_session(live_change) -> None:
     """One session visiting every screen in sequence, the way a real user
     would, rather than one isolated screen per test — catches state that
@@ -221,7 +242,7 @@ async def test_full_tour_of_every_screen_in_one_session(live_change) -> None:
         await _select_first_row(pilot)
         for key in ("i", "escape", "g", "escape", "o", "escape",
                     "d", "escape", "c", "escape", "v", "escape",
-                    "p", "escape", "r"):
+                    "p", "escape", "u", "escape", "r"):
             await pilot.press(key)
             await pilot.pause()
         assert app.is_running

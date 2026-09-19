@@ -418,3 +418,32 @@ class ApiClient:
 
     def export_replay(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/replay/export")
+
+    # -- tool registry --
+    def list_tools(self) -> Any:
+        return self._request("GET", "/api/v1/tools")
+
+    def get_tool(self, tool_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/tools/{tool_id}")
+
+    def list_tools_for_change(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/tools")
+
+    def decide_tool_trust(
+        self,
+        tool_id: UUID,
+        *,
+        actor_id: UUID,
+        decision: str,
+        scope: str,
+        reason: str | None = None,
+        change_id: UUID | None = None,
+    ) -> Any:
+        body: dict[str, Any] = {
+            "actor_id": str(actor_id), "decision": decision, "scope": scope,
+        }
+        if reason is not None:
+            body["reason"] = reason
+        if change_id is not None:
+            body["change_id"] = str(change_id)
+        return self._request("POST", f"/api/v1/tools/{tool_id}/trust", json_body=body)

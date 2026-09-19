@@ -267,7 +267,12 @@ def _build_runtime_services(
         journal=resolved_journal,
     )
 
-    passport_builder = PassportBuilder(database, delegations)
+    replay_service = ReplayService(database)
+    resolved_tools = tool_registry or ToolRegistryService(database, journal=resolved_journal)
+
+    passport_builder = PassportBuilder(
+        database, delegations, tools=resolved_tools, replay=replay_service
+    )
     passport = PassportService(passport_builder, service, PassportRepository(database),
                                journal=resolved_journal)
 
@@ -281,8 +286,8 @@ def _build_runtime_services(
         evidence=EvidenceAdminService(
             evidence_service, policy, service, IdempotencyStore(database)
         ),
-        replay=ReplayService(database),
-        tools=tool_registry or ToolRegistryService(database, journal=resolved_journal),
+        replay=replay_service,
+        tools=resolved_tools,
     )
 
 
