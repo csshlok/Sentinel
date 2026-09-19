@@ -47,7 +47,7 @@ fabricated data. `backend/tests/tui/test_app.py` covers the pure
 
 **Still not done**, in the order the plan lists them (section 13.3 AC-7):
 
-1. Change **detail** view (drill into one row: full evidence, contract, delegations).
+1. ~~Change detail view~~ — done: `backend/app/tui/detail_screen.py`'s `DetailScreen`, pushed via `enter` on a selected row. Shows intent, lifecycle/review state, risk, revision, full Change Contract (allowed/forbidden paths, authority ceiling, max risk, required checks), and the latest Git/verification evidence when present, with honest "not captured yet" states when absent. `format_change()` is pure and tested (5 tests in `backend/tests/tui/test_detail_screen.py`). Delegation listing is not yet included in this screen (delegations are still CLI-only via `delegation list`).
 2. Lifecycle **stepper** widget reflecting `ChangeLifecycleState`/`LifecycleFacts`.
 3. Git/dependency evidence **tables** (checkpoints, dependency changes).
 4. Assurance progress/results panel.
