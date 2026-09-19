@@ -56,6 +56,20 @@ def test_similarly_named_sibling_path_is_not_forbidden() -> None:
     assert decision.denial_reason is not PolicyDenialReason.PATH_FORBIDDEN
 
 
+def test_forbidden_path_prefix_denies_regardless_of_case() -> None:
+    # NTFS is case-insensitive, so "Secrets/prod.env" and "secrets/prod.env"
+    # name the same file -- a case-sensitive comparison here would let this
+    # bypass a forbidden prefix of "secrets".
+    decision = evaluate(
+        operation=PolicyOperation.GIT_RECOVERY_COMMIT,
+        authorization=ALLOWED,
+        target_path="Secrets/prod.env",
+        forbidden_path_prefixes=["secrets"],
+    )
+    assert decision.allowed is False
+    assert decision.denial_reason is PolicyDenialReason.PATH_FORBIDDEN
+
+
 def test_lifecycle_state_not_permitted_denies() -> None:
     decision = evaluate(
         operation=PolicyOperation.ASSURANCE_RUN,

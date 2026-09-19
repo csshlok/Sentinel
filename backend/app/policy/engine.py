@@ -22,9 +22,12 @@ DEFAULT_DENIED_OPERATIONS = frozenset(
 
 
 def _path_is_forbidden(target_path: str, forbidden_prefixes: Iterable[str]) -> bool:
-    normalized = normpath(target_path.replace("\\", "/")).lstrip("/")
+    # NTFS (this product's primary target) is case-insensitive, so a
+    # case-sensitive comparison here would let "Secrets/x" bypass a
+    # forbidden prefix of "secrets" even though both name the same file.
+    normalized = normpath(target_path.replace("\\", "/")).lstrip("/").casefold()
     for prefix in forbidden_prefixes:
-        normalized_prefix = normpath(prefix.replace("\\", "/")).lstrip("/")
+        normalized_prefix = normpath(prefix.replace("\\", "/")).lstrip("/").casefold()
         if normalized == normalized_prefix or normalized.startswith(
             normalized_prefix + "/"
         ):
