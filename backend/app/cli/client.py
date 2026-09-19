@@ -1,0 +1,234 @@
+"""Thin JSON client for the local Change Assurance API.
+
+Reuses the generic `HttpTransport` seam from `backend.app.providers` so
+no new HTTP dependency is introduced. Every CLI command goes through
+this client and the real API only; nothing here imports persistence or
+services directly, so authentication, policy, and lifecycle guards can
+never be bypassed.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+from uuid import UUID
+
+from backend.app.providers.http_transport import (
+    HttpTransport,
+    TransportTimeout,
+    UrllibHttpTransport,
+)
+
+
+class ApiError(Exception):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+
+
+class ApiConnectionError(Exception):
+    """The API could not be reached at all (network/timeout)."""
+
+
+class ApiClient:
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8000",
+        *,
+        transport: HttpTransport | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.transport = transport or UrllibHttpTransport()
+        self.timeout_seconds = timeout_seconds
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        headers = {"Accept": "application/json"}
+        body = None
+        if json_body is not None:
+            body = json.dumps(json_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        try:
+            response = self.transport.request(
+                method,
+                f"{self.base_url}{path}",
+                headers=headers,
+                body=body,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except TransportTimeout as error:
+            raise ApiConnectionError(str(error)) from error
+
+        if response.status_code == 204:
+            return None
+        payload = json.loads(response.body) if response.body else None
+        if response.status_code >= 400:
+            error = (payload or {}).get("error", {})
+            raise ApiError(
+                error.get("code", "UNKNOWN_ERROR"),
+                error.get("message", "Request failed"),
+                status_code=response.status_code,
+                details=error.get("details", {}),
+            )
+        return payload
+
+    # -- system --
+    def capabilities(self) -> Any:
+        return self._request("GET", "/api/v1/capabilities")
+
+    def validate_repository(self, path: str) -> Any:
+        return self._request("POST", "/api/v1/repositories/validate", json_body={"path": path})
+
+    # -- changes --
+    def create_change(
+        self, title: str, intent: str, repository_path: str, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._request(
+            "POST",
+            "/api/v1/changes",
+            json_body={"title": title, "intent": intent, "repository_path": repository_path},
+            idempotency_key=idempotency_key,
+        )
+
+    def list_changes(self, *, limit: int = 100, offset: int = 0) -> Any:
+        return self._request("GET", f"/api/v1/changes?limit={limit}&offset={offset}")
+
+    def get_change(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}")
+
+    # -- identity --
+    def create_actor(self, kind: str, display_name: str) -> Any:
+        return self._request(
+            "POST", "/api/v1/actors", json_body={"kind": kind, "display_name": display_name}
+        )
+
+    def get_actor(self, actor_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/actors/{actor_id}")
+
+    def create_delegation(
+        self,
+        *,
+        grantor_id: UUID,
+        grantee_id: UUID,
+        change_id: UUID,
+        scopes: list[str],
+        ttl_seconds: int,
+    ) -> Any:
+        return self._request(
+            "POST",
+            "/api/v1/delegations",
+            json_body={
+                "grantor_id": str(grantor_id),
+                "grantee_id": str(grantee_id),
+                "change_id": str(change_id),
+                "scopes": scopes,
+                "ttl_seconds": ttl_seconds,
+            },
+        )
+
+    def revoke_delegation(self, delegation_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/delegations/{delegation_id}/revoke")
+
+    def list_delegations(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/delegations")
+
+    # -- providers/github --
+    def github_connect(self, token: str) -> Any:
+        return self._request("POST", "/api/v1/providers/github/connect", json_body={"token": token})
+
+    def github_disconnect(self) -> Any:
+        return self._request("POST", "/api/v1/providers/github/disconnect")
+
+    def github_status(self) -> Any:
+        return self._request("GET", "/api/v1/providers/github/status")
+
+    def issue_github_grant(
+        self, change_id: UUID, *, actor_id: UUID, scopes: list[str], ttl_seconds: int = 900
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json_body={"actor_id": str(actor_id), "scopes": scopes, "ttl_seconds": ttl_seconds},
+        )
+
+    def create_pull_request(
+        self,
+        change_id: UUID,
+        *,
+        actor_id: UUID,
+        grant_id: UUID,
+        base_branch: str,
+        head_branch: str,
+        title: str,
+        idempotency_key: str,
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json_body={
+                "actor_id": str(actor_id),
+                "grant_id": str(grant_id),
+                "base_branch": base_branch,
+                "head_branch": head_branch,
+                "title": title,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    # -- outcomes --
+    def refresh_outcomes(
+        self, change_id: UUID, *, grant_id: UUID, required_check_names: list[str] | None = None
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/outcomes/refresh",
+            json_body={
+                "grant_id": str(grant_id),
+                "required_check_names": required_check_names or [],
+            },
+        )
+
+    def list_outcomes(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/outcomes")
+
+    # -- recovery --
+    def preview_recovery(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/recovery/preview")
+
+    def execute_recovery(
+        self, change_id: UUID, plan_id: UUID, *, actor_id: UUID, approval_token: str
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/recovery/{plan_id}/execute",
+            json_body={"actor_id": str(actor_id), "approval_token": approval_token},
+        )
+
+    def get_latest_recovery(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/recovery")
+
+    # -- passport --
+    def build_passport(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/passport")
+
+    def get_latest_passport(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/passport")
