@@ -776,3 +776,107 @@ def test_pull_request_route_returns_stable_error_when_repository_has_no_github_r
         )
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "PROVIDER_REPOSITORY_UNRESOLVED"
+
+
+def test_idempotency_key_reused_for_a_genuinely_different_pr_is_rejected(tmp_path) -> None:
+    """An idempotency key must mean "the same request, safe to replay," not
+    "any request with this key." Reusing one with a different base/head
+    branch or title is a caller bug (key collision), and must be a stable
+    error — never a silent no-op that looks like success while creating no
+    PR for the actual request."""
+
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    transport = FakeHttpTransport(
+        [
+            json_response(
+                201,
+                {
+                    "number": 1,
+                    "html_url": "https://github.com/acme/widgets/pull/1",
+                    "head": {"sha": current_sha},
+                    "draft": True,
+                },
+            )
+        ]
+    )
+    app, client = _build_client(tmp_path, repo_path, current_sha, transport)
+    del app
+
+    with client:
+        change_id = client.post(
+            "/api/v1/changes",
+            json={
+                "title": "Idempotency collision",
+                "intent": "Exercise a reused key with a different body",
+                "repository_path": repo_path,
+            },
+        ).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Collision Agent"}
+        ).json()["id"]
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 3600,
+            },
+        )
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={
+                "actor_id": actor_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 900,
+            },
+        ).json()["id"]
+
+        first = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature-A",
+                "title": "PR A",
+                "idempotency_key": "shared-key",
+            },
+        )
+        assert first.status_code == 200
+        assert first.json()["status"] == "SUCCEEDED"
+
+        # Same key, genuinely different PR: must be rejected, not silently
+        # return PR A's result as if it were the answer for PR B.
+        second = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature-B",
+                "title": "PR B",
+                "idempotency_key": "shared-key",
+            },
+        )
+        assert second.status_code == 409
+        assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+        # An exact replay of the original request still returns the
+        # original stored result, with no second GitHub call.
+        replay = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature-A",
+                "title": "PR A",
+                "idempotency_key": "shared-key",
+            },
+        )
+        assert replay.status_code == 200
+        assert replay.json()["id"] == first.json()["id"]
+        assert len(transport.calls) == 1

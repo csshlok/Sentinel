@@ -42,6 +42,7 @@ from backend.app.contracts.ports import (
 from backend.app.core.change_service import ChangeService
 from backend.app.core.errors import (
     grant_binding_invalid,
+    idempotency_conflict,
     passport_not_found,
     policy_denied,
     provider_repository_unresolved,
@@ -239,6 +240,20 @@ class ProviderOperationService:
         # failure has no such cache).
         existing = self.operations.get_by_idempotency_key(change_id, idempotency_key)
         if existing is not None:
+            # An idempotency key must mean "the same request", not "any
+            # request with this key" — replaying it with a different
+            # base/head branch or title is a caller bug (key collision or
+            # copy-paste error), not a legitimate replay. Silently
+            # returning the first PR's result for a different PR body
+            # would be worse than an error: it would look like success
+            # while creating no PR for the actual request.
+            replayed = existing.request.parameters
+            if (
+                replayed.get("base_branch") != base_branch
+                or replayed.get("head_branch") != head_branch
+                or replayed.get("title") != title
+            ):
+                raise idempotency_conflict(f"providers/github/pulls:{idempotency_key}")
             return existing
 
         change = self.change_service.get(change_id)
