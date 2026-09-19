@@ -226,6 +226,20 @@ class ProviderOperationService:
         title: str,
         idempotency_key: str,
     ) -> ProviderOperation:
+        # Check for a prior result before touching the provider at all.
+        # `ProviderOperationRepository.create`'s UNIQUE(change_id,
+        # idempotency_key) constraint only dedupes what gets *stored* — by
+        # itself it cannot stop a second real GitHub call for a replayed
+        # key, since the constraint is only checked after `provider.execute`
+        # has already run. This early return is what actually makes the
+        # idempotency-key contract hold for a request that previously
+        # failed (a previously *succeeded* request happens to also be
+        # short-circuited by `GitHubProvider`'s own internal cache, but a
+        # failure has no such cache).
+        existing = self.operations.get_by_idempotency_key(change_id, idempotency_key)
+        if existing is not None:
+            return existing
+
         change = self.change_service.get(change_id)
         grant = self.credentials.require_grant(
             grant_id, actor_id=actor_id, change_id=change_id
