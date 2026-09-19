@@ -10,7 +10,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.tui.delegation_screen import DelegationScreen
 from backend.app.tui.detail_screen import DetailScreen
+from backend.app.tui.outcome_screen import OutcomeScreen
 from backend.app.tui.passport_screen import PassportScreen
 from backend.app.tui.recovery_screen import RecoveryScreen
 
@@ -40,13 +42,23 @@ class ChangeDashboard(App):
         ("enter", "detail", "Detail"),
         ("v", "recover", "Recovery preview"),
         ("p", "passport", "Passport"),
+        ("o", "outcomes", "Outcomes"),
+        ("d", "delegations", "Delegations"),
         ("q", "quit", "Quit"),
     ]
 
-    def __init__(self, api_url: str = "http://127.0.0.1:8000", actor_id: str | None = None) -> None:
+    def __init__(
+        self,
+        api_url: str = "http://127.0.0.1:8000",
+        actor_id: str | None = None,
+        grant_id: str | None = None,
+        grantor_id: str | None = None,
+    ) -> None:
         super().__init__()
         self.api_url = api_url
         self.actor_id = actor_id
+        self.grant_id = grant_id
+        self.grantor_id = grantor_id
         self.client = ApiClient(api_url)
         self._change_ids: list[str] = []
 
@@ -124,6 +136,26 @@ class ChangeDashboard(App):
             return
         self.push_screen(DetailScreen(change_id, self.api_url))
 
+    def action_outcomes(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(OutcomeScreen(change_id, self.api_url, grant_id=self.grant_id))
+
+    def action_delegations(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(DelegationScreen(change_id, self.api_url, grantor_id=self.grantor_id))
+
 
 def main() -> None:
     import argparse
@@ -133,8 +165,19 @@ def main() -> None:
     parser.add_argument(
         "--actor-id", default=None, help="Actor UUID authorizing recovery execution."
     )
+    parser.add_argument(
+        "--grant-id", default=None, help="Credential grant UUID enabling outcome refresh."
+    )
+    parser.add_argument(
+        "--grantor-id", default=None, help="Actor UUID authorizing new delegations."
+    )
     args = parser.parse_args()
-    ChangeDashboard(api_url=args.api_url, actor_id=args.actor_id).run()
+    ChangeDashboard(
+        api_url=args.api_url,
+        actor_id=args.actor_id,
+        grant_id=args.grant_id,
+        grantor_id=args.grantor_id,
+    ).run()
 
 
 if __name__ == "__main__":
