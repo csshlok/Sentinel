@@ -160,6 +160,32 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[kb]` - 2026-09-19 00:01 -04:00 - Reviewed Person 2 milestones
+
+All KB-0 through KB-6 assignments were checked against the implementation. The Git and execution foundation is verified; the missing shared contracts still prevent a complete checkpoint/launcher/environment/dependency/assurance stream. The owner handoff now gives an explicit per-assignment status table rather than treating test coverage as whole-product completion.
+
+The recheck corrected invalid numeric-bound handling and passed **150 tests** with **100% statement/branch coverage** for Git and execution. At the user's request, the untracked `.vscode/settings.json` was removed and work was organized into three commits: execution (`5bf01cb`), Git (`47ea584`), and the documentation commit containing this record.
+
+For subsequent Person 2 work, the user requests `[kb]` tags, timestamps and milestone updates, including in commit messages. This reporting preference does not transfer ownership or bypass independent verification.
+
+### `[KB]` - 2026-09-18 23:57 -04:00 - Git and execution foundations hardened
+
+Person 2 continued the owned implementation using the existing `GitInspectionPort` and `VerificationPort`. Git observation now has bounded capture, command-hook suppression, read-only regression coverage, stable malformed-evidence errors and best-effort movement detection. A new bounded verification runner under `backend/app/execution/` strips inherited credential/injection variables and enforces pipe deadlines without descendant supervision. Its API integration is demonstrated through test-time dependency injection; production composition remains Person 1's responsibility.
+
+The full suite passes **139 tests**, with **100% statement and branch coverage** across the Git and execution packages. Real Windows repository, subprocess, API and SQLite-restart boundaries are covered. Detailed commands, risks and limitations are in `backend/app/git/KB_HANDOFF.md` and `PROJECT_CONTEXT.md`.
+
+The five planned shared Person 2 ports are still missing, so this is foundation hardening rather than a completed evidence/execution/assurance stream. No private replacement domain contracts, new causal observation, sandboxing or replay capabilities were introduced. Active Git content filters and submodules are explicitly unsupported in the legacy inspector; repeated reads do not prove an atomic checkpoint.
+
+### `[KB]` - 2026-09-18 23:41 -04:00 - Evidence stream compatibility audit
+
+The full proposal, active plan, coordination rules, repository source and tests were reviewed for the Person 2 assignment. The baseline suite passes with **49 tests** (`python -m pytest`, 7.31 seconds), including existing uncommitted Git adapter work that this audit preserved. This establishes the older Git review foundation only; it does not establish the retained proposal's end-to-end acceptance.
+
+The planned `GitStatePort`, `AgentLauncherPort`, `EnvironmentPort`, `DependencyPort`, and `AssurancePort` are not present in the shared contracts. Only `GitInspectionPort` and `VerificationPort` currently exist. Person 2 implementation remains blocked on the versioned models/ports and `[SD]` comprehension acknowledgement required by the coordination rules. The detailed comprehension statement, contract-change request, test matrix and review findings are recorded in `PROJECT_CONTEXT.md`.
+
+Review reproduced parent-environment inheritance into verification output with a synthetic secret canary and a raw error for malformed Git numstat. Static review identified post-capture output truncation, missing Git text-conversion suppression, and missing checkpoint-bound freshness. These are unresolved implementation findings, not new product capabilities. The older runner must not be treated as satisfying the new launcher's secret or bounded-capture requirements.
+
+Both context updates were explicitly requested by the user. They do not constitute independent `[SD]` acceptance, contract freeze, permission to overwrite another owner's work, or completion of KB-1 through KB-6. No runtime implementation was changed by this audit.
+
 ### `[SD]` - 2026-09-18 23:27:01 -04:00 - Contributor execution and verification standard
 
 `[KB]` and `[AC]` now have detailed, parallel, end-to-end work packets that finish their respective streams against frozen ports and conforming fakes before `[SD]` integrates them. Direct comprehension of the full proposal PDF is mandatory; each contributor must connect its work to proposal principles and pages while honoring the four approved cuts and their dependent limitations.
