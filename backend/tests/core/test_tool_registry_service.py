@@ -63,6 +63,48 @@ def test_repeated_resolve_of_same_bytes_updates_last_seen_only(tmp_path) -> None
     assert len(registry.list()) == 1
 
 
+def test_resolve_of_changed_bytes_revalidates_the_signature(tmp_path) -> None:
+    """A stale signature_state computed against old bytes must not survive
+
+    a digest change -- the checker is re-run so signature_state reflects
+    the *current* executable, not whatever it looked like at first
+    registration.
+    """
+
+    database = _database(tmp_path)
+    calls: list[str] = []
+
+    def checker(path: str) -> str:
+        calls.append(path)
+        return "valid" if len(calls) == 1 else "invalid"
+
+    registry = ToolRegistryService(database, signature_checker=checker)
+    exe = _executable(tmp_path, content=b"v1")
+    first = registry.resolve_or_register(exe, source="launcher_executable")
+    assert first.signature_state.value == "valid"
+
+    with open(exe, "wb") as handle:
+        handle.write(b"v2-different")
+    second = registry.resolve_or_register(exe, source="launcher_executable")
+    assert second.signature_state.value == "invalid"
+    assert calls == [exe, exe]
+
+
+def test_resolve_of_unchanged_bytes_does_not_recheck_the_signature(tmp_path) -> None:
+    database = _database(tmp_path)
+    calls: list[str] = []
+
+    def checker(path: str) -> str:
+        calls.append(path)
+        return "valid"
+
+    registry = ToolRegistryService(database, signature_checker=checker)
+    exe = _executable(tmp_path)
+    registry.resolve_or_register(exe, source="launcher_executable")
+    registry.resolve_or_register(exe, source="launcher_executable")
+    assert calls == [exe]
+
+
 def test_record_observation_emits_registration_event_once(tmp_path) -> None:
     database = _database(tmp_path)
     change_id = uuid4()

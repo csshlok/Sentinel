@@ -104,10 +104,27 @@ class ToolRegistryService:
                     "SELECT * FROM tool_manifests WHERE id = ?", (str(tool_id),)
                 ).fetchone()
             else:
-                connection.execute(
-                    "UPDATE tool_manifests SET artifact_digest = ?, last_seen_at = ? WHERE id = ?",
-                    (digest, now.isoformat(), row["id"]),
-                )
+                if digest != row["artifact_digest"]:
+                    # The executable's bytes changed since it was last
+                    # resolved: its previously-recorded signature_state was
+                    # computed against the *old* bytes and says nothing
+                    # about whether the new ones are genuinely signed.
+                    # Re-running the checker here, not only at first
+                    # registration, is what makes check_drift's later
+                    # digest comparison meaningful -- otherwise a swapped
+                    # executable could keep showing a stale "valid" signature
+                    # state indefinitely.
+                    signature_state = ToolSignatureState(self._signature_checker(executable_path))
+                    connection.execute(
+                        "UPDATE tool_manifests SET artifact_digest = ?, signature_state = ?, "
+                        "last_seen_at = ? WHERE id = ?",
+                        (digest, signature_state.value, now.isoformat(), row["id"]),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE tool_manifests SET last_seen_at = ? WHERE id = ?",
+                        (now.isoformat(), row["id"]),
+                    )
                 row = connection.execute(
                     "SELECT * FROM tool_manifests WHERE id = ?", (row["id"],)
                 ).fetchone()
