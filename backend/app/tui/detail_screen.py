@@ -17,16 +17,66 @@ from textual.widgets import Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
 
+__all__ = ["DetailScreen", "format_change", "lifecycle_stepper"]
+
+
+_MAIN_LIFECYCLE_PATH = [
+    "DRAFT",
+    "ACTIVE",
+    "LOCALLY_VERIFIED",
+    "REVIEW_READY",
+    "PR_OPEN",
+    "CI_VERIFIED",
+    "ARTIFACT_BUILT",
+    "DEPLOYED",
+    "OBSERVING",
+    "STABLE",
+]
+
+_SIDE_STATES = {
+    "PAUSED",
+    "BLOCKED",
+    "FAILED",
+    "CANCELLED",
+    "RECOVERY_PENDING",
+    "RECOVERING",
+    "RECOVERED_VERIFIED",
+    "RECOVERY_CONFLICT",
+    "RECOVERY_FAILED",
+}
+
+
+def lifecycle_stepper(state: str) -> str:
+    """One-line stepper: the main happy path, with the current state marked.
+
+    A state off the main path (paused/blocked/failed/recovery-*) is
+    shown on its own line instead of silently forcing it onto the path
+    it isn't on.
+    """
+
+    if state in _SIDE_STATES:
+        return f"[yellow]<< {state} (off the main path) >>[/yellow]"
+    segments = []
+    for step in _MAIN_LIFECYCLE_PATH:
+        if step == state:
+            segments.append(f"[bold green][{step}][/bold green]")
+        else:
+            segments.append(step)
+    return " -> ".join(segments)
+
 
 def format_change(change: dict[str, Any]) -> str:
     """Pure formatting so the rendering logic is testable without Textual."""
 
+    lifecycle_state = change.get("lifecycle_state", "DRAFT")
     lines = [
         f"{change['title']}  ({change['id']})",
         f"Intent: {change['intent']}",
         f"Repository: {change['repository_path']}",
         "",
-        f"Lifecycle: {change.get('lifecycle_state', 'DRAFT')}",
+        lifecycle_stepper(lifecycle_state),
+        "",
+        f"Lifecycle: {lifecycle_state}",
         f"Review state: {change.get('review_state', 'NO_CHANGES')}",
         f"Risk level: {change.get('risk_level', 'UNKNOWN')}",
         f"Revision: {change.get('revision', 1)}",

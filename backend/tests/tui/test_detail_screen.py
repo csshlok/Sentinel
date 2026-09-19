@@ -1,4 +1,4 @@
-from backend.app.tui.detail_screen import DetailScreen, format_change
+from backend.app.tui.detail_screen import DetailScreen, format_change, lifecycle_stepper
 
 
 def _change(**overrides) -> dict:
@@ -60,6 +60,18 @@ def test_format_change_shows_git_and_verification_when_present() -> None:
     assert "main" in text
     assert "dirty" in text
     assert "PASSED" in text
+
+
+def test_lifecycle_stepper_marks_current_state_on_main_path() -> None:
+    text = lifecycle_stepper("REVIEW_READY")
+    assert "[REVIEW_READY]" in text
+    assert "DRAFT -> ACTIVE" in text
+
+
+def test_lifecycle_stepper_shows_off_path_states_distinctly() -> None:
+    text = lifecycle_stepper("BLOCKED")
+    assert "BLOCKED" in text
+    assert "off the main path" in text
 
 
 def test_screen_is_constructible() -> None:
