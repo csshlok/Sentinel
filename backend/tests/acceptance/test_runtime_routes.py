@@ -100,7 +100,7 @@ def _seed_checkpoint(
         )
 
 
-def _build_client(tmp_path, repo_path: str, current_sha: str, transport):
+def _build_client(tmp_path, repo_path: str, current_sha: str, transport, *, settings=None):
     now = datetime.now(UTC)
     git = FakeGitInspection(
         RepositoryInfo(root=repo_path, branch="main", head_sha=current_sha),
@@ -116,7 +116,7 @@ def _build_client(tmp_path, repo_path: str, current_sha: str, transport):
         ),
     )
     app = create_app(
-        settings=Settings(database_path=tmp_path / "runtime.sqlite3"),
+        settings=settings or Settings(database_path=tmp_path / "runtime.sqlite3"),
         git_inspection=git,
         credential_store=InMemoryCredentialStore(),
         http_transport=transport,
@@ -499,3 +499,278 @@ def test_change_lifecycle_transitions_use_real_evidence(tmp_path) -> None:
         )
         assert verified.status_code == 200
         assert verified.json()["lifecycle_state"] == "RECOVERED_VERIFIED"
+
+
+def test_state_persists_across_a_real_app_restart(tmp_path) -> None:
+    """Change/actor/delegation/recovery-plan state survives tearing down and
+    rebuilding `create_app()` against the same database file — not just a
+    second connection within one process, but a genuinely new app instance,
+    the way a real process restart would look."""
+
+    db_path = tmp_path / "restart.sqlite3"
+    settings = Settings(database_path=db_path)
+    repo_path, baseline_sha, current_sha = _init_repo(tmp_path)
+
+    app1, client1 = _build_client(
+        tmp_path, repo_path, current_sha, FakeHttpTransport([]), settings=settings
+    )
+    with client1:
+        created = client1.post(
+            "/api/v1/changes",
+            json={
+                "title": "Restart survivor",
+                "intent": "Prove state outlives one app instance",
+                "repository_path": repo_path,
+            },
+        )
+        change_id = created.json()["id"]
+
+        actor_id = client1.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Persisted Agent"}
+        ).json()["id"]
+
+        client1.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["recovery.execute"],
+                "ttl_seconds": 3600,
+            },
+        )
+
+        _seed_checkpoint(app1.state.database, change_id, repo_path, baseline_sha)
+        plan_id = client1.post(f"/api/v1/changes/{change_id}/recovery/preview").json()["id"]
+
+    # Tear down the first app entirely and build a brand-new one against
+    # the same on-disk database, exactly like a real process restart.
+    del app1, client1
+    app2, client2 = _build_client(
+        tmp_path, repo_path, current_sha, FakeHttpTransport([]), settings=settings
+    )
+    with client2:
+        refetched_change = client2.get(f"/api/v1/changes/{change_id}")
+        assert refetched_change.status_code == 200
+        assert refetched_change.json()["title"] == "Restart survivor"
+
+        refetched_actor = client2.get(f"/api/v1/actors/{actor_id}")
+        assert refetched_actor.status_code == 200
+
+        refetched_delegations = client2.get(f"/api/v1/changes/{change_id}/delegations")
+        assert refetched_delegations.json()["count"] == 1
+
+        refetched_plan = client2.get(f"/api/v1/changes/{change_id}/recovery")
+        assert refetched_plan.status_code == 200
+        assert refetched_plan.json()["id"] == plan_id
+
+
+def _init_repo_without_github_remote(tmp_path) -> str:
+    repo = tmp_path / "repo-no-remote"
+    repo.mkdir()
+    _run(repo, "init")
+    _run(repo, "config", "user.name", "Test")
+    _run(repo, "config", "user.email", "test@example.com")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _run(repo, "add", "file.txt")
+    _run(repo, "commit", "-m", "baseline")
+    return str(repo)
+
+
+def test_provider_operation_records_failure_after_exhausted_retries(tmp_path) -> None:
+    """A GitHub 5xx that outlasts every retry must not become an unhandled
+    500: `GitHubProviderAdapter` records it as a `FAILED` operation with the
+    provider's own stable error code, and that failure is persisted like any
+    other operation — not silently dropped."""
+
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    # GitHubProvider retries a 5xx up to max_retries=3 times (4 attempts
+    # total) before giving up; queue one failing response per attempt.
+    transport = FakeHttpTransport([json_response(503, {"message": "degraded"})] * 4)
+    app, client = _build_client(tmp_path, repo_path, current_sha, transport)
+    del app
+
+    with client:
+        change_id = client.post(
+            "/api/v1/changes",
+            json={
+                "title": "Provider outage",
+                "intent": "Exercise exhausted-retry failure handling",
+                "repository_path": repo_path,
+            },
+        ).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Outage Agent"}
+        ).json()["id"]
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 3600,
+            },
+        )
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={
+                "actor_id": actor_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 900,
+            },
+        ).json()["id"]
+
+        response = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature",
+                "title": "Outage PR",
+                "idempotency_key": "outage-1",
+            },
+        )
+        # Provider failure is a recorded outcome, not an API crash.
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "FAILED"
+        assert body["safe_metadata"]["error_code"] == "PROVIDER_UNAVAILABLE"
+        assert len(transport.calls) == 4
+
+        # The failure is durable: re-listing the outcomes of this
+        # idempotency key returns the same FAILED record, not a retry.
+        outcomes_after = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature",
+                "title": "Outage PR",
+                "idempotency_key": "outage-1",
+            },
+        )
+        assert outcomes_after.json()["id"] == body["id"]
+        # No further HTTP calls: the idempotency-key replay short-circuits
+        # before the provider is ever called again.
+        assert len(transport.calls) == 4
+
+
+def test_provider_operation_records_immediate_failure_for_not_found(tmp_path) -> None:
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    transport = FakeHttpTransport([json_response(404, {"message": "no such repository"})])
+    app, client = _build_client(tmp_path, repo_path, current_sha, transport)
+    del app
+
+    with client:
+        change_id = client.post(
+            "/api/v1/changes",
+            json={
+                "title": "Missing repository",
+                "intent": "Exercise immediate non-retryable failure",
+                "repository_path": repo_path,
+            },
+        ).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "404 Agent"}
+        ).json()["id"]
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 3600,
+            },
+        )
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={
+                "actor_id": actor_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 900,
+            },
+        ).json()["id"]
+
+        response = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature",
+                "title": "404 PR",
+                "idempotency_key": "not-found-1",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "FAILED"
+        assert response.json()["safe_metadata"]["error_code"] == "PROVIDER_NOT_FOUND"
+        # 404 is not in the retryable set: exactly one HTTP call was made.
+        assert len(transport.calls) == 1
+
+
+def test_pull_request_route_returns_stable_error_when_repository_has_no_github_remote(
+    tmp_path,
+) -> None:
+    """Unlike a GitHub-side failure, an unresolvable local repository slug
+    is a genuine request-level error `[SD]`'s composition layer raises
+    directly — before any GitHub call — and it must reach the client as the
+    documented `{"error": {"code", ...}}` envelope, not an internal 500."""
+
+    repo_path = _init_repo_without_github_remote(tmp_path)
+    now = datetime.now(UTC)
+    head_sha = "d" * 40
+    app, client = _build_client(tmp_path, repo_path, head_sha, FakeHttpTransport([]))
+    del app, now
+
+    with client:
+        change_id = client.post(
+            "/api/v1/changes",
+            json={
+                "title": "No remote",
+                "intent": "Exercise unresolved-repository-slug error",
+                "repository_path": repo_path,
+            },
+        ).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "No Remote Agent"}
+        ).json()["id"]
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 3600,
+            },
+        )
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={
+                "actor_id": actor_id,
+                "scopes": ["github.pr.create"],
+                "ttl_seconds": 900,
+            },
+        ).json()["id"]
+
+        response = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={
+                "actor_id": actor_id,
+                "grant_id": grant_id,
+                "base_branch": "main",
+                "head_branch": "feature",
+                "title": "No remote PR",
+                "idempotency_key": "no-remote-1",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "PROVIDER_REPOSITORY_UNRESOLVED"
