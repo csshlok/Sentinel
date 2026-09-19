@@ -8,6 +8,7 @@ lifecycle-transition coverage in
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -280,14 +281,29 @@ def test_a_newer_ci_failure_overrides_an_older_pass_for_the_same_sha(tmp_path) -
     assert facts_port.get_facts(change, "CI_VERIFIED").ci_passed_for_current_head is False
 
 
+def _git(repo, *args) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
 def test_recovery_facts_track_the_latest_plan_status(tmp_path) -> None:
-    facts_port, _delegations, _provider_operations, _outcomes, recovery, change = _build(
+    facts_port, _delegations, _provider_operations, _outcomes, recovery, base_change = _build(
         tmp_path
     )
+    repo = tmp_path / "recovery-repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.name", "T")
+    _git(repo, "config", "user.email", "t@example.com")
+    (repo / "a.txt").write_text("1\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-m", "baseline")
+    change = base_change.model_copy(update={"repository_path": str(repo)})
     now = datetime.now(UTC)
 
     assert facts_port.get_facts(change, "RECOVERING").recovery_plan_approved is False
 
+    branch = f"change-assurance/recovery/{change.id}"
+    result_sha = "d" * 40
     plan = RecoveryPlan(
         id=uuid4(),
         change_id=change.id,
@@ -309,16 +325,44 @@ def test_recovery_facts_track_the_latest_plan_status(tmp_path) -> None:
     assert facts.recovery_plan_approved is False
     assert facts.unresolved_recovery_actions is True
 
-    approved_and_recovered = plan.model_copy(
+    # Not yet verified: the plan claims a branch/SHA that does not exist in
+    # the real repository, exactly the case a self-reported status alone
+    # would wrongly call "verified".
+    unverified_recovered = plan.model_copy(
         update={
             "status": RecoveryStatus.RECOVERED,
             "approved_at": now,
             "completed_at": now,
+            "actions": [
+                plan.actions[0].model_copy(
+                    update={"provider_reference": f"branch:{branch}@{result_sha}"}
+                )
+            ],
         }
     )
-    recovery.update_plan(approved_and_recovered)
+    recovery.update_plan(unverified_recovered)
     facts = facts_port.get_facts(change, "RECOVERED_VERIFIED")
     assert facts.recovery_plan_approved is True
+    assert facts.recovery_verified is False
+
+    # Now create the real dedicated branch pointing at a real commit and
+    # update the plan's action to reference that real SHA -- this is what a
+    # genuine successful GitRecoveryEngine.execute() produces.
+    _git(repo, "branch", branch)
+    real_sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", branch], capture_output=True
+    ).stdout.decode().strip()
+    verified_recovered = unverified_recovered.model_copy(
+        update={
+            "actions": [
+                unverified_recovered.actions[0].model_copy(
+                    update={"provider_reference": f"branch:{branch}@{real_sha}"}
+                )
+            ],
+        }
+    )
+    recovery.update_plan(verified_recovered)
+    facts = facts_port.get_facts(change, "RECOVERED_VERIFIED")
     assert facts.recovery_verified is True
     assert facts.recovery_conflict is False
     assert facts.recovery_failed is False

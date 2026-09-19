@@ -282,6 +282,17 @@ def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:
         assert executed.status_code == 200
         assert executed.json()["status"] == "RECOVERED"
 
+        # Reproduces the audit finding: retrying execute() on an already
+        # -terminal plan must return the stored RECOVERED result, not
+        # re-attempt Git operations that turn a real success into a
+        # reported CONFLICTED purely from the retry.
+        retried = client.post(
+            f"/api/v1/changes/{change_id}/recovery/{plan['id']}/execute",
+            json={"actor_id": actor_id, "approval_token": "approved-by-test"},
+        )
+        assert retried.status_code == 200
+        assert retried.json() == executed.json()
+
         passport = client.post(f"/api/v1/changes/{change_id}/passport")
         assert passport.status_code == 201
         passport_body = passport.json()

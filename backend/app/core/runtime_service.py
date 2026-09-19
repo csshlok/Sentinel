@@ -467,6 +467,14 @@ class RecoveryService:
         stored_plan = self.plans.get(plan_id)
         if stored_plan is None or stored_plan.change_id != change_id:
             raise recovery_plan_not_found(str(plan_id))
+        if stored_plan.completed_at is not None:
+            # Already terminal (RECOVERED/CONFLICTED/RECOVERY_FAILED): return
+            # the stored outcome rather than re-running Git operations that
+            # are not themselves idempotent. Re-executing an already
+            # -RECOVERED plan would try to recreate the same dedicated branch
+            # a second time and get CONFLICTED purely from that retry, not
+            # from any real new conflict.
+            return stored_plan
         _enforce_policy(self.policy, actor_id, change, "recovery.execute", {},
                         journal=self._journal)
         result = self.recovery.execute(change, stored_plan, approval_token)

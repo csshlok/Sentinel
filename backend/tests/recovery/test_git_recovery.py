@@ -304,3 +304,62 @@ def test_execute_with_no_actions_is_a_trivial_success(tmp_path) -> None:
     result = engine.execute(change, plan, "approval-token-123")
 
     assert result.status is RecoveryStatus.RECOVERED
+
+
+def test_execute_refuses_a_plan_whose_head_has_moved_since_preview(tmp_path) -> None:
+    """Reproduces the audit finding: execute() used the plan's saved SHA
+
+    without checking the repository's actual current HEAD. A commit made
+    after preview but before execute must make the plan stale rather than
+    silently reverting from a base that no longer reflects reality.
+    """
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    engine = GitRecoveryEngine(database)
+    plan = engine.plan(change)
+
+    # The repository moves after the plan was previewed.
+    from pathlib import Path
+    (Path(repo) / "file.txt").write_text("edited again\n", encoding="utf-8")
+    _run(repo, "commit", "-am", "second edit")
+
+    result = engine.execute(change, plan, "approval-token-123")
+
+    assert result.status is RecoveryStatus.RECOVERY_FAILED
+    assert any("HEAD moved" in conflict for conflict in result.conflicts)
+    # No dedicated branch should have been created for a plan that was
+    # refused before any Git mutation.
+    assert f"change-assurance/recovery/{change.id}" not in _run(repo, "branch", "--list")
+
+
+def test_retrying_execute_on_an_already_recovered_plan_does_not_corrupt_it(tmp_path) -> None:
+    """Reproduces the audit finding: retrying execute() on a plan that had
+
+    already succeeded re-attempted the same branch creation and turned a
+    genuinely successful recovery into a reported CONFLICTED, purely from
+    the retry itself. The engine's own execute() is not required to be
+    idempotent (RecoveryService.execute is the layer that must not call it
+    again for an already-terminal plan -- see
+    test_runtime_service_atomicity-adjacent coverage in acceptance tests);
+    this test documents the underlying non-idempotent behavior so the
+    composing layer's guard is not accidentally removed as "dead code".
+    """
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    engine = GitRecoveryEngine(database)
+    plan = engine.plan(change)
+
+    first = engine.execute(change, plan, "approval-token-123")
+    assert first.status is RecoveryStatus.RECOVERED
+
+    second = engine.execute(change, plan, "approval-token-123")
+    # Retrying the *same original plan* object a second time re-attempts
+    # creating the dedicated branch, which already exists from the first
+    # call, so the engine itself reports this as a conflict rather than
+    # silently repeating success -- exactly why RecoveryService must not
+    # call execute() again once a plan is terminal.
+    assert second.status is RecoveryStatus.CONFLICTED

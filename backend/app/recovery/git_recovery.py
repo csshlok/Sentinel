@@ -145,8 +145,28 @@ class GitRecoveryEngine:
             raise recovery_no_checkpoint_evidence(str(change.id))
 
         current_sha = action.reversible_commit
-        commits = self._commits_between(change.repository_path, baseline.head_sha, current_sha)
         completed_at_on_failure = self._clock()
+        real_head = self._current_head(change.repository_path)
+        if real_head is None or real_head.lower() != current_sha.lower():
+            # The plan was computed against `current_sha`; if the repository's
+            # actual HEAD has since moved, executing against the stale SHA
+            # would revert commits relative to a base that no longer reflects
+            # reality -- silently "succeeding" while reverting the wrong
+            # history. Require a fresh preview instead of proceeding.
+            return plan.model_copy(
+                update={
+                    "status": RecoveryStatus.RECOVERY_FAILED,
+                    "approved_at": now,
+                    "completed_at": completed_at_on_failure,
+                    "conflicts": [
+                        *plan.conflicts,
+                        "The repository HEAD moved since this plan was previewed; "
+                        "re-preview recovery before executing.",
+                    ],
+                }
+            )
+
+        commits = self._commits_between(change.repository_path, baseline.head_sha, current_sha)
         if not commits:
             return plan.model_copy(
                 update={
@@ -186,6 +206,16 @@ class GitRecoveryEngine:
     @staticmethod
     def _dedicated_branch_name(change_id: UUID) -> str:
         return f"change-assurance/recovery/{change_id}"
+
+    @staticmethod
+    def _current_head(repository_path: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", repository_path, "rev-parse", "HEAD"],
+            capture_output=True, shell=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.decode("utf-8", errors="replace").strip()
 
     @staticmethod
     def _commits_between(

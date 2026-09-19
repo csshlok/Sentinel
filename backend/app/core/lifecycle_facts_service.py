@@ -22,11 +22,14 @@ through the real API, per this product's "no safety theater" invariant.
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from backend.app.assurance.service import AssuranceFacts
-from backend.app.contracts.models import ChangeView, LifecycleFacts, OutcomeKind, OutcomeStatus, RecoveryStatus
+from backend.app.contracts.models import (
+    ChangeView, LifecycleFacts, OutcomeKind, OutcomeStatus, RecoveryPlan, RecoveryStatus,
+)
 from backend.app.core.runtime_repositories import (
     OutcomeRepository,
     ProviderOperationRepository,
@@ -80,9 +83,7 @@ class RuntimeLifecycleFacts:
         recovery_plan_approved = (
             latest_plan is not None and latest_plan.approved_at is not None
         )
-        recovery_verified = (
-            latest_plan is not None and latest_plan.status is RecoveryStatus.RECOVERED
-        )
+        recovery_verified = self._recovery_verified(change, latest_plan)
         recovery_conflict = (
             latest_plan is not None and latest_plan.status is RecoveryStatus.CONFLICTED
         )
@@ -123,6 +124,50 @@ class RuntimeLifecycleFacts:
         if self.assurance_facts is None or str(target_state) not in _ASSURANCE_TARGETS:
             return AssuranceFacts()
         return self.assurance_facts(change)
+
+    def _recovery_verified(
+        self, change: ChangeView, latest_plan: RecoveryPlan | None
+    ) -> bool:
+        """True only if the repository's *actual* dedicated recovery branch
+
+        currently points at the SHA the plan claims to have produced --
+        trusting the persisted `RecoveryPlan.status` field alone would make
+        "verified" mean nothing more than "the plan record says so", the
+        exact kind of self-report this product's other facts deliberately
+        avoid (`_ci_passed`, `pull_request_recorded`). Independently
+        re-reads the real Git ref rather than caching the SHA recovery
+        already returned at execute() time, so a branch that was since
+        force-moved, deleted, or never actually reached that commit is
+        correctly reported unverified.
+        """
+
+        if latest_plan is None or latest_plan.status is not RecoveryStatus.RECOVERED:
+            return False
+        if not latest_plan.actions:
+            # RECOVERED with no actions means the repository was already at
+            # baseline -- nothing needed reverting, so there is no revert
+            # commit to cross-check and the claim is trivially true.
+            return True
+        for action in latest_plan.actions:
+            reference = action.provider_reference
+            if not reference or not reference.startswith("branch:") or "@" not in reference:
+                continue
+            branch, _, expected_sha = reference.removeprefix("branch:").rpartition("@")
+            if not branch or not expected_sha:
+                continue
+            actual_sha = self._branch_head_sha(change.repository_path, branch)
+            return actual_sha is not None and actual_sha.lower() == expected_sha.lower()
+        return False
+
+    @staticmethod
+    def _branch_head_sha(repository_path: str, branch: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", repository_path, "rev-parse", "--verify", f"refs/heads/{branch}"],
+            capture_output=True, shell=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.decode("utf-8", errors="replace").strip()
 
     def _ci_passed(self, change: ChangeView) -> bool:
         """True iff the *latest* CI outcome for the current HEAD passed.
