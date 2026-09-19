@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 03:40 -04:00 - Full suite: 544 passed, 1 skipped
+
+With the `textual` extra installed the whole repository, TUI tests included, passes: **544 passed, 1 skipped**. Earlier `[KB]` counts (531, 509, 502) excluded `backend/tests/tui` and are superseded by this figure.
+
 ### `[KB]` - 2026-09-19 03:15 -04:00 - Remaining Person 2 items closed
 
 CLI groups `evidence`, `agent` and `assurance`; `Idempotency-Key` replay safety on agent launch/attach; in-flight agent runs persisted so they are listed and stoppable from a separate request. Whole repository excluding `backend/tests/tui`: **531 passed, 1 skipped**. Open and not `[KB]`'s: `[AC]` TUI panels 3-4 (need the `textual` extra), `.cmd`-shim-only Codex/Claude installs, non-Windows and real-agent smoke tests. Details in `OVERALL_CONTEXT.md`.

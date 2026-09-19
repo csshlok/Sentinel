@@ -160,6 +160,10 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 03:40 -04:00 - Full-suite result with the TUI tests included
+
+The optional `textual` extra (0.89.1, as declared in `pyproject.toml`) was installed in this environment, so `backend/tests/tui` now runs. `python -m pytest -o addopts="" -q` over the whole repository: **544 passed, 1 skipped** (the opt-in Windows Credential Manager test), 2 third-party deprecation warnings, 224 s. This supersedes the earlier counts in the `[KB]` records below (531, 509 and 502), which excluded the 13 TUI tests because `textual` was not installed; those records were true when written and are left unchanged. The TUI tests are `[AC]`'s unit tests of formatting logic and screen construction; interactive Pilot tests are still not set up.
+
 ### `[KB]` - 2026-09-19 03:15 -04:00 - Person 2 remaining items closed: CLI, replay safety, in-flight agents
 
 Follow-up to the composition record below, closing the items it listed as remaining, all at the user's instruction. Edited `[AC]`-owned `backend/app/cli/` (additive only) and the `[SD]`-owned files named below.

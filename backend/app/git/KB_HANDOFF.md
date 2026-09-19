@@ -129,9 +129,9 @@ python -m coverage report
 python -m compileall -q backend
 ```
 
-- Whole repository (excluding `backend/tests/tui`, which needs the optional
-  `textual` extra that is not installed here): **502 passed, 1 skipped** (the opt-in
-  Windows Credential Manager test), no regressions.
+- Whole repository, including `backend/tests/tui` (with the optional `textual`
+  extra installed): **544 passed, 1 skipped** (the opt-in Windows Credential
+  Manager test), no regressions.
 - `[KB]` suites: **339 passed**, combined statement+branch coverage **98%** across
   the five owned packages (2107 statements, 774 branches). Targets were 90%/85%.
 - Real boundaries: disposable Git repositories (staged, unstaged, untracked,
