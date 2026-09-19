@@ -211,6 +211,28 @@ def test_adapter_credential_key_is_forwarded_but_redacted(tmp_path, monkeypatch)
     assert "sk-canary" not in run.stdout and "[REDACTED]" in run.stdout
 
 
+def test_encoded_secret_is_still_redacted(tmp_path, monkeypatch):
+    """A compromised agent base64/hex-encoding a forwarded secret before
+    printing it must not defeat redaction -- exact-substring matching alone
+    would let this through untouched."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-canary-abcdef123456")
+    launcher = AgentLauncher(adapters={
+        "claude": AgentAdapter("claude", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
+    code = (
+        "import os, base64\n"
+        "raw = os.environ['ANTHROPIC_API_KEY'].encode()\n"
+        "print(base64.b64encode(raw).decode())\n"
+        "print(base64.urlsafe_b64encode(raw).decode())\n"
+        "print(raw.hex())\n"
+    )
+    run = launcher.launch(CHANGE, str(tmp_path), AgentLaunchRequest(
+        adapter="claude", executable="python", timeout_seconds=10,
+        args=["-c", code], environment_keys=["ANTHROPIC_API_KEY"]), 1000)
+    assert run.status is AgentRunStatus.PASSED
+    assert "sk-canary" not in run.stdout
+    assert run.stdout.count("[REDACTED]") == 3
+
+
 def test_absent_requested_key_is_simply_not_set(tmp_path, monkeypatch):
     monkeypatch.delenv("KB_ABSENT", raising=False)
     run = launch(tmp_path, "import os; print('KB_ABSENT' in os.environ)",
