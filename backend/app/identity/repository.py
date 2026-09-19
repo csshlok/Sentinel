@@ -101,6 +101,14 @@ class DelegationRepository:
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
+    def list_for_change(self, change_id: UUID) -> list[Delegation]:
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM delegations WHERE change_id = ? ORDER BY issued_at DESC",
+                (str(change_id),),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
     def revoke(self, delegation_id: UUID, revoked_at: datetime) -> Delegation | None:
         with self.database.connection() as connection:
             cursor = connection.execute(
