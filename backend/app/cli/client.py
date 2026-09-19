@@ -193,6 +193,22 @@ class ApiClient:
     def list_delegations(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/delegations")
 
+    # -- evidence (git checkpoints, environment, dependencies, assurance) --
+    def list_git_checkpoints(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/git/checkpoints")
+
+    def get_environment(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/environment")
+
+    def get_dependencies(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/dependencies")
+
+    def get_latest_assurance_plan(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/assurance/plan")
+
+    def get_assurance_facts(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/assurance/facts")
+
     # -- providers/github --
     def github_connect(self, token: str) -> Any:
         return self._request("POST", "/api/v1/providers/github/connect", json_body={"token": token})
