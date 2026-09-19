@@ -11,6 +11,7 @@ contracts from `backend.app.contracts.models`.
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime
 from uuid import UUID
 
@@ -67,9 +68,11 @@ class DelegationRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def create(self, delegation: Delegation) -> Delegation:
-        with self.database.connection() as connection:
-            connection.execute(
+    def create(
+        self, delegation: Delegation, *, connection: sqlite3.Connection | None = None
+    ) -> Delegation:
+        with self.database.connection_or(connection) as conn:
+            conn.execute(
                 """
                 INSERT INTO delegations (
                     id, grantor_id, grantee_id, change_id,
@@ -109,9 +112,12 @@ class DelegationRepository:
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
-    def revoke(self, delegation_id: UUID, revoked_at: datetime) -> Delegation | None:
-        with self.database.connection() as connection:
-            cursor = connection.execute(
+    def revoke(
+        self, delegation_id: UUID, revoked_at: datetime,
+        *, connection: sqlite3.Connection | None = None,
+    ) -> Delegation | None:
+        with self.database.connection_or(connection) as conn:
+            cursor = conn.execute(
                 """
                 UPDATE delegations
                 SET revoked_at = ?
@@ -121,7 +127,10 @@ class DelegationRepository:
             )
             if cursor.rowcount == 0:
                 return None
-        return self.get(delegation_id)
+            row = conn.execute(
+                "SELECT * FROM delegations WHERE id = ?", (str(delegation_id),)
+            ).fetchone()
+        return self._from_row(row)
 
     def record_use(self, delegation_id: UUID) -> Delegation | None:
         with self.database.connection() as connection:

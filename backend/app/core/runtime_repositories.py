@@ -32,9 +32,11 @@ class CredentialGrantRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def create(self, grant: CredentialGrant) -> CredentialGrant:
-        with self.database.connection() as connection:
-            connection.execute(
+    def create(
+        self, grant: CredentialGrant, *, connection: sqlite3.Connection | None = None
+    ) -> CredentialGrant:
+        with self.database.connection_or(connection) as conn:
+            conn.execute(
                 """
                 INSERT INTO credential_grants (
                     id, change_id, actor_id, provider, scopes_json,
@@ -61,15 +63,18 @@ class CredentialGrantRepository:
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def revoke(self, grant_id: UUID, revoked_at: datetime) -> CredentialGrant | None:
-        with self.database.connection() as connection:
-            cursor = connection.execute(
+    def revoke(
+        self, grant_id: UUID, revoked_at: datetime,
+        *, connection: sqlite3.Connection | None = None,
+    ) -> CredentialGrant | None:
+        with self.database.connection_or(connection) as conn:
+            cursor = conn.execute(
                 "UPDATE credential_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
                 (revoked_at.isoformat(), str(grant_id)),
             )
             if cursor.rowcount == 0:
                 return None
-            row = connection.execute(
+            row = conn.execute(
                 "SELECT * FROM credential_grants WHERE id = ?", (str(grant_id),)
             ).fetchone()
         return self._from_row(row) if row is not None else None
@@ -197,9 +202,11 @@ class RecoveryRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def create_plan(self, plan: RecoveryPlan) -> RecoveryPlan:
-        with self.database.connection() as connection:
-            connection.execute(
+    def create_plan(
+        self, plan: RecoveryPlan, *, connection: sqlite3.Connection | None = None
+    ) -> RecoveryPlan:
+        with self.database.connection_or(connection) as conn:
+            conn.execute(
                 """
                 INSERT INTO recovery_plans (
                     id, change_id, status, payload_json, created_at, completed_at
@@ -214,12 +221,14 @@ class RecoveryRepository:
                     plan.completed_at.isoformat() if plan.completed_at else None,
                 ),
             )
-            self._replace_actions(connection, plan)
+            self._replace_actions(conn, plan)
         return plan
 
-    def update_plan(self, plan: RecoveryPlan) -> RecoveryPlan:
-        with self.database.connection() as connection:
-            connection.execute(
+    def update_plan(
+        self, plan: RecoveryPlan, *, connection: sqlite3.Connection | None = None
+    ) -> RecoveryPlan:
+        with self.database.connection_or(connection) as conn:
+            conn.execute(
                 """
                 UPDATE recovery_plans
                 SET status = ?, payload_json = ?, completed_at = ?
@@ -232,7 +241,7 @@ class RecoveryRepository:
                     str(plan.id),
                 ),
             )
-            self._replace_actions(connection, plan)
+            self._replace_actions(conn, plan)
         return plan
 
     @staticmethod

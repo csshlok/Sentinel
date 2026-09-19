@@ -123,13 +123,19 @@ class IdentityAdminService:
             expires_at=now + timedelta(seconds=request.ttl_seconds),
             use_limit=request.use_limit,
         )
-        created = self.delegations.create(delegation)
-        if self._journal is not None:
-            self._journal.append(
-                created.change_id, JournalEventType.DELEGATION_ISSUED,
-                actor_id=created.grantor_id, subject_type="delegation", subject_id=created.id,
-                payload={"grantee_id": str(created.grantee_id), "scopes": list(created.scopes)},
-            )
+        # The delegation row and its journal event commit or roll back
+        # together: a journal write failure must not leave an unjournaled
+        # delegation silently authorizing operations that requester's
+        # "failed" response told them never happened.
+        with self.delegations.database.connection(immediate=True) as connection:
+            created = self.delegations.create(delegation, connection=connection)
+            if self._journal is not None:
+                self._journal.append(
+                    created.change_id, JournalEventType.DELEGATION_ISSUED,
+                    actor_id=created.grantor_id, subject_type="delegation", subject_id=created.id,
+                    payload={"grantee_id": str(created.grantee_id), "scopes": list(created.scopes)},
+                    connection=connection,
+                )
         return created
 
     def get_delegation(self, delegation_id: UUID) -> Delegation:
@@ -139,14 +145,16 @@ class IdentityAdminService:
         return delegation
 
     def revoke_delegation(self, delegation_id: UUID) -> Delegation:
-        revoked = self.delegations.revoke(delegation_id, self._clock())
-        if revoked is None:
-            raise delegation_not_found(str(delegation_id))
-        if self._journal is not None:
-            self._journal.append(
-                revoked.change_id, JournalEventType.DELEGATION_REVOKED,
-                subject_type="delegation", subject_id=revoked.id, payload={},
-            )
+        with self.delegations.database.connection(immediate=True) as connection:
+            revoked = self.delegations.revoke(delegation_id, self._clock(), connection=connection)
+            if revoked is None:
+                raise delegation_not_found(str(delegation_id))
+            if self._journal is not None:
+                self._journal.append(
+                    revoked.change_id, JournalEventType.DELEGATION_REVOKED,
+                    subject_type="delegation", subject_id=revoked.id, payload={},
+                    connection=connection,
+                )
         return revoked
 
     def list_delegations_for_change(self, change_id: UUID) -> list[Delegation]:
@@ -188,27 +196,35 @@ class CredentialAdminService:
         if self.actors.get(actor_id) is None:
             raise actor_not_found(str(actor_id))
         grant = self.broker.issue_grant(actor_id, change_id, scopes, ttl_seconds)
-        created = self.grants.create(grant)
-        if self._journal is not None:
-            self._journal.append(
-                created.change_id, JournalEventType.CREDENTIAL_GRANT_ISSUED,
-                actor_id=created.actor_id, subject_type="credential_grant", subject_id=created.id,
-                payload={"provider": created.provider, "scopes": list(created.scopes),
-                         "expires_at": created.expires_at.isoformat()},
-            )
+        # The broker's own issue_grant is in-memory only (no rollback needed
+        # on failure below); the durable row and its journal event commit or
+        # roll back together so a journal failure cannot leave a grant
+        # durably usable while the issuing request reports failure.
+        with self.grants.database.connection(immediate=True) as connection:
+            created = self.grants.create(grant, connection=connection)
+            if self._journal is not None:
+                self._journal.append(
+                    created.change_id, JournalEventType.CREDENTIAL_GRANT_ISSUED,
+                    actor_id=created.actor_id, subject_type="credential_grant", subject_id=created.id,
+                    payload={"provider": created.provider, "scopes": list(created.scopes),
+                             "expires_at": created.expires_at.isoformat()},
+                    connection=connection,
+                )
         return created
 
     def revoke_grant(self, grant_id: UUID) -> CredentialGrant:
         self.broker.revoke(grant_id)
-        revoked = self.grants.revoke(grant_id, self._clock())
-        if revoked is None:
-            raise grant_binding_invalid(str(grant_id))
-        if self._journal is not None:
-            self._journal.append(
-                revoked.change_id, JournalEventType.CREDENTIAL_GRANT_REVOKED,
-                actor_id=revoked.actor_id, subject_type="credential_grant", subject_id=revoked.id,
-                payload={"provider": revoked.provider},
-            )
+        with self.grants.database.connection(immediate=True) as connection:
+            revoked = self.grants.revoke(grant_id, self._clock(), connection=connection)
+            if revoked is None:
+                raise grant_binding_invalid(str(grant_id))
+            if self._journal is not None:
+                self._journal.append(
+                    revoked.change_id, JournalEventType.CREDENTIAL_GRANT_REVOKED,
+                    actor_id=revoked.actor_id, subject_type="credential_grant", subject_id=revoked.id,
+                    payload={"provider": revoked.provider},
+                    connection=connection,
+                )
         return revoked
 
     def get_grant(self, grant_id: UUID) -> CredentialGrant:
@@ -432,14 +448,16 @@ class RecoveryService:
     def preview(self, change_id: UUID) -> RecoveryPlan:
         change = self.change_service.get(change_id)
         plan = self.recovery.plan(change)
-        created = self.plans.create_plan(plan)
-        if self._journal is not None:
-            self._journal.append(
-                change_id, JournalEventType.RECOVERY_PLAN_CREATED,
-                subject_type="recovery_plan", subject_id=created.id,
-                payload={"actions_count": len(created.actions),
-                         "conflicts_count": len(created.conflicts)},
-            )
+        with self.plans.database.connection(immediate=True) as connection:
+            created = self.plans.create_plan(plan, connection=connection)
+            if self._journal is not None:
+                self._journal.append(
+                    change_id, JournalEventType.RECOVERY_PLAN_CREATED,
+                    subject_type="recovery_plan", subject_id=created.id,
+                    payload={"actions_count": len(created.actions),
+                             "conflicts_count": len(created.conflicts)},
+                    connection=connection,
+                )
         return created
 
     def execute(
@@ -452,34 +470,43 @@ class RecoveryService:
         _enforce_policy(self.policy, actor_id, change, "recovery.execute", {},
                         journal=self._journal)
         result = self.recovery.execute(change, stored_plan, approval_token)
-        updated = self.plans.update_plan(result)
-        if self._journal is not None:
-            for action in updated.actions:
-                if not action.provider_reference or not action.reversible_commit:
-                    continue
-                post_sha = action.provider_reference.rsplit("@", 1)[-1]
-                event = self._journal.append(
-                    change_id, JournalEventType.RECOVERY_ACTION_COMPLETED,
-                    actor_id=actor_id, subject_type="recovery_action", subject_id=action.id,
-                    payload={"kind": action.kind, "status": updated.status.value},
+        # The Git-level recovery already happened above (self.recovery.execute
+        # is not itself transactional against SQLite); what is made atomic
+        # here is the durable plan record and every journal entry describing
+        # it, so a journal failure cannot leave the Passport-visible plan
+        # status recorded without the matching journal trail, or vice versa.
+        with self.plans.database.connection(immediate=True) as connection:
+            updated = self.plans.update_plan(result, connection=connection)
+            if self._journal is not None:
+                for action in updated.actions:
+                    if not action.provider_reference or not action.reversible_commit:
+                        continue
+                    post_sha = action.provider_reference.rsplit("@", 1)[-1]
+                    event = self._journal.append(
+                        change_id, JournalEventType.RECOVERY_ACTION_COMPLETED,
+                        actor_id=actor_id, subject_type="recovery_action", subject_id=action.id,
+                        payload={"kind": action.kind, "status": updated.status.value},
+                        connection=connection,
+                    )
+                    # RecoveryAction.reversible_commit/provider_reference carry raw
+                    # 40-hex Git SHAs, not sha256 digests; JournalEffect reuses the
+                    # existing `Digest` (sha256-pattern) type alias (A.2), so each
+                    # SHA is wrapped in one more sha256 to conform -- this is a
+                    # deliberate adaptation, not a new content digest.
+                    self._journal.append_effect(
+                        event, resource_type="recovery_action", resource_id=action.id,
+                        restoration_class=RestorationClass.EXACT,
+                        before_digest=hashlib.sha256(
+                            action.reversible_commit.encode("ascii")).hexdigest(),
+                        produced_digest=hashlib.sha256(post_sha.encode("ascii")).hexdigest(),
+                        connection=connection,
+                    )
+                self._journal.append(
+                    change_id, JournalEventType.RECOVERY_PLAN_COMPLETED,
+                    actor_id=actor_id, subject_type="recovery_plan", subject_id=updated.id,
+                    payload={"status": updated.status.value},
+                    connection=connection,
                 )
-                # RecoveryAction.reversible_commit/provider_reference carry raw
-                # 40-hex Git SHAs, not sha256 digests; JournalEffect reuses the
-                # existing `Digest` (sha256-pattern) type alias (A.2), so each
-                # SHA is wrapped in one more sha256 to conform -- this is a
-                # deliberate adaptation, not a new content digest.
-                self._journal.append_effect(
-                    event, resource_type="recovery_action", resource_id=action.id,
-                    restoration_class=RestorationClass.EXACT,
-                    before_digest=hashlib.sha256(
-                        action.reversible_commit.encode("ascii")).hexdigest(),
-                    produced_digest=hashlib.sha256(post_sha.encode("ascii")).hexdigest(),
-                )
-            self._journal.append(
-                change_id, JournalEventType.RECOVERY_PLAN_COMPLETED,
-                actor_id=actor_id, subject_type="recovery_plan", subject_id=updated.id,
-                payload={"status": updated.status.value},
-            )
         return updated
 
     def latest(self, change_id: UUID) -> RecoveryPlan:

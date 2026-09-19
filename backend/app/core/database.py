@@ -61,6 +61,26 @@ class Database:
         return int(row["version"]) if row is not None else 0
 
     @contextmanager
+    def connection_or(
+        self, connection: sqlite3.Connection | None, *, immediate: bool = False
+    ) -> Iterator[sqlite3.Connection]:
+        """Use an already-open transaction if the caller supplied one, else open one.
+
+        Lets a repository write and a paired `JournalWriter.append` share one
+        atomic transaction when a caller composes them (commit or roll back
+        together), while every existing call site that does not pass a
+        connection keeps opening its own short transaction exactly as before.
+        When `connection` is given, this method does not commit, roll back,
+        or close it -- that stays the owning caller's responsibility.
+        """
+
+        if connection is not None:
+            yield connection
+            return
+        with self.connection(immediate=immediate) as new_connection:
+            yield new_connection
+
+    @contextmanager
     def connection(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
         connection.row_factory = sqlite3.Row
