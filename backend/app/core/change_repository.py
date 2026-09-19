@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from backend.app.contracts.models import (
     ChangeContract,
@@ -359,22 +359,56 @@ class ChangeRepository:
             )
             if envelope is not None:
                 return envelope["kind"] == "deleted"
-            if self.journal is not None:
-                exists = connection.execute(
-                    "SELECT 1 FROM changes WHERE id = ?", (str(change_id),)
-                ).fetchone()
-                if exists is not None:
+            exists = connection.execute(
+                "SELECT 1 FROM changes WHERE id = ?", (str(change_id),)
+            ).fetchone()
+            if exists is not None:
+                if self.journal is not None:
                     # Emitted immediately before the row delete; the ON DELETE
                     # CASCADE below removes journal_events for this change too
                     # (change_id is the journal's own scope, see A.4), so this
-                    # event never survives to be read back. It exists so a
-                    # JournalWriter-level test can assert emission order, and
-                    # so a future export-before-delete flow has a final marker.
+                    # event never survives to be read back on its own. It
+                    # exists so a JournalWriter-level test can assert emission
+                    # order, and so a future export-before-delete flow has a
+                    # final marker to include. The change_deletion_log row
+                    # written right after this (threat model finding #3) is
+                    # what actually survives the cascade.
                     self.journal.append(
                         change_id, JournalEventType.CHANGE_DELETED,
                         subject_type="change", subject_id=change_id, payload={},
                         connection=connection,
                     )
+                # Threat model finding #3: capture the journal's terminal
+                # state *before* the cascade removes the rows it describes,
+                # into a table with no FK to `changes` so it is never itself
+                # cascaded away. This is the durable, independently
+                # -checkable proof that a deletion happened and what the
+                # chain looked like at that moment -- the CHANGE_DELETED
+                # event above is not enough on its own, since it dies with
+                # everything else in the same cascade.
+                last_event = connection.execute(
+                    "SELECT seq, event_hash FROM journal_events "
+                    "WHERE change_id = ? ORDER BY seq DESC LIMIT 1",
+                    (str(change_id),),
+                ).fetchone()
+                event_count = connection.execute(
+                    "SELECT COUNT(*) FROM journal_events WHERE change_id = ?",
+                    (str(change_id),),
+                ).fetchone()[0]
+                connection.execute(
+                    """
+                    INSERT INTO change_deletion_log (
+                        id, change_id, deleted_at, journal_event_count,
+                        last_event_seq, last_event_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid4()), str(change_id), datetime.now(UTC).isoformat(),
+                        event_count,
+                        last_event["seq"] if last_event is not None else None,
+                        last_event["event_hash"] if last_event is not None else None,
+                    ),
+                )
             cursor = connection.execute(
                 "DELETE FROM changes WHERE id = ?", (str(change_id),)
             )

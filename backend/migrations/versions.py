@@ -448,12 +448,53 @@ def migration_005_journal_cascade_delete_fix(connection: sqlite3.Connection) -> 
     )
 
 
+def migration_006_change_deletion_log(connection: sqlite3.Connection) -> None:
+    """Threat model finding #3: Change deletion destroys the whole journal.
+
+    `journal_events`/`journal_effects` cascade on `changes` deletion (by
+    design -- migration 5's own docstring quotes A.4: "Change metadata
+    deletion in this product already means delete this Change's evidence").
+    That means the CHANGE_DELETED marker event the deletion flow already
+    emits is itself wiped by the same cascade it describes, and no
+    Change-independent record survives that a deletion ever happened at
+    all -- not even a hash proving what the chain looked like at the
+    moment of deletion.
+
+    `change_deletion_log` has no foreign key to `changes`, so it is never
+    touched by that cascade. `ChangeRepository.delete` (core, not this
+    migration) writes one row here, in the same transaction as the delete,
+    capturing the journal's last committed event hash/seq/count *before*
+    the cascade removes the rows those numbers describe -- a durable,
+    independently-checkable fact that a Change with N journaled events,
+    ending at a specific hash, was deleted at a specific time, even though
+    the events themselves are gone with it.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS change_deletion_log (
+            id TEXT PRIMARY KEY,
+            change_id TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            journal_event_count INTEGER NOT NULL,
+            last_event_seq INTEGER NULL,
+            last_event_hash TEXT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_change_deletion_log_change "
+        "ON change_deletion_log(change_id)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
     Migration(3, "event_effect_journal", migration_003_event_effect_journal),
     Migration(4, "tool_registry", migration_004_tool_registry),
     Migration(5, "journal_cascade_delete_fix", migration_005_journal_cascade_delete_fix),
+    Migration(6, "change_deletion_log", migration_006_change_deletion_log),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
