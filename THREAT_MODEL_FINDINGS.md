@@ -1,9 +1,10 @@
 # Threat Model Findings — Change Assurance Runtime
 
-Status as of 2026-09-19, against `master` @ `cf1b00b`. Produced by a full attack-surface
-review (credential broker, identity/delegation/policy, tool registry/execution/journal/replay,
-recovery/passport/CLI/API auth boundary), cross-checked against the actual source, not just
-docs, and reconciled against SD's own parallel audit fixes landed during the same window.
+Status as of 2026-09-19, against `master` @ `a73c9bc` (merge of SD's finding-fix commits with
+AC's `5b257c0`). Produced by a full attack-surface review (credential broker,
+identity/delegation/policy, tool registry/execution/journal/replay, recovery/passport/CLI/API
+auth boundary), cross-checked against the actual source, not just docs, and reconciled against
+SD's own parallel audit fixes landed during the same window.
 
 **Owner tags follow `AGENT_COORDINATION.md`'s exclusive-path table.** Findings are grouped by
 owner so each person can pick up their own section without cross-editing another owner's path.
@@ -18,26 +19,29 @@ Legend: 🔴 Open | ✅ Fixed | ➖ Closed (accepted design, not a bug)
 
 | # | Finding | Owner | Status |
 |---|---|---|---|
-| 1 | `issue_grant` has no delegation/policy gate | **SD** | 🔴 Open |
+| 1 | `issue_grant` has no delegation/policy gate | **SD** | ✅ Fixed (`8225190`) |
 | 2 | GitHub PAT exposed via CLI argv | **AC** | ✅ Fixed |
-| 3 | Change deletion destroys the journal | **SD** | 🔴 Open |
-| 4 | `OutcomeService.refresh` has no actor binding | **SD** | 🔴 Open |
-| 5 | Delegation creation has no grantor validation | **SD** | 🔴 Open |
-| 6 | `revoke_grant` broker TOCTOU | **SD** | 🔴 Open |
-| 7 | Risk-based approval gate is dead code | **AC** (engine) / **SD** (call sites) | 🔴 Open — needs both |
+| 3 | Change deletion destroys the journal | **SD** | ✅ Fixed (`884dba1`) |
+| 4 | `OutcomeService.refresh` has no actor binding | **SD** | ✅ Fixed (`b2ea9c6`) |
+| 5 | Delegation creation has no grantor validation | **SD** | ✅ Fixed (`b2ea9c6`) |
+| 6 | `revoke_grant` broker TOCTOU | **SD** | ✅ Fixed (`8225190`) |
+| 7 | Risk-based approval gate is dead code | **AC** (engine) / **SD** (call sites) | ✅ Fixed (`3126190`) |
 | 8 | Case-sensitive forbidden-path matching | **AC** | ✅ Fixed |
-| 9 | Tool identity collision, `(name, version)` key | **SD** | 🔴 Open |
+| 9 | Tool identity collision, `(name, version)` key | **SD** | ✅ Fixed (`4e1e00b`) |
 | 10 | TOCTOU between trust-check hash and execution | **KB** | ✅ Fixed (by AC, in KB's path) |
 | 11 | Naive substring-only secret redaction in captured output | **KB** | ✅ Fixed (by AC, in KB's path) |
-| 12 | API bearer token file has no restrictive permissions | **SD** | 🔴 Open |
+| 12 | API bearer token file has no restrictive permissions | **SD** | ✅ Fixed (`8b4ec65`) |
 | 13 | Recovery execution not bound to fresh HEAD | **AC**(engine)/**SD**(fixed it) | ✅ Fixed by SD |
 | 14 | `approval_token` not a real credential | **AC** | ➖ Closed, by design |
 | 15 | Legacy `/verify` had no authorization, leaked daemon env | **SD** | ✅ Fixed by SD |
-| 16 | Mutation + journal write not atomic (identity/credential/recovery) | **SD** | ✅ Fixed by SD (partial — KB emission points explicitly still open) |
+| 16 | Mutation + journal write not atomic (identity/credential/recovery) | **SD** | ✅ Fixed by SD (partial — KB emission points explicitly still open, see below) |
 
-**Net: 7 of 16 closed. 9 open** — 7 SD, 1 shared AC/SD, 1 AC-portion of the shared item. KB's two
-items are closed but landed by AC directly in KB's path at the operator's explicit direction —
-see the boundary note below, same as SD's #13.
+**Net: 15 of 16 closed, 0 open, 1 accepted-by-design.** The one residual gap is not a numbered
+finding of its own: #16's fix was explicitly scoped to `core/runtime_service.py` only, and the
+KB-owned journal-emission points it named as still non-atomic
+(`git/state.py`, `execution/launcher.py`, `environment/tracker.py`, `dependencies/tracker.py`,
+`assurance/service.py`, plus `ProviderOperationRepository.create`) have not been revisited since.
+That is real remaining work, just not tracked as its own numbered row here.
 
 ---
 
