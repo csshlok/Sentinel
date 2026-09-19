@@ -108,6 +108,31 @@ def test_no_color_env_var_disables_color(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "\x1b[" not in result.stdout
 
 
+def test_github_connect_takes_no_positional_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The token must never be a CLI argument (visible in argv/shell history);
+    # it is read from a hidden prompt or the env var below instead.
+    transport = FakeHttpTransport([json_response(200, {"connected": True})])
+    _patch_client(monkeypatch, transport)
+
+    result = runner.invoke(cli_main.app, ["github", "connect", "--json"], input="ghp_prompted\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(transport.calls[0]["body"])["token"] == "ghp_prompted"
+    # A leaked/echoed token in stdout would defeat the point of hiding it.
+    assert "ghp_prompted" not in result.stdout
+
+
+def test_github_connect_reads_token_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = FakeHttpTransport([json_response(200, {"connected": True})])
+    _patch_client(monkeypatch, transport)
+    monkeypatch.setenv("CHANGE_ASSURANCE_GITHUB_TOKEN", "ghp_from_env")
+
+    result = runner.invoke(cli_main.app, ["github", "connect", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(transport.calls[0]["body"])["token"] == "ghp_from_env"
+
+
 CHANGE = "00000000-0000-0000-0000-000000000000"
 ACTOR = "22222222-2222-2222-2222-222222222222"
 PLAN = "11111111-1111-1111-1111-111111111111"

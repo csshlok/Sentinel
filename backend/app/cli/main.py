@@ -220,7 +220,14 @@ def delegation_list(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = 
 
 
 @github_app.command("connect")
-def github_connect(token: str, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+def github_connect(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    # A GitHub PAT must never appear as a positional argument: argv is visible
+    # to other local processes/accounts (Task Manager, `ps`) and is typically
+    # persisted to shell history. Accept it via a hidden prompt, or the
+    # env var below for scripted/CI use -- never as a CLI argument.
+    token = os.environ.get("CHANGE_ASSURANCE_GITHUB_TOKEN") or typer.prompt(
+        "GitHub token", hide_input=True
+    )
     _run(lambda: ApiClient(api_url).github_connect(token), as_json=json_, no_color=no_color)
 
 
