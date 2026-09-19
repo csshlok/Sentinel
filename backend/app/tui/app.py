@@ -41,7 +41,7 @@ class ChangeDashboard(App):
 
     BINDINGS = [
         ("r", "refresh", "Refresh"),
-        ("enter", "detail", "Detail"),
+        ("i", "detail", "Detail"),
         ("v", "recover", "Recovery preview"),
         ("p", "passport", "Passport"),
         ("g", "evidence", "Evidence"),
