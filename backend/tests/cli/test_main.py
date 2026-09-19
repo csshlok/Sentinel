@@ -106,3 +106,78 @@ def test_no_color_env_var_disables_color(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert result.exit_code == 0
     assert "\x1b[" not in result.stdout
+
+
+CHANGE = "00000000-0000-0000-0000-000000000000"
+ACTOR = "22222222-2222-2222-2222-222222222222"
+PLAN = "11111111-1111-1111-1111-111111111111"
+
+
+def _invoke(monkeypatch, payload, argv):
+    transport = FakeHttpTransport([json_response(200, payload)])
+    _patch_client(monkeypatch, transport)
+    args = list(argv)
+    cut = args.index("--") if "--" in args else len(args)     # options must precede `--`
+    result = runner.invoke(cli_main.app, [*args[:cut], "--json", *args[cut:]])
+    assert result.exit_code == 0, result.stdout
+    return json.loads(result.stdout), transport.calls[0]
+
+
+@pytest.mark.parametrize(("argv", "method", "path"), [
+    (["evidence", "show", CHANGE], "GET", f"/changes/{CHANGE}/evidence"),
+    (["evidence", "baseline", CHANGE], "POST", f"/changes/{CHANGE}/evidence/baseline"),
+    (["evidence", "current", CHANGE], "POST", f"/changes/{CHANGE}/evidence/current"),
+    (["agent", "adapters"], "GET", "/agents/adapters"),
+    (["agent", "list", CHANGE], "GET", f"/changes/{CHANGE}/agents"),
+    (["assurance", "plan", CHANGE], "POST", f"/changes/{CHANGE}/assurance/plan"),
+    (["assurance", "show", CHANGE], "GET", f"/changes/{CHANGE}/assurance/plan"),
+    (["assurance", "evaluate", CHANGE, PLAN], "GET", f"/changes/{CHANGE}/assurance/{PLAN}/evaluation"),
+    (["assurance", "facts", CHANGE], "GET", f"/changes/{CHANGE}/assurance/facts"),
+])
+def test_evidence_agent_assurance_commands_call_the_right_routes(monkeypatch, argv, method, path):
+    result, call = _invoke(monkeypatch, {"ok": True}, argv)
+    assert result == {"ok": True}
+    assert call["method"] == method and call["url"].endswith("/api/v1" + path)
+
+
+def test_agent_launch_sends_arguments_and_waits_longer_than_the_agent(monkeypatch):
+    result, call = _invoke(monkeypatch, {"status": "PASSED"}, [
+        "agent", "launch", CHANGE, ACTOR, "python", "--timeout", "120", "--env", "KEEP_ME",
+        "--adapter", "generic", "--", "-c", "print(1)"])
+    body = json.loads(call["body"])
+    assert body["actor_id"] == ACTOR and body["launch"]["executable"] == "python"
+    assert body["launch"]["args"] == ["-c", "print(1)"]
+    assert body["launch"]["environment_keys"] == ["KEEP_ME"]
+    assert body["launch"]["timeout_seconds"] == 120 and body["output_limit_bytes"] == 200_000
+
+
+def test_agent_launch_waits_longer_than_the_agent_timeout():
+    seen = []
+
+    class Spy(FakeHttpTransport):
+        def request(self, method, url, *, headers, body, timeout_seconds):
+            seen.append(timeout_seconds)
+            return super().request(method, url, headers=headers, body=body,
+                                   timeout_seconds=timeout_seconds)
+
+    client = ApiClient("http://x", transport=Spy([json_response(200, {}), json_response(200, {})]))
+    client.launch_agent(CHANGE, actor_id=ACTOR, executable="python", args=[], timeout_seconds=120)
+    client.get_evidence(CHANGE)
+    assert seen == [180, 10.0]
+
+
+def test_attach_stop_and_assurance_run_bodies(monkeypatch):
+    _, call = _invoke(monkeypatch, {}, ["agent", "attach", CHANGE, ACTOR, "claude", "ext-9"])
+    assert json.loads(call["body"])["attach"] == {"adapter": "claude", "external_run_id": "ext-9"}
+    _, call = _invoke(monkeypatch, {}, ["agent", "stop", CHANGE, PLAN, ACTOR])
+    assert call["url"].endswith(f"/agents/{PLAN}/stop") and json.loads(call["body"]) == {"actor_id": ACTOR}
+    _, call = _invoke(monkeypatch, {}, ["assurance", "run", CHANGE, PLAN, ACTOR, "--output-limit", "500"])
+    assert json.loads(call["body"]) == {"actor_id": ACTOR, "output_limit_bytes": 500}
+
+
+def test_policy_denial_surfaces_as_exit_code_1(monkeypatch):
+    transport = FakeHttpTransport([json_response(403, {"error": {
+        "code": "POLICY_DENIED", "message": "no authority", "details": {}}})])
+    _patch_client(monkeypatch, transport)
+    result = runner.invoke(cli_main.app, ["agent", "launch", CHANGE, ACTOR, "python", "--json"])
+    assert result.exit_code == 1 and json.loads(result.stdout)["error"]["code"] == "POLICY_DENIED"

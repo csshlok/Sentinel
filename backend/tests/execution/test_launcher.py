@@ -272,3 +272,19 @@ def test_adapter_metadata_reports_availability_without_paths(tmp_path):
     assert launcher.adapters()      # default location works
     with pytest.raises(AppError):
         launcher.adapters(str(tmp_path / "missing"))
+
+
+def test_observer_sees_every_state_and_cannot_break_the_run(tmp_path):
+    seen = []
+    launcher = AgentLauncher()
+    launcher.on_update = lambda run: seen.append((run.status, run.top_level_pid))
+    run = launcher.launch(CHANGE, str(tmp_path), request("print(1)"), 100)
+    statuses = [status for status, _ in seen]
+    assert statuses[0] is AgentRunStatus.RUNNING and statuses[-1] is AgentRunStatus.PASSED
+    assert any(pid for _, pid in seen) and run.status is AgentRunStatus.PASSED
+
+    def broken(_run):
+        raise RuntimeError("observer down")
+
+    launcher.on_update = broken
+    assert launcher.launch(CHANGE, str(tmp_path), request("print(2)"), 100).status is AgentRunStatus.PASSED

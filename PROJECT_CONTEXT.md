@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 03:15 -04:00 - Remaining Person 2 items closed
+
+CLI groups `evidence`, `agent` and `assurance`; `Idempotency-Key` replay safety on agent launch/attach; in-flight agent runs persisted so they are listed and stoppable from a separate request. Whole repository excluding `backend/tests/tui`: **531 passed, 1 skipped**. Open and not `[KB]`'s: `[AC]` TUI panels 3-4 (need the `textual` extra), `.cmd`-shim-only Codex/Claude installs, non-Windows and real-agent smoke tests. Details in `OVERALL_CONTEXT.md`.
+
 ### `[KB]` - 2026-09-19 02:45 -04:00 - Person 2 stream composed into the API (user-authorized)
 
 `create_app` now builds `EvidenceService(EvidenceStore(database))`, exposes it through 13 new `/api/v1` routes (`evidence`, `agents`, `assurance`; see `OVERALL_CONTEXT.md` for the list), gates every command-executing operation through the `[AC]` policy engine, and feeds `assurance_facts` into `RuntimeLifecycleFacts` so `LOCALLY_VERIFIED` and `REVIEW_READY` are reachable only with fresh, passing evidence. The five KB capabilities report `AVAILABLE`. Whole repository excluding `backend/tests/tui`: **509 passed, 1 skipped**. The edited `[SD]`-owned files are listed in `OVERALL_CONTEXT.md` for `[SD]` review. Still open: `[AC]` CLI/TUI clients for these routes.

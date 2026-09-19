@@ -109,6 +109,10 @@ owns (all `False` with a reason when unproven) for `RuntimeLifecycleFacts`.
 without disclosing paths. Rows written here feed `PassportBuilder` unchanged
 (verified by a test using `[AC]`'s real builder).
 
+**Update 2:** the CLI groups, `Idempotency-Key` replay safety on launch/attach and
+in-flight run persistence (`AgentLauncher.on_update`) are also done; see
+`OVERALL_CONTEXT.md`, 2026-09-19 03:15. `launch` is still blocking per request.
+
 **Update:** the composition below has since been done at the user's instruction
 (see `OVERALL_CONTEXT.md`, 2026-09-19 02:45); `[SD]` only needs to review it.
 Originally, what was left for `[SD]` was only composition: construct `EvidenceService(EvidenceStore(database))`

@@ -160,6 +160,18 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 03:15 -04:00 - Person 2 remaining items closed: CLI, replay safety, in-flight agents
+
+Follow-up to the composition record below, closing the items it listed as remaining, all at the user's instruction. Edited `[AC]`-owned `backend/app/cli/` (additive only) and the `[SD]`-owned files named below.
+
+- **CLI**: `evidence show|baseline|current`, `agent adapters|list|launch|attach|stop` and `assurance plan|show|run|evaluate|facts` command groups in `backend/app/cli/main.py` over new `ApiClient` methods. Launch and run calls wait longer than the agent's own timeout; `--json` and exit codes follow the existing conventions. Options must precede `--` when passing agent arguments (`agent launch CHANGE ACTOR python --json -- -c "..."`).
+- **Replay safety**: `POST .../agents/launch` and `.../agents/attach` accept `Idempotency-Key`. `IdempotencyStore` (in `backend/app/assurance/store.py`, on `[SD]`'s `idempotency_records` table) claims the key before acting, so a replay returns the first run, two concurrent identical submissions cannot both start an agent, a different body under the same key is refused (`IDEMPOTENCY_KEY_REUSED`), and a failed attempt releases its key. Authority is re-checked on every replay. A process killed mid-launch leaves its key "in progress"; use a new key.
+- **In-flight agents**: `AgentLauncher.on_update` lets `EvidenceService` persist a run when it starts, when its pid is known and when it finishes. A running agent is now listed by `GET /changes/{id}/agents` and can be stopped by a separate `POST .../agents/{run_id}/stop` request (previously stop returned 404 until the launch finished).
+
+Verification: whole repository excluding `backend/tests/tui` (uninstalled `textual` extra): **531 passed, 1 skipped**. New: CLI unit tests plus a real CLI -> live uvicorn -> real Git/agent/pytest smoke test (`backend/tests/cli/test_smoke_evidence.py`), `backend/tests/acceptance/test_evidence_idempotency.py` and `test_evidence_live_agents.py` (real cancel of a running agent across requests).
+
+**Still open, and not `[KB]`'s**: `[AC]`'s TUI panels for Git/dependency tables and assurance (items 3-4), which cannot be built or tested here without the optional `textual` extra; Codex/Claude installs that exist only as Windows `.cmd` shims cannot be launched; no Linux/macOS or real-agent smoke test.
+
 ### `[KB]` - 2026-09-19 02:45 -04:00 - Person 2 stream wired into `create_app` and exposed through the API (user-authorized `[SD]` composition)
 
 At the user's explicit instruction, `[KB]` performed the Gate 3 composition for its own stream, which `AGENT_COORDINATION.md` normally reserves to `[SD]`. Edited `[SD]`-owned files: `backend/app/main.py`, `backend/app/core/router.py`, `backend/app/core/runtime_service.py`, `backend/app/core/lifecycle_facts_service.py`, `backend/app/contracts/models.py` (additive request/response models only; no existing contract changed) and new `backend/app/core/evidence_runtime.py`. `[SD]` should review these edits as it would any composition change.

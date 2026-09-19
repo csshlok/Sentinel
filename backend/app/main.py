@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.app.assurance.service import EvidenceService
-from backend.app.assurance.store import EvidenceStore
+from backend.app.assurance.store import EvidenceStore, IdempotencyStore
 from backend.app.contracts.models import ErrorDetail, ErrorEnvelope, HealthResponse
 from backend.app.contracts.ports import (
     CredentialStorePort,
@@ -248,7 +248,9 @@ def _build_runtime_services(
         outcomes=outcomes,
         recovery=recovery,
         passport=passport,
-        evidence=EvidenceAdminService(evidence_service, policy, service),
+        evidence=EvidenceAdminService(
+            evidence_service, policy, service, IdempotencyStore(database)
+        ),
     )
 
 

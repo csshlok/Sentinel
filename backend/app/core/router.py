@@ -433,9 +433,14 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         tags=["agents"],
     )
-    def launch_agent(change_id: UUID, request: AgentLaunchActionRequest) -> AgentRun:
+    def launch_agent(
+        change_id: UUID,
+        request: AgentLaunchActionRequest,
+        idempotency_key: IdempotencyHeader = None,
+    ) -> AgentRun:
         return runtime.evidence.launch_agent(
-            change_id, request.actor_id, request.launch, request.output_limit_bytes
+            change_id, request.actor_id, request.launch, request.output_limit_bytes,
+            idempotency_key=idempotency_key,
         )
 
     @router.post(
@@ -444,8 +449,14 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         tags=["agents"],
     )
-    def attach_agent(change_id: UUID, request: AgentAttachActionRequest) -> AgentRun:
-        return runtime.evidence.attach_agent(change_id, request.actor_id, request.attach)
+    def attach_agent(
+        change_id: UUID,
+        request: AgentAttachActionRequest,
+        idempotency_key: IdempotencyHeader = None,
+    ) -> AgentRun:
+        return runtime.evidence.attach_agent(
+            change_id, request.actor_id, request.attach, idempotency_key=idempotency_key
+        )
 
     @router.post(
         "/changes/{change_id}/agents/{run_id}/stop",

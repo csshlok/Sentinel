@@ -1,5 +1,6 @@
 """Typer CLI: create/list/show changes, identity, provider, outcome,
-recovery, and passport commands, all through `ApiClient` only.
+recovery, passport, evidence, agent, and assurance commands, all through
+`ApiClient` only.
 
 Stable exit codes: 0 success, 1 API error, 2 connection error (Typer's
 own usage errors keep Click's default exit code 2 as well, since they
@@ -28,6 +29,9 @@ github_app = typer.Typer(no_args_is_help=True)
 outcome_app = typer.Typer(no_args_is_help=True)
 recovery_app = typer.Typer(no_args_is_help=True)
 passport_app = typer.Typer(no_args_is_help=True)
+evidence_app = typer.Typer(no_args_is_help=True)
+agent_app = typer.Typer(no_args_is_help=True)
+assurance_app = typer.Typer(no_args_is_help=True)
 app.add_typer(change_app, name="change")
 app.add_typer(actor_app, name="actor")
 app.add_typer(delegation_app, name="delegation")
@@ -35,6 +39,9 @@ app.add_typer(github_app, name="github")
 app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(passport_app, name="passport")
+app.add_typer(evidence_app, name="evidence")
+app.add_typer(agent_app, name="agent")
+app.add_typer(assurance_app, name="assurance")
 
 EXIT_OK = 0
 EXIT_API_ERROR = 1
@@ -297,6 +304,126 @@ def passport_build(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = J
 @passport_app.command("show")
 def passport_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     _run(lambda: ApiClient(api_url).get_latest_passport(change_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("show")
+def evidence_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show captured checkpoints, environment, dependencies and the latest plan."""
+    _run(lambda: ApiClient(api_url).get_evidence(change_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("baseline")
+def evidence_baseline(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Capture the Git checkpoint and environment passport before an agent runs."""
+    _run(lambda: ApiClient(api_url).capture_baseline(change_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("current")
+def evidence_current(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Capture current evidence and compare it with the baseline."""
+    _run(lambda: ApiClient(api_url).capture_current_evidence(change_id), as_json=json_, no_color=no_color)
+
+
+@agent_app.command("adapters")
+def agent_adapters(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """List agent adapters and which executables are installed."""
+    _run(lambda: ApiClient(api_url).list_agent_adapters(), as_json=json_, no_color=no_color)
+
+
+@agent_app.command("list")
+def agent_list(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    _run(lambda: ApiClient(api_url).list_agent_runs(change_id), as_json=json_, no_color=no_color)
+
+
+@agent_app.command("launch")
+def agent_launch(
+    change_id: UUID,
+    actor_id: UUID,
+    executable: str,
+    args: list[str] = typer.Argument(None, help="Arguments for the executable (put them after --)."),
+    adapter: str = typer.Option("generic", "--adapter"),
+    env: list[str] = typer.Option(None, "--env", help="Environment variable name to forward."),
+    timeout_seconds: int = typer.Option(900, "--timeout"),
+    output_limit_bytes: int = typer.Option(200_000, "--output-limit"),
+    idempotency_key: str = typer.Option(None, "--idempotency-key", help="Replays return the first run instead of launching again."),
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Launch a top-level agent process and wait for its aggregate result."""
+    _run(
+        lambda: ApiClient(api_url).launch_agent(
+            change_id, actor_id=actor_id, executable=executable, args=list(args or []),
+            adapter=adapter, environment_keys=list(env or []),
+            timeout_seconds=timeout_seconds, output_limit_bytes=output_limit_bytes,
+            idempotency_key=idempotency_key,
+        ),
+        as_json=json_,
+        no_color=no_color,
+    )
+
+
+@agent_app.command("attach")
+def agent_attach(
+    change_id: UUID, actor_id: UUID, adapter: str, external_run_id: str,
+    idempotency_key: str = typer.Option(None, "--idempotency-key"),
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """Record declared metadata for an externally launched agent (nothing is observed)."""
+    _run(
+        lambda: ApiClient(api_url).attach_agent(
+            change_id, actor_id=actor_id, adapter=adapter, external_run_id=external_run_id,
+            idempotency_key=idempotency_key),
+        as_json=json_, no_color=no_color,
+    )
+
+
+@agent_app.command("stop")
+def agent_stop(
+    change_id: UUID, run_id: UUID, actor_id: UUID,
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """Stop the top-level process of a launched run (direct child only)."""
+    _run(lambda: ApiClient(api_url).stop_agent(change_id, run_id, actor_id=actor_id),
+         as_json=json_, no_color=no_color)
+
+
+@assurance_app.command("plan")
+def assurance_plan(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Build an evidence-selected assurance plan from the latest evidence."""
+    _run(lambda: ApiClient(api_url).plan_assurance(change_id), as_json=json_, no_color=no_color)
+
+
+@assurance_app.command("show")
+def assurance_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show the latest assurance plan."""
+    _run(lambda: ApiClient(api_url).get_assurance_plan(change_id), as_json=json_, no_color=no_color)
+
+
+@assurance_app.command("run")
+def assurance_run(
+    change_id: UUID, plan_id: UUID, actor_id: UUID,
+    output_limit_bytes: int = typer.Option(200_000, "--output-limit"),
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """Run the plan's checks (requires the assurance.run delegation)."""
+    _run(
+        lambda: ApiClient(api_url).run_assurance(
+            change_id, plan_id, actor_id=actor_id, output_limit_bytes=output_limit_bytes),
+        as_json=json_, no_color=no_color,
+    )
+
+
+@assurance_app.command("evaluate")
+def assurance_evaluate(change_id: UUID, plan_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Re-inspect the repository and decide what the results still prove."""
+    _run(lambda: ApiClient(api_url).evaluate_assurance(change_id, plan_id), as_json=json_, no_color=no_color)
+
+
+@assurance_app.command("facts")
+def assurance_facts(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show the lifecycle facts that assurance evidence currently supports."""
+    _run(lambda: ApiClient(api_url).assurance_facts(change_id), as_json=json_, no_color=no_color)
 
 
 def main() -> None:

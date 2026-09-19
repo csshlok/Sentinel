@@ -20,6 +20,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -105,6 +106,10 @@ class AgentLauncher:
         self._adapters = table
         self._runs: dict[UUID, _State] = {}
         self._lock = threading.Lock()
+        # Optional observer, called with every state change of a run (started, pid
+        # known, finished) so a caller can persist in-flight runs and stop them from
+        # another request. Failures in the observer never affect the run.
+        self.on_update: Callable[[AgentRun], None] | None = None
 
     # -- port ---------------------------------------------------------------
 
@@ -136,10 +141,13 @@ class AgentLauncher:
         state = _State(running, threading.Event(), threading.Event())
         with self._lock:
             self._runs[run_id] = state
+        self._notify(running)
 
         def on_start(pid: int) -> None:
             with self._lock:
                 state.record = state.record.model_copy(update={"top_level_pid": pid})
+                started = state.record
+            self._notify(started)
 
         clock = time.monotonic()
         limitations = [DESCENDANT_LIMITATION, EXIT_LIMITATION]
@@ -188,6 +196,7 @@ class AgentLauncher:
         with self._lock:
             state.record = final
             self._evict()
+        self._notify(final)
         state.done.set()
         return final
 
@@ -261,6 +270,15 @@ class AgentLauncher:
             raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist.",
                            status_code=404)
         return state.record
+
+    def _notify(self, run: AgentRun) -> None:
+        observer = self.on_update
+        if observer is None:
+            return
+        try:
+            observer(run)
+        except Exception:  # persistence trouble must not change what the agent does
+            pass
 
     def _evict(self) -> None:
         """Bound memory: drop the oldest finished records (caller holds the lock)."""

@@ -84,6 +84,9 @@ class EvidenceService:
         self._store = store
         self._git = git_state or GitStateTracker()
         self._launcher = launcher or AgentLauncher()
+        if self._launcher.on_update is None:
+            # Persist in-flight runs so they are listed, and stoppable from another request.
+            self._launcher.on_update = store.save_agent_run
         self._environment = environment or EnvironmentTracker()
         self._dependencies = dependencies or DependencyTracker()
         self._patch_limit = patch_limit_bytes

@@ -59,6 +59,7 @@ class ApiClient:
         *,
         json_body: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> Any:
         headers = {"Accept": "application/json"}
         body = None
@@ -73,7 +74,7 @@ class ApiClient:
                 f"{self.base_url}{path}",
                 headers=headers,
                 body=body,
-                timeout_seconds=self.timeout_seconds,
+                timeout_seconds=timeout_seconds or self.timeout_seconds,
             )
         except TransportTimeout as error:
             raise ApiConnectionError(str(error)) from error
@@ -232,3 +233,96 @@ class ApiClient:
 
     def get_latest_passport(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/passport")
+
+    # -- evidence, agents, assurance (Person 2 stream) --
+    def get_evidence(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/evidence")
+
+    def capture_baseline(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/evidence/baseline",
+                             timeout_seconds=120)
+
+    def capture_current_evidence(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/evidence/current",
+                             timeout_seconds=120)
+
+    def list_agent_adapters(self) -> Any:
+        return self._request("GET", "/api/v1/agents/adapters")
+
+    def list_agent_runs(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/agents")
+
+    def launch_agent(
+        self,
+        change_id: UUID,
+        *,
+        actor_id: UUID,
+        executable: str,
+        args: list[str],
+        adapter: str = "generic",
+        environment_keys: list[str] | None = None,
+        timeout_seconds: int = 900,
+        output_limit_bytes: int = 200_000,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        # The API call blocks for as long as the agent runs, so the HTTP wait
+        # must outlast the agent's own timeout.
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/agents/launch",
+            json_body={
+                "actor_id": str(actor_id),
+                "launch": {
+                    "adapter": adapter,
+                    "executable": executable,
+                    "args": args,
+                    "environment_keys": environment_keys or [],
+                    "timeout_seconds": timeout_seconds,
+                },
+                "output_limit_bytes": output_limit_bytes,
+            },
+            idempotency_key=idempotency_key,
+            timeout_seconds=timeout_seconds + 60,
+        )
+
+    def attach_agent(
+        self, change_id: UUID, *, actor_id: UUID, adapter: str, external_run_id: str,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/agents/attach",
+            json_body={"actor_id": str(actor_id),
+                       "attach": {"adapter": adapter, "external_run_id": external_run_id}},
+            idempotency_key=idempotency_key,
+        )
+
+    def stop_agent(self, change_id: UUID, run_id: UUID, *, actor_id: UUID) -> Any:
+        return self._request(
+            "POST", f"/api/v1/changes/{change_id}/agents/{run_id}/stop",
+            json_body={"actor_id": str(actor_id)}, timeout_seconds=30)
+
+    def plan_assurance(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/assurance/plan",
+                             timeout_seconds=120)
+
+    def get_assurance_plan(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/assurance/plan")
+
+    def run_assurance(
+        self, change_id: UUID, plan_id: UUID, *, actor_id: UUID,
+        output_limit_bytes: int = 200_000, wait_seconds: int = 900,
+    ) -> Any:
+        return self._request(
+            "POST", f"/api/v1/changes/{change_id}/assurance/{plan_id}/run",
+            json_body={"actor_id": str(actor_id), "output_limit_bytes": output_limit_bytes},
+            timeout_seconds=wait_seconds)
+
+    def evaluate_assurance(self, change_id: UUID, plan_id: UUID) -> Any:
+        return self._request(
+            "GET", f"/api/v1/changes/{change_id}/assurance/{plan_id}/evaluation",
+            timeout_seconds=120)
+
+    def assurance_facts(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/assurance/facts",
+                             timeout_seconds=120)

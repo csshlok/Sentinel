@@ -23,6 +23,7 @@ from backend.app.contracts.models import (
     GitCheckpoint,
 )
 from backend.app.core.database import Database
+from backend.app.core.errors import AppError
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -188,3 +189,57 @@ class EvidenceStore:
         with self._db.connection() as c:
             rows = c.execute(sql, params).fetchall()
         return [model.model_validate_json(row["payload_json"]) for row in rows]
+
+
+class IdempotencyStore:
+    """Replay-safe execution for side-effecting requests (launch, attach).
+
+    Uses ``[SD]``'s ``idempotency_records`` table. A request first *claims* its
+    key, so two concurrent identical submissions cannot both start an agent; the
+    second sees ``IDEMPOTENCY_REQUEST_IN_PROGRESS``. A different request body under
+    the same key is refused, and a failed attempt releases its claim.
+    """
+
+    PENDING = ""
+
+    def __init__(self, database: Database) -> None:
+        self._db = database
+
+    def claim(self, scope: str, key: str, request_hash: str) -> str | None:
+        """Return the stored result for a completed replay, or ``None`` if newly claimed."""
+
+        with self._db.connection(immediate=True) as c:
+            row = c.execute(
+                "SELECT request_hash, result_json FROM idempotency_records WHERE scope = ? AND key = ?",
+                (scope, key)).fetchone()
+            if row is None:
+                c.execute(
+                    "INSERT INTO idempotency_records (scope, key, request_hash, result_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (scope, key, request_hash, self.PENDING, _now()))
+                return None
+            if row["request_hash"] != request_hash:
+                raise AppError("IDEMPOTENCY_KEY_REUSED",
+                               "The idempotency key was already used for a different request.",
+                               status_code=409, details={"scope": scope})
+            if row["result_json"] == self.PENDING:
+                raise AppError("IDEMPOTENCY_REQUEST_IN_PROGRESS",
+                               "A request with this idempotency key is still running.",
+                               status_code=409, details={"scope": scope})
+            return row["result_json"]
+
+    def complete(self, scope: str, key: str, result_json: str) -> None:
+        with self._db.connection(immediate=True) as c:
+            c.execute("UPDATE idempotency_records SET result_json = ? WHERE scope = ? AND key = ?",
+                      (result_json, scope, key))
+
+    def release(self, scope: str, key: str) -> None:
+        with self._db.connection(immediate=True) as c:
+            c.execute("DELETE FROM idempotency_records WHERE scope = ? AND key = ? AND result_json = ?",
+                      (scope, key, self.PENDING))
+
+
+def _now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat()

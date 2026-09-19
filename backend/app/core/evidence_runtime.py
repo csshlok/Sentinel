@@ -11,12 +11,16 @@ scope on that Change.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
 from uuid import UUID
 
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.service import (
     AssuranceFacts, EvidenceOverview, EvidenceService, EvidenceSnapshot,
 )
+from backend.app.assurance.store import IdempotencyStore
 from backend.app.contracts.models import (
     AgentAdapterInfo, AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan,
     AssuranceRun, ChangeView,
@@ -33,8 +37,10 @@ ASSURANCE_RUN_SCOPE = "assurance.run"
 
 class EvidenceAdminService:
     def __init__(
-        self, evidence: EvidenceService, policy: PolicyPort, change_service: ChangeService
+        self, evidence: EvidenceService, policy: PolicyPort, change_service: ChangeService,
+        idempotency: IdempotencyStore | None = None,
     ) -> None:
+        self.idempotency = idempotency
         self.evidence = evidence
         self.policy = policy
         self.change_service = change_service
@@ -63,21 +69,46 @@ class EvidenceAdminService:
         path = self.change_service.get(change_id).repository_path if change_id else None
         return [AgentAdapterInfo.model_validate(item) for item in self.evidence.adapters(path)]
 
+    def _once(self, scope: str, key: str | None, body: dict[str, object],
+              action: Callable[[], AgentRun]) -> AgentRun:
+        """Run ``action`` at most once per idempotency key; replays return the stored run."""
+
+        if key is None or self.idempotency is None:
+            return action()
+        digest = hashlib.sha256(json.dumps(
+            body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+        stored = self.idempotency.claim(scope, key, digest)
+        if stored is not None:
+            return AgentRun.model_validate_json(stored)
+        try:
+            run = action()
+        except BaseException:
+            self.idempotency.release(scope, key)
+            raise
+        self.idempotency.complete(scope, key, run.model_dump_json())
+        return run
+
     def launch_agent(
         self, change_id: UUID, actor_id: UUID, request: AgentLaunchRequest,
-        output_limit_bytes: int,
+        output_limit_bytes: int, idempotency_key: str | None = None,
     ) -> AgentRun:
         change = self.change_service.get(change_id)
         self._authorize(actor_id, change, LAUNCH_SCOPE,
                         {"adapter": request.adapter, "executable": request.executable})
-        return self.evidence.launch_agent(change, request, output_limit_bytes)
+        body = {"actor": str(actor_id), "launch": request.model_dump(mode="json"),
+                "limit": output_limit_bytes}
+        return self._once(f"agent.launch:{change_id}", idempotency_key, body,
+                          lambda: self.evidence.launch_agent(change, request, output_limit_bytes))
 
     def attach_agent(
-        self, change_id: UUID, actor_id: UUID, request: AgentAttachRequest
+        self, change_id: UUID, actor_id: UUID, request: AgentAttachRequest,
+        idempotency_key: str | None = None,
     ) -> AgentRun:
         change = self.change_service.get(change_id)
         self._authorize(actor_id, change, ATTACH_SCOPE, {"adapter": request.adapter})
-        return self.evidence.attach_agent(change, request)
+        body = {"actor": str(actor_id), "attach": request.model_dump(mode="json")}
+        return self._once(f"agent.attach:{change_id}", idempotency_key, body,
+                          lambda: self.evidence.attach_agent(change, request))
 
     def stop_agent(self, change_id: UUID, run_id: UUID, actor_id: UUID) -> AgentRun:
         change = self.change_service.get(change_id)
