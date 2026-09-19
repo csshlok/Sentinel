@@ -160,6 +160,16 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 01:55 -04:00 - Person 2 evidence/execution/assurance stream complete
+
+`[KB]` implemented every remaining Person 2 item (KB-1 through KB-6) against the ports `[SD]` froze: `GitStateTracker`, `AgentLauncher`, `EnvironmentTracker`, `DependencyTracker` and `AssuranceEngine`, in `backend/app/{git,execution,environment,dependencies,assurance}/` with matching tests under `backend/tests/`. No shared contract, migration, composition or other owner's module was edited; nothing is wired into the application yet. The earlier blocked status in the `[KB]` entries below is superseded.
+
+What is now real: deterministic Git checkpoints with untracked-content digests and freshness checks; a top-level-only agent launcher (allowlisted environment, redacted output, direct-child cancel/timeout, attach as metadata); redacted, fingerprinted environment passports with drift; Python and Node dependency comparison that reports unsupported and malformed files instead of guessing; and an assurance engine that selects checks from the Change Contract and changed-path/dependency evidence, refuses stale evidence, and reports coverage gaps and contract deviations.
+
+Verification: whole repository **473 passed, 1 skipped**; `[KB]` suites **328 passed** with **98%** statement+branch coverage on the five owned packages; `python -m compileall -q backend` passed. Real Git repositories, subprocesses, `pytest`, Node `node --test` and SQLite round trips were used, and owner-local end-to-end flows cover baseline -> agent edit -> comparison -> dependencies -> assurance -> staleness.
+
+Honest limits: no descendant control/attribution, replay, local-file undo or tool trust (the four cuts); Git reads are not an atomic snapshot; passing checks are not proof of correctness; checks use the runtime's interpreter, not a repository virtual environment; Windows and Python 3.14 only. Contract gaps and the `[SD]` integration steps are in `backend/app/git/KB_HANDOFF.md`. This is self-verification and awaits independent `[SD]` review.
+
 ### `[SD]` - 2026-09-19 01:38:38 -04:00 - Real `LifecycleFactsPort`, activating evidence already wired
 
 Following the Gate 3 composition below, `[SD]` did the one remaining unblocked P1 item: `ChangeService` was still defaulting to `UnavailableLifecycleFacts` (a hard 503 for every transition), so none of the now-real identity/outcome/recovery evidence could actually gate a lifecycle transition through the API. New `backend/app/core/lifecycle_facts_service.py` (`RuntimeLifecycleFacts`) implements the frozen `LifecycleFactsPort` for real:

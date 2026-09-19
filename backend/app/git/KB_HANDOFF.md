@@ -1,172 +1,172 @@
-# Person 2 foundation hardening handoff
+# Person 2 stream-complete handoff (KB-0 .. KB-6)
 
-`[kb] HANDOFF to [SD]` — reviewed 2026-09-19 00:01 -04:00
+`[kb] HANDOFF to [SD]` — 2026-09-19 01:55 -04:00
 
-Status: existing-port hardening ready for independent review; KB-1 through KB-6
-are **not** stream-complete. The five new shared ports remain absent.
+Status: **ready for independent `[SD]` review.** Every `[KB]` port in the frozen
+contracts has a production implementation, real-boundary tests and documented
+limitations. Nothing here wires the application; composition, persistence and
+routes are `[SD]`'s Gate 3 work. This is self-verification, not `[SD]` acceptance.
 
-The user confirmed that this session is Person 2 and instructed it to continue
-owned work. This is not an invented `[SD]` comprehension acknowledgement. The
-comprehension statement and requested shared contracts are in `PROJECT_CONTEXT.md`.
+The user confirmed this session is Person 2 and instructed end-to-end
+implementation and testing. That is not an invented `[SD]` comprehension
+acknowledgement; the comprehension statement is recorded in `PROJECT_CONTEXT.md`.
 
-## Claimed implementation
+## Changed paths (all `[KB]`-owned)
 
-- `backend/app/git/adapter.py`
-- `backend/app/execution/__init__.py`
-- `backend/app/execution/_process.py`
-- `backend/app/execution/runner.py`
-- `backend/tests/git/test_git_adapter.py`
-- `backend/tests/git/test_hardening.py`
-- `backend/tests/execution/__init__.py`
-- `backend/tests/execution/test_runner.py`
-- This owner-local handoff document.
+- `backend/app/git/`: `adapter.py` (stderr no longer starves the stdout patch
+  budget), `state.py` (new), `reader.py` (new).
+- `backend/app/execution/`: `_process.py` (cancel/pid/separate stderr budget/long
+  timeout), `resolve.py` (new), `launcher.py` (new).
+- `backend/app/environment/tracker.py`, `backend/app/dependencies/{parsers,tracker}.py`,
+  `backend/app/assurance/{models,deviations,discovery,engine}.py` (all new).
+- Tests: `backend/tests/{git,execution,environment,dependencies,assurance,kb_flow}/`
+  and `backend/tests/support_kb.py`.
+- Context documents were updated at the user's explicit request.
 
-The context documents were updated under the user's original explicit request.
-Existing Git startup-error edits were preserved; their regression test now mocks
-`Popen`, matching the new process boundary. The user subsequently requested removal
-of `.vscode/settings.json`; it was deleted locally and was never tracked. No shared
-contracts, core, migrations, composition, dependency manifests, or other person's
-feature code were edited. The reviewed work is split into three commits:
+No shared contract, migration, composition, dependency manifest or other owner's
+concrete module was edited. Contract hashes consumed:
+`ports.py` `550fb936777814e2d83ba562ed87863afda2537861a8c06f4215c74118232f04`,
+`models.py` `a836f66e7330193995b66584fa875a0f102dad754c9272734462b946b949757f`.
 
-1. `5bf01cb` — `[kb] 2026-09-19T00:01:24-04:00 Add bounded execution foundation`.
-2. `47ea584` — `[kb] 2026-09-19T00:01:32-04:00 Harden read-only Git evidence`.
-3. The documentation commit containing this handoff and both context updates.
+## Port map
 
-## Assigned-work review and milestones
-
-The user requested `[kb]` tags, timestamps, and milestone progress reports for
-subsequent Person 2 work. This preference applies to this contributor's updates
-and commit messages; it does not change other contributors' ownership.
-
-| Assignment | Reviewed state | Remaining work |
+| Work item | Port | Concrete class |
 | --- | --- | --- |
-| KB-0 architecture audit | Partial: proposal mapping, compatibility audit and Git/process fixtures present | New-port contract fakes and multi-ecosystem fixtures after interface freeze |
-| KB-1 Git checkpoints | Partial: existing inspector hardened and tested | `GitStatePort`, persisted checkpoint identity, comparisons and full freshness model |
-| KB-2 Agent Launcher | Partial: bounded execution primitive tested | `AgentLauncherPort`, generic/Codex/Claude adapters, attach/cancel, authority and idempotency |
-| KB-3 Environment Passport | Not implemented; shared contract absent | `EnvironmentPort`, collectors, redaction/fingerprint policy and drift models |
-| KB-4 Dependency Tracker | Not implemented; shared contract absent | `DependencyPort`, frozen manifest/lock formats, parsers, comparison and risk |
-| KB-5 Assurance engine | Not implemented; shared contract absent | `AssurancePort`, discovery, selection, reporters, freshness, deviations and coverage |
-| KB-6 stream hardening | Existing-port tests/review complete | Full-stream tests and `[SD]` acceptance after the remaining work |
+| KB-1 | `GitStatePort` | `backend.app.git.state.GitStateTracker` |
+| KB-2 | `AgentLauncherPort` | `backend.app.execution.launcher.AgentLauncher` |
+| KB-3 | `EnvironmentPort` | `backend.app.environment.tracker.EnvironmentTracker` |
+| KB-4 | `DependencyPort` | `backend.app.dependencies.tracker.DependencyTracker` |
+| KB-5 | `AssurancePort` | `backend.app.assurance.engine.AssuranceEngine` |
+| existing | `GitInspectionPort` / `VerificationPort` | `GitRepositoryInspector` / `BoundedVerificationRunner` |
 
-Review milestone 1 completed 2026-09-19 00:00 -04:00: assignment audit and settings
-removal. Numeric-bound review found fractional byte limits and non-finite timeouts
-were not consistently rejected. The collector now requires finite positive timeouts
-up to 300 seconds and integer byte limits up to eight MiB; public verification and
-patch limits remain zero through one MiB. Booleans, strings, null and fractional
-byte counts fail before process startup. Regression tests cover these cases.
+All constructors work with no arguments. Each class passes an `isinstance` check
+against its `runtime_checkable` port in its own test module.
 
-Review milestone 2 completed 2026-09-19 00:01 -04:00: the complete suite passed
-with the coverage below. Review milestone 3 groups the verified implementation and
-documentation into the three requested commits. This self-review is not independent
-`[SD]` acceptance or a claim of complete retained-proposal functionality.
+## Behavior
 
-## Consumed interfaces
+**Git checkpoints.** `capture` reuses the hardened read-only inspector and returns a
+`GitCheckpoint` whose `status_digest` covers identity, HEAD, branch, every path
+record, the bounded patch and a content digest of untracked files (which the
+patch omits). Time is excluded, so identical states have identical digests.
+`compare` reports added/removed/changed paths, head change and branch movement;
+`is_current` is the freshness input (a truncated patch is conservatively stale
+unless its original limit is supplied). Repositories with no commit are rejected
+with `REPOSITORY_HAS_NO_COMMITS`; detached HEAD is `branch is None`.
 
-- `GitInspectionPort.validate_repository` and `.inspect`.
-- `VerificationPort.run` and existing Pydantic request/result models.
-- `AppError` for safe domain failures.
-- `ports.py` SHA-256: `5e17c9dc1544944ff96eacecbd396ba6d315b0ce682aab2e07e35606461fa0ee`.
-- `models.py` SHA-256: `a469512f3b3e60dc94a4d2106afa47adc5ce94d5ac38b73bb9334c8debe532f7`.
+**Agent Launcher.** `launch` starts exactly one top-level process and is blocking.
+Generic, Codex and Claude adapters bind allowed executables; the environment is an
+allowlist (requested keys only; `PATH`, `GIT_*`, interpreter-injection keys and
+broker-prefixed keys are refused; secret-named keys are refused unless they are
+that adapter's own credential variable). Sensitive parent values are redacted from
+captured output. Timeout and `stop` terminate the direct child only. `attach`
+records declared metadata and never controls or observes anything. Every record
+carries `descendant_control_available=False` and an explicit limitation.
 
-`CapturedProcess` is a private subprocess implementation detail. It is not a new
-shared domain model or an alternative to `AgentLauncherPort`.
+**Environment Passport.** Deterministic, sorted, bounded facts: OS, interpreter,
+tool versions (absent tools are simply absent), an allowlisted set of variables,
+`PATH` and paths as keyed HMAC fingerprints, repository configuration and the
+remote host (never its URL). A failed collector yields a `PARTIAL` passport with a
+limitation. `compare` returns added/removed/changed/unknown facts and never
+attributes cause.
 
-## Implemented behavior
+**Dependency Tracker.** Baseline is the checkpoint's HEAD commit, current is the
+working tree. Supported: `requirements*.txt`, `pyproject.toml` (PEP 621, PEP 735,
+Poetry), `poetry.lock`, `package.json`, `package-lock.json` (v1/2/3). Changed
+files in any other ecosystem, and malformed or oversized files, are listed in
+`unsupported_ecosystems` rather than guessed. Risk notes cover non-registry
+sources, unpinned ranges, downgrades, major bumps, missing lockfiles and
+manifest/lock mismatches. Nothing from the repository is executed.
 
-Git captures now have bounded in-memory output and full streaming diff hashes.
-Metadata above eight MiB fails explicitly rather than returning partial state;
-patch prefixes support zero through one MiB. Malformed records, invalid numeric
-statistics, duplicate paths, bad encodings and unsupported repository identities
-have stable domain failures. Untracked file contents remain unread.
-
-Git disables optional index writes, external diff, text conversion, filesystem
-monitor commands, and configured content-filter commands. Inherited Git overrides
-cannot redirect the selected repository. Normal Git configuration, including
-Windows line-ending rules, remains effective. Active content filters and submodules
-are explicitly rejected: disabling filters can change diff semantics, and nested
-repository configuration can execute independent commands. The legacy summary
-cannot describe those incomplete evidence states honestly.
-
-Inspection compares repository identity, porcelain status, numstat and full patch
-hashes across repeated reads. Observed movement returns an error requiring refresh.
-This is a best-effort instability check, **not an atomic checkpoint**. Concurrent
-changes that return to the same observable state, binary-content changes with an
-unchanged textual diff, and index-only content changes with identical summaries
-cannot be ruled out by this legacy model.
-
-`BoundedVerificationRunner` implements the existing verification port. It validates
-commands, arguments, directory and output limits; removes inherited credential and
-interpreter-injection variables; resolves native executables outside the selected
-repository; and pins Python to the daemon interpreter. Repository and relative PATH
-entries are removed. Windows `.cmd`/`.bat` wrappers are rejected pending reviewed
-native adapters.
-
-The pipe reader uses a single shared retention budget and hashes stdout while
-discarding excess bytes. It does not use output files, reader threads, or
-`communicate()` buffers. Stdout/stderr are separate bounded prefixes, not an
-interleaved execution timeline. Timeout terminates only the direct child. If a
-descendant keeps a pipe open after the direct child exits, the call ends at its
-deadline with incomplete/error evidence rather than hanging or claiming cleanup.
-Startup/read/setup failures are sanitized. Invalid UTF-8 is visibly marked as
-truncated/lossy.
-
-This is an execution primitive for explicitly authorized checks, not the completed
-Agent Launcher. It does not provide launch/attach/cancel APIs, delegations,
-idempotency, durable run storage, credential brokering, a sandbox, or unrestricted
-output-secret detection. Callers must not submit secrets as command arguments;
-commands still have the current user's filesystem and OS privileges.
+**Assurance.** `discover` reads configuration, recognizes a fixed set of tools
+(pytest, ruff, mypy, pip check, and `package.json` scripts that start with jest,
+vitest, mocha, `node --test`, eslint, tsc or a known bundler), and selects checks
+from Change Contract required checks plus changed-path/dependency evidence.
+Unrecognized scripts become coverage gaps, never commands. `run` refuses stale
+evidence (checks are `SKIPPED` with the reason). `evaluate` returns
+freshness, required-check outcome, coverage gaps and contract deviations
+(forbidden path, outside allowed paths, conflict, risk ceiling, dependency and
+environment drift) and the four booleans `[SD]` needs for `LifecycleFacts`
+(`required_assurance_passed`, `assurance_fresh`, `deviations_resolved`,
+`required_evidence_complete`).
 
 ## Verification
 
-Baseline before this continuation: `python -m pytest` — 49 passed.
-
-Final command:
-
 ```text
-python -m coverage run --branch --source=backend/app/git,backend/app/execution -m pytest
-python -m coverage report -m
+python -m pytest -o addopts=""                       # whole repository
+python -m coverage run --branch --source=backend/app/git,backend/app/execution,backend/app/environment,backend/app/dependencies,backend/app/assurance -m pytest backend/tests/git backend/tests/execution backend/tests/environment backend/tests/dependencies backend/tests/assurance backend/tests/kb_flow
+python -m coverage report
+python -m compileall -q backend
 ```
 
-Result after re-review: **150 passed in 28.96 seconds**, no skipped or xfailed tests. Both owner
-packages have **100% statement and 100% branch coverage**: 445 statements and
-178 branches combined, no exclusions. Coverage was installed in the local Python
-environment; no root dependency configuration was changed.
+- Whole repository: **473 passed, 1 skipped** (the opt-in Windows Credential
+  Manager test), 142.9 s, no regressions.
+- `[KB]` suites: **328 passed**, combined statement+branch coverage **98%** across
+  the five owned packages (1886 statements, 748 branches). Targets were 90%/85%.
+- Real boundaries: disposable Git repositories (staged, unstaged, untracked,
+  rename, delete, binary, conflict, detached, unborn, Unicode, spaces); real
+  subprocesses for launch/timeout/cancel/output-budget/environment canaries; real
+  `git` for environment/dependency reads; a real `pytest` pass and fail; a real
+  Node `node --test` pass and fail launched through `npm`; a real SQLite round trip
+  of every evidence model.
+- End-to-end flows in `backend/tests/kb_flow/test_kb_end_to_end.py` cover
+  baseline -> agent edit -> checkpoint comparison -> environment drift ->
+  dependency changes -> discovery -> execution -> evaluation -> staleness, a
+  failing required check, a forbidden-path violation, a Node change, and
+  cancel/attach records. Running checks does not itself make evidence stale
+  (bytecode and cache writes are disabled), and a later edit does.
 
-Real Windows boundaries exercised: disposable committed repositories, staged and
-unstaged changes, rename/delete/binary files, Unicode and spaced paths, a real
-merge conflict, detached/unborn repositories, submodules, filter/hook suppression,
-byte-and-mtime comparison of all fixture files, concurrent edit injection, and
-native Python subprocesses with pass/fail/timeout/large-output behavior. Synthetic
-secret canaries prove removal of inherited environment keys. Fault injections
-cover malformed Git output, startup errors, missing tools, bad encodings and
-partial subprocess evidence.
+## Contract gaps and decisions for `[SD]`
 
-The owner-local API flow injects the new runner via the existing `create_app`
-factory, exercises create -> edit -> refresh -> verify, reopens SQLite through a
-second app instance, and proves refresh clears the saved verification. It uses
-real Git, subprocesses and SQLite, not production success fakes. This verifies the
-existing review workflow, not the retained proposal's complete lifecycle.
+1. `AgentLauncherPort` carries no actor or idempotency key. Authority must be
+   enforced upstream; `launch` blocks, so composition should call it off the
+   request thread. Run records are in memory (bounded to 512); persist `AgentRun`.
+2. `AssurancePort.run` receives no checkpoint. The engine remembers each plan's
+   checkpoint and contract digest in memory (bounded to 256). After a restart call
+   `AssuranceEngine.remember(change, plan, checkpoint)` before `run`/`evaluate`, or
+   they raise `ASSURANCE_PLAN_UNKNOWN`. `evaluate`, `remember` and
+   `analyze_deviations` are additive methods outside the frozen protocol.
+3. `EnvironmentDrift` has no expected/unexpected classification. Contract
+   comparison is done in deviation analysis using the contract's
+   `expected_outcomes` text.
+4. The default fingerprint key is a fixed application constant so persisted
+   baselines stay comparable. Inject an installation-specific key stored outside the
+   database for stronger protection of fingerprinted values.
+5. `DependencyPort.scan` reads the current working tree and requires the checkpoint's
+   HEAD to still be the repository HEAD (`DEPENDENCY_CHECKPOINT_STALE` otherwise).
+6. Windows `.cmd` shims are never executed. `npm`/`npx` are translated to
+   `node <npm-cli.js>`; a Codex or Claude install that exists only as a `.cmd`
+   shim is reported as not started.
 
-Platform: Windows, Python 3.14. No Linux/macOS, interactive terminal, real agent,
-provider account, environment collector, or Node reporter smoke test is claimed.
+## Limitations (intentional; the four cuts still apply)
 
-## Integration and remaining gates
+- No event journal, process supervisor, filesystem tracker or tool registry:
+  no descendant control, attribution or cleanup, no replay, no local-file undo, no
+  tool trust. Attach is metadata only.
+- Repeated Git reads detect observed movement; they are not an atomic snapshot.
+  Active Git content filters and submodules are unsupported. Untracked files are
+  covered by a bounded content digest, not by the patch.
+- Checks run with the runtime's interpreter and PATH, not a repository virtual
+  environment. `npm audit` needs network access and is only selected on Node
+  dependency changes.
+- Passing checks describe the commands that ran. They are not proof of correctness,
+  and dependency risk notes are reviewer inputs, not vulnerability findings.
+- Windows and Python 3.14 only; no Linux/macOS, real Codex/Claude agent, or
+  interactive terminal smoke test is claimed.
 
-1. Independently review the existing-port changes and add acceptance probes.
-2. To evaluate the new runner, inject
-   `backend.app.execution.runner.BoundedVerificationRunner()` through
-   `create_app(verification=...)`; its constructor takes no arguments. Production
-   composition still uses the older runner and was not edited here.
-3. Freeze `GitStatePort`, `AgentLauncherPort`, `EnvironmentPort`, `DependencyPort`
-   and `AssurancePort`, their immutable evidence/authority models and contract tests.
-4. Supply authority/idempotency and persistence boundaries; specify supported
-   manifest/lock versions, structured reporters and attach/cancel semantics.
-5. Person 2 can then complete checkpoint persistence/comparison, agent adapters,
-   environment passports, dependency analysis, assurance selection/deviation and
-   the complete stream handoff without inventing private integration contracts.
+## Earlier hardening (unchanged, still true)
 
-No independent `[SD]` acceptance or whole-stream readiness is claimed.
+The Git inspector bounds capture memory, suppresses external diff, textconv,
+fsmonitor and filter execution, rejects malformed evidence with domain errors, and
+checks repeated status/statistics/patch reads for movement. The bounded pipe reader
+hashes stdout, terminates only the direct child on timeout, and never inherits
+credentials or interpreter-injection variables. `BoundedVerificationRunner`
+validates commands and limits and pins Python to the daemon interpreter.
 
-Implementation references: [Python nonblocking pipes](https://docs.python.org/3/library/os.html#os.set_blocking),
-[Git diff command controls](https://git-scm.com/docs/git-diff),
-and [Git environment controls](https://git-scm.com/docs/git).
+## Consumer action
+
+1. Independently review and add acceptance probes under `backend/tests/acceptance/`.
+2. Compose the five classes in `create_app`, persist their outputs into the existing
+   `git_checkpoints`, `environment_passports`, `dependency_reports` and
+   `assurance_runs` tables, and add the routes.
+3. Feed `AssuranceEvaluation` into `RuntimeLifecycleFacts` for the four assurance
+   facts and mark the KB capabilities `AVAILABLE`.

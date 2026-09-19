@@ -116,6 +116,23 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 01:55 -04:00 - Person 2 stream complete (KB-0..KB-6), ready for `[SD]` review
+
+The five ports `[KB]` requested were frozen in `backend/app/contracts/` by `[SD]`, which cleared the earlier blocker, so the whole Person 2 stream is now implemented against them. Full handoff, contract gaps and limitations: `backend/app/git/KB_HANDOFF.md`. This is self-verification, not `[SD]` acceptance, and no application wiring was done.
+
+- **KB-1** `GitStateTracker` (`backend/app/git/state.py`, `reader.py`): deterministic checkpoint digest that includes untracked-file content, three-checkpoint comparison, freshness (`is_current`), unborn repositories rejected, detached HEAD represented. Also fixed a real defect found by the tests: stderr shared the capture budget and could leave the stdout patch empty.
+- **KB-2** `AgentLauncher` (`backend/app/execution/launcher.py`, `resolve.py`): generic/Codex/Claude adapters, environment allowlist with secret redaction, cancel/timeout of the direct child only, attach as metadata only, `descendant_control_available` always `False`.
+- **KB-3** `EnvironmentTracker` (`backend/app/environment/`): deterministic redacted passport, keyed fingerprints for sensitive values, added/removed/changed/unknown drift with no causal claim, collector failures isolated as `PARTIAL`.
+- **KB-4** `DependencyTracker` (`backend/app/dependencies/`): Python (`requirements`, `pyproject`, `poetry.lock`) and Node (`package.json`, `package-lock.json` v1-v3) comparison against the checkpoint HEAD; unsupported, malformed and oversized files reported; parsers fuzz-tested and never execute content.
+- **KB-5** `AssuranceEngine` (`backend/app/assurance/`): discovery from configuration (unrecognized scripts become gaps, never commands), selection from the Change Contract and changed-path/dependency evidence, bounded execution, structured summaries, freshness invalidation on repository or contract change, and deviation analysis (forbidden/outside-allowed paths, conflicts, risk ceiling, dependency and environment drift).
+- **KB-6** hardening: bounded in-memory run/plan retention, all suites run together from a clean process, diff reviewed for mutation, secret and path leakage, nondeterminism and unbounded data.
+
+**Verification**: `python -m pytest -o addopts=""`: **473 passed, 1 skipped**. `[KB]` suites alone: **328 passed**, statement+branch coverage **98%** over `backend/app/{git,execution,environment,dependencies,assurance}` (targets 90%/85%). `python -m compileall -q backend`: passed. Real boundaries: disposable Git repositories, real subprocesses, a real `pytest` pass/fail, a real Node `node --test` pass/fail through `npm`, and a SQLite round trip of every evidence model. Owner-local end-to-end flows: `backend/tests/kb_flow/test_kb_end_to_end.py`.
+
+**For `[SD]`**: compose the five classes, persist into the existing `git_checkpoints`/`environment_passports`/`dependency_reports`/`assurance_runs` tables, add routes, feed `AssuranceEvaluation` into `RuntimeLifecycleFacts` for the four assurance facts, and mark the KB capabilities `AVAILABLE`. Contract gaps (no actor/idempotency on the launcher port, no checkpoint on `AssurancePort.run`, no expected/unexpected drift category) are listed in the handoff.
+
+**Not claimed**: descendant control or attribution, replay, local-file undo, tool trust, an atomic Git snapshot, proof of correctness from passing checks, or Linux/macOS/real-agent coverage. Commits: `93d1f84`, `732229d`, `6a215a5`, `81021d3`, `6595605` plus this documentation commit.
+
 ### `[SD]` - 2026-09-19 01:38:38 -04:00 - Real `LifecycleFactsPort` activates authority/outcome/recovery evidence
 
 `ChangeService` was still defaulting to `UnavailableLifecycleFacts` (503 on every transition) even after the Gate 3 composition below wired real identity/outcome/recovery data. New `backend/app/core/lifecycle_facts_service.py` (`RuntimeLifecycleFacts`) is the real `LifecycleFactsPort`: `authority_valid` from live delegations, `pull_request_recorded`/`ci_passed_for_current_head` from persisted provider operations/outcomes (SHA-bound, not stale), and the five `recovery_*` facts from the latest persisted `RecoveryPlan`. Facts that need `[KB]`'s unimplemented environment/dependency/assurance stream stay honestly `False`, so `LOCALLY_VERIFIED`/`REVIEW_READY`/`ARTIFACT_BUILT`/`DEPLOYED`/`OBSERVING`/`STABLE` — and therefore `PR_OPEN`/`CI_VERIFIED` too, since the FSM only reaches them via `REVIEW_READY` — stay correctly unreachable through the real API; this is documented as a known limitation, not routed around.
