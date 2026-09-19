@@ -240,7 +240,7 @@ class GitRepositoryInspector:
                         batch.append(path)
                         batch_size += len(path) + 3
             completed = capture([*base, *overrides, *args], cwd=root, env=env,
-                                timeout=30, limit=limit)
+                                timeout=30, limit=limit, stderr_limit=4096)
         except FileNotFoundError as exc:
             raise GitCommandError("The Git executable could not be located.") from exc
         except (OSError, UnicodeError, ValueError) as exc:
