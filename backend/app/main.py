@@ -50,6 +50,8 @@ from backend.app.core.runtime_service import (
 )
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.windows_store import WindowsCredentialStore
+from backend.app.execution.launcher import AgentLauncher
+from backend.app.execution.signature import check_signature
 from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.identity.repository import ActorRepository, DelegationRepository
 from backend.app.outcomes.tracker import OutcomeTracker
@@ -114,7 +116,13 @@ def create_app(
     database = Database(resolved_settings.database_path)
     journal = JournalWriter(database)
     repository = ChangeRepository(database, journal=journal)
-    evidence_service = evidence or EvidenceService(EvidenceStore(database), journal=journal)
+    tool_registry = ToolRegistryService(
+        database, journal=journal, signature_checker=check_signature
+    )
+    evidence_service = evidence or EvidenceService(
+        EvidenceStore(database), journal=journal,
+        launcher=AgentLauncher(tool_registry=tool_registry),
+    )
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
         DelegationRepository(database),
         ProviderOperationRepository(database),
@@ -138,6 +146,7 @@ def create_app(
         http_transport or UrllibHttpTransport(),
         evidence_service,
         journal,
+        tool_registry,
     )
 
     @asynccontextmanager
@@ -218,6 +227,7 @@ def _build_runtime_services(
     http_transport: HttpTransport,
     evidence_service: EvidenceService,
     journal: JournalWriter | None = None,
+    tool_registry: ToolRegistryService | None = None,
 ) -> RuntimeServices:
     """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
     passport adapters into request-scoped use-case services (Gate 3 composition)."""
@@ -272,7 +282,7 @@ def _build_runtime_services(
             evidence_service, policy, service, IdempotencyStore(database)
         ),
         replay=ReplayService(database),
-        tools=ToolRegistryService(database, journal=resolved_journal),
+        tools=tool_registry or ToolRegistryService(database, journal=resolved_journal),
     )
 
 

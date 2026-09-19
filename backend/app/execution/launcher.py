@@ -26,9 +26,10 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from backend.app.contracts.models import (
-    AgentAttachRequest, AgentLaunchRequest, AgentRun, AgentRunStatus, utc_now,
+    AgentAttachRequest, AgentLaunchRequest, AgentRun, AgentRunStatus, ToolManifest, utc_now,
 )
-from backend.app.core.errors import AppError
+from backend.app.contracts.ports import ToolRegistryPort
+from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
 from backend.app.execution.resolve import find_executable, resolve_argv, safe_path_entries
 
@@ -96,6 +97,8 @@ class AgentLauncher:
         self,
         generic_executables: frozenset[str] = GENERIC_EXECUTABLES,
         adapters: dict[str, AgentAdapter] | None = None,
+        *,
+        tool_registry: ToolRegistryPort | None = None,
     ) -> None:
         table = {
             "generic": AgentAdapter("generic", frozenset(generic_executables)),
@@ -110,6 +113,10 @@ class AgentLauncher:
         # known, finished) so a caller can persist in-flight runs and stop them from
         # another request. Failures in the observer never affect the run.
         self.on_update: Callable[[AgentRun], None] | None = None
+        # Optional Tool Registry (Part B, bounded scope: governs only the
+        # top-level executable this class itself resolves -- see B.6). When
+        # unset, launch/attach behave exactly as before this feature existed.
+        self._tool_registry = tool_registry
 
     # -- port ---------------------------------------------------------------
 
@@ -130,6 +137,7 @@ class AgentLauncher:
             raise AppError("INVALID_OUTPUT_LIMIT", "Output limit must be between zero and one MiB.")
         root = self._root(repository_path)
         env, secrets = self._environment(request, adapter, root)
+        tool_manifest = self._check_tool_trust(change_id, request.executable, env, root)
 
         run_id = uuid4()
         started_at = utc_now()
@@ -197,10 +205,18 @@ class AgentLauncher:
             state.record = final
             self._evict()
         self._notify(final)
+        if self._tool_registry is not None and tool_manifest is not None:
+            self._record_tool_observation(tool_manifest.id, change_id, run_id, "launch")
         state.done.set()
         return final
 
     def attach(self, change_id: UUID, request: AgentAttachRequest) -> AgentRun:
+        # No Tool Registry check here: attach records caller-declared
+        # metadata only (adapter name, external_run_id) -- there is no
+        # executable path to resolve an artifact_digest from, so no
+        # ToolManifest can be honestly identified. Inventing one from an
+        # adapter name alone would be exactly the kind of fabricated
+        # attribution this project's "no safety theater" invariant forbids.
         adapter = self._adapter(request.adapter)
         run = AgentRun(
             id=uuid4(), change_id=change_id, adapter=adapter.name,
@@ -260,6 +276,58 @@ class AgentLauncher:
                 "descendant_control_available": False,
             })
         return listing
+
+    # -- Tool Registry integration (Part B.6) --------------------------------
+
+    def _check_tool_trust(
+        self, change_id: UUID, executable: str, env: dict[str, str], root: Path,
+    ) -> ToolManifest | None:
+        """Resolve-or-register the top-level executable and refuse a DENIED
+        tool before anything starts. Governs only this one launch surface
+        (B.6's "deliberately the only enforcement point"): it says nothing
+        about what a running agent does afterward.
+
+        A resolution failure here (executable not found) is deliberately
+        swallowed, not raised: the existing `capture(...)` call inside
+        `launch` re-resolves the same executable and reports a normal
+        `AgentRunStatus.ERROR` result exactly as it did before this
+        integration existed, so behavior for an unresolvable executable is
+        unchanged.
+        """
+
+        if self._tool_registry is None:
+            return None
+        try:
+            argv = resolve_argv(executable, env, root)
+        except AppError:
+            return None
+        manifest = self._tool_registry.resolve_or_register(argv[0], source="launcher_executable")
+        if manifest.trust_state == "DENIED":
+            raise policy_denied(
+                "TOOL_TRUST_DENIED", "This tool is explicitly denied and may not be launched."
+            )
+        try:
+            # Capability-drift detection (B.5): only meaningful once a prior
+            # APPROVED decision exists; a no-op otherwise. Trouble here must
+            # never block a launch that was otherwise permitted.
+            self._tool_registry.check_drift(manifest.id, change_id=change_id)  # type: ignore[call-arg]
+        except Exception:
+            pass
+        return manifest
+
+    def _record_tool_observation(
+        self, tool_id: UUID, change_id: UUID, run_id: UUID, context: str,
+    ) -> None:
+        try:
+            # Capabilities actually used (via resolved CredentialGrant
+            # scopes) are deliberately not cross-referenced here: doing so
+            # honestly needs a read across this Change's journal, which is a
+            # composition-layer concern this pure launcher class does not
+            # have access to. Recorded as an empty, honest set rather than a
+            # fabricated one; a future composition-layer pass can widen it.
+            self._tool_registry.record_observation(tool_id, change_id, run_id, [], context)
+        except Exception:  # persistence trouble must not change what the agent did
+            pass
 
     # -- helpers ------------------------------------------------------------
 
