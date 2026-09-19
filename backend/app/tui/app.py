@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.tui.contract_screen import ContractScreen
 from backend.app.tui.delegation_screen import DelegationScreen
 from backend.app.tui.detail_screen import DetailScreen
 from backend.app.tui.evidence_screen import EvidenceScreen
@@ -46,6 +47,7 @@ class ChangeDashboard(App):
         ("g", "evidence", "Evidence"),
         ("o", "outcomes", "Outcomes"),
         ("d", "delegations", "Delegations"),
+        ("c", "contract", "Edit contract"),
         ("q", "quit", "Quit"),
     ]
 
@@ -63,6 +65,7 @@ class ChangeDashboard(App):
         self.grantor_id = grantor_id
         self.client = ApiClient(api_url)
         self._change_ids: list[str] = []
+        self._change_revisions: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -93,6 +96,7 @@ class ChangeDashboard(App):
         items = payload.get("items", [])
         self.call_from_thread(table.clear)
         self._change_ids = [item["id"] for item in items]
+        self._change_revisions = {item["id"]: item.get("revision", 1) for item in items}
         if not items:
             self.call_from_thread(
                 status.update, "No Changes yet. Create one with the CLI: `change create`."
@@ -137,6 +141,17 @@ class ChangeDashboard(App):
         except IndexError:
             return
         self.push_screen(DetailScreen(change_id, self.api_url))
+
+    def action_contract(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        revision = self._change_revisions.get(change_id, 1)
+        self.push_screen(ContractScreen(change_id, self.api_url, revision))
 
     def action_evidence(self) -> None:
         table = self.query_one(DataTable)
