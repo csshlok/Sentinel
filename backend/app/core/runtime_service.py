@@ -54,6 +54,7 @@ from backend.app.core.runtime_repositories import (
     ProviderOperationRepository,
     RecoveryRepository,
 )
+from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.identity.errors import actor_not_found, delegation_not_found
 from backend.app.identity.repository import ActorRepository, DelegationRepository
@@ -385,3 +386,4 @@ class RuntimeServices:
     outcomes: OutcomeService
     recovery: RecoveryService
     passport: PassportService
+    evidence: EvidenceAdminService

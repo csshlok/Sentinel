@@ -694,6 +694,48 @@ class RecoveryExecuteRequest(ContractModel):
     approval_token: Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
+class AgentLaunchActionRequest(ContractModel):
+    actor_id: UUID
+    launch: AgentLaunchRequest
+    output_limit_bytes: int = Field(default=200_000, ge=0, le=1_048_576)
+
+
+class AgentAttachActionRequest(ContractModel):
+    actor_id: UUID
+    attach: AgentAttachRequest
+
+
+class ActorActionRequest(ContractModel):
+    actor_id: UUID
+
+
+class AssuranceRunActionRequest(ContractModel):
+    actor_id: UUID
+    output_limit_bytes: int = Field(default=200_000, ge=0, le=1_048_576)
+
+
+class AgentRunListResponse(ContractModel):
+    items: list[AgentRun]
+    count: int = Field(ge=0)
+
+
+class AgentAdapterInfo(ContractModel):
+    adapter: ShortText
+    executables: dict[str, bool]
+    credential_keys: list[str] = Field(default_factory=list)
+    descendant_control_available: Literal[False] = False
+
+
+class AgentAdapterListResponse(ContractModel):
+    items: list[AgentAdapterInfo]
+    count: int = Field(ge=0)
+
+
+class AssuranceRunListResponse(ContractModel):
+    items: list[AssuranceRun]
+    count: int = Field(ge=0)
+
+
 class HealthResponse(ContractModel):
     status: str
     api_version: str

@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 02:45 -04:00 - Person 2 stream composed into the API (user-authorized)
+
+`create_app` now builds `EvidenceService(EvidenceStore(database))`, exposes it through 13 new `/api/v1` routes (`evidence`, `agents`, `assurance`; see `OVERALL_CONTEXT.md` for the list), gates every command-executing operation through the `[AC]` policy engine, and feeds `assurance_facts` into `RuntimeLifecycleFacts` so `LOCALLY_VERIFIED` and `REVIEW_READY` are reachable only with fresh, passing evidence. The five KB capabilities report `AVAILABLE`. Whole repository excluding `backend/tests/tui`: **509 passed, 1 skipped**. The edited `[SD]`-owned files are listed in `OVERALL_CONTEXT.md` for `[SD]` review. Still open: `[AC]` CLI/TUI clients for these routes.
+
 ### `[KB]` - 2026-09-19 02:20 -04:00 - Persistence and orchestration completed; only `[SD]` composition remains
 
 `backend/app/assurance/store.py` (`EvidenceStore`) and `service.py` (`EvidenceService`) now persist and drive the full Person 2 flow against `[SD]`'s existing evidence tables, restart-safe and compatible with `[AC]`'s `PassportBuilder`. `AgentLauncher.adapters()` reports adapter/executable availability. The remaining Person 2 work is `[SD]`-owned composition: build `EvidenceService(EvidenceStore(database))` in `create_app`, add routes, map `assurance_facts` into `RuntimeLifecycleFacts`, and mark the KB capabilities available; `[AC]` TUI items 3 and 4 wait on those routes. Whole repository (excluding `backend/tests/tui`, needing the uninstalled `textual` extra): **502 passed, 1 skipped**; `[KB]` suites **339 passed**, 98% coverage. See `backend/app/git/KB_HANDOFF.md`.

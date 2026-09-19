@@ -160,6 +160,22 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 02:45 -04:00 - Person 2 stream wired into `create_app` and exposed through the API (user-authorized `[SD]` composition)
+
+At the user's explicit instruction, `[KB]` performed the Gate 3 composition for its own stream, which `AGENT_COORDINATION.md` normally reserves to `[SD]`. Edited `[SD]`-owned files: `backend/app/main.py`, `backend/app/core/router.py`, `backend/app/core/runtime_service.py`, `backend/app/core/lifecycle_facts_service.py`, `backend/app/contracts/models.py` (additive request/response models only; no existing contract changed) and new `backend/app/core/evidence_runtime.py`. `[SD]` should review these edits as it would any composition change.
+
+**Routes added** (all under `/api/v1`): `GET /changes/{id}/evidence`, `POST /changes/{id}/evidence/baseline`, `POST /changes/{id}/evidence/current`, `GET /agents/adapters`, `GET /changes/{id}/agents`, `POST /changes/{id}/agents/launch|attach`, `POST /changes/{id}/agents/{run_id}/stop`, `POST|GET /changes/{id}/assurance/plan`, `POST /changes/{id}/assurance/{plan_id}/run`, `GET /changes/{id}/assurance/{plan_id}/evaluation`, `GET /changes/{id}/assurance/facts`. No removed-subsystem path exists (checked against the OpenAPI document; 40 paths).
+
+**Authority**: read-only evidence capture, planning and evaluation need no delegation (like the existing Git refresh). Launching, attaching, stopping and running assurance checks are default-denied through the `[AC]` `PolicyPort` unless the actor holds a delegation for `agent.launch`, `agent.attach`, `agent.stop` or `assurance.run` on that Change; the Change Contract's authority ceiling still applies.
+
+**Lifecycle**: `RuntimeLifecycleFacts` now takes `EvidenceService.assurance_facts` and fills `required_assurance_passed`, `assurance_fresh`, `deviations_resolved` and `required_evidence_complete`, computed only for the `LOCALLY_VERIFIED` and `REVIEW_READY` guards because each one re-inspects the repository to prove freshness. `DRAFT -> ACTIVE -> LOCALLY_VERIFIED -> REVIEW_READY` is now reachable through the real API; any repository edit after verification blocks it again. Artifact, deployment and observation facts stay `False`, so `ARTIFACT_BUILT`, `DEPLOYED`, `OBSERVING` and `STABLE` remain unreachable. `PR_OPEN` and `CI_VERIFIED` are reachable from `REVIEW_READY` and gated by `[AC]`'s provider evidence as before.
+
+**Capabilities**: `git_checkpoints`, `agent_launcher`, `environment_passports`, `dependency_tracking` and `assurance` are now `AVAILABLE`; `cli_and_terminal_ui` is still `[AC]`'s to declare.
+
+**Verification**: whole repository excluding `backend/tests/tui` (uninstalled `textual` extra): **509 passed, 1 skipped**; `python -m compileall -q backend` passed. New `backend/tests/acceptance/test_evidence_routes.py` (7 tests) drives the whole flow over HTTP against a real Git repository, a real agent process and a real `pytest` run: baseline, launch, current evidence, plan, run, evaluate, both guarded lifecycle transitions, Passport evidence, a second app instance over the same database, staleness after a later edit, default-deny and authority-ceiling cases, cross-Change isolation and error envelopes.
+
+**Remaining**: `[AC]`'s CLI and TUI do not yet call these routes (TUI items 3 and 4). `launch_agent` blocks its request thread for the agent's duration (bounded by the request's `timeout_seconds`).
+
 ### `[KB]` - 2026-09-19 02:20 -04:00 - Person 2 persistence and orchestration completed
 
 After reviewing `[AC]`'s latest updates (CLI, TUI recovery and Passport screens) and `[SD]`'s Gate 2 review, `[KB]` finished the remaining Person 2 items that do not touch `[SD]`-owned code. New in `backend/app/assurance/`: `EvidenceStore` persists agent runs, Git checkpoints, environment passports, dependency reports, assurance plans and runs into `[SD]`'s existing tables (the layout `[AC]`'s Passport builder already reads, verified with the real builder), and `EvidenceService` drives the whole retained flow for a Change (baseline, agent launch/attach/stop, current evidence with comparison/drift/dependencies, assurance plan/run/evaluate) and survives an application restart, including noticing a contract change made after planning. `assurance_facts(change)` returns exactly the four `LifecycleFacts` fields `[KB]` owns. `AgentLauncher.adapters()` adds explicit adapter and executable availability.

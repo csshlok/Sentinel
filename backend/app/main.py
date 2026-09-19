@@ -11,6 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.app.assurance.service import EvidenceService
+from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import ErrorDetail, ErrorEnvelope, HealthResponse
 from backend.app.contracts.ports import (
     CredentialStorePort,
@@ -22,6 +24,7 @@ from backend.app.core.change_repository import ChangeRepository
 from backend.app.core.change_service import ChangeService
 from backend.app.core.config import Settings
 from backend.app.core.database import Database
+from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
 from backend.app.core.router import build_router
@@ -80,6 +83,11 @@ _DEFAULT_CONFIGURED_CAPABILITIES = {
     "provider_outcomes",
     "recovery",
     "change_passport",
+    "git_checkpoints",
+    "agent_launcher",
+    "environment_passports",
+    "dependency_tracking",
+    "assurance",
 }
 
 
@@ -92,15 +100,18 @@ def create_app(
     credential_store: CredentialStorePort | None = None,
     http_transport: HttpTransport | None = None,
     configured_capabilities: set[str] | None = None,
+    evidence: EvidenceService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
     database = Database(resolved_settings.database_path)
     repository = ChangeRepository(database)
+    evidence_service = evidence or EvidenceService(EvidenceStore(database))
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
         DelegationRepository(database),
         ProviderOperationRepository(database),
         OutcomeRepository(database),
         RecoveryRepository(database),
+        assurance_facts=evidence_service.assurance_facts,
     )
     service = ChangeService(
         repository=repository,
@@ -116,6 +127,7 @@ def create_app(
         service,
         credential_store or WindowsCredentialStore(),
         http_transport or UrllibHttpTransport(),
+        evidence_service,
     )
 
     @asynccontextmanager
@@ -190,6 +202,7 @@ def _build_runtime_services(
     service: ChangeService,
     credential_store: CredentialStorePort,
     http_transport: HttpTransport,
+    evidence_service: EvidenceService,
 ) -> RuntimeServices:
     """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
     passport adapters into request-scoped use-case services (Gate 3 composition)."""
@@ -235,6 +248,7 @@ def _build_runtime_services(
         outcomes=outcomes,
         recovery=recovery,
         passport=passport,
+        evidence=EvidenceAdminService(evidence_service, policy, service),
     )
 
 

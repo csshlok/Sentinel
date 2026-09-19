@@ -7,9 +7,24 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Response, status
 
+from backend.app.assurance.models import AssuranceEvaluation
+from backend.app.assurance.service import (
+    AssuranceFacts,
+    EvidenceOverview,
+    EvidenceSnapshot,
+)
 from backend.app.contracts.models import (
+    ActorActionRequest,
     Actor,
     ActorCreateRequest,
+    AgentAdapterListResponse,
+    AgentAttachActionRequest,
+    AgentLaunchActionRequest,
+    AgentRun,
+    AgentRunListResponse,
+    AssurancePlan,
+    AssuranceRunActionRequest,
+    AssuranceRunListResponse,
     CapabilitiesResponse,
     ChangeCancelRequest,
     ChangeContractUpdateRequest,
@@ -365,5 +380,125 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def get_latest_passport(change_id: UUID) -> ChangePassport:
         return runtime.passport.latest(change_id)
+
+    # -- Person 2 stream: evidence, agents, assurance -------------------------
+
+    @router.get(
+        "/changes/{change_id}/evidence",
+        response_model=EvidenceOverview,
+        tags=["evidence"],
+    )
+    def get_evidence(change_id: UUID) -> EvidenceOverview:
+        return runtime.evidence.overview(change_id)
+
+    @router.post(
+        "/changes/{change_id}/evidence/baseline",
+        response_model=EvidenceSnapshot,
+        status_code=status.HTTP_201_CREATED,
+        tags=["evidence"],
+    )
+    def capture_baseline(change_id: UUID) -> EvidenceSnapshot:
+        return runtime.evidence.capture_baseline(change_id)
+
+    @router.post(
+        "/changes/{change_id}/evidence/current",
+        response_model=EvidenceSnapshot,
+        status_code=status.HTTP_201_CREATED,
+        tags=["evidence"],
+    )
+    def capture_current_evidence(change_id: UUID) -> EvidenceSnapshot:
+        return runtime.evidence.capture_current(change_id)
+
+    @router.get(
+        "/agents/adapters",
+        response_model=AgentAdapterListResponse,
+        tags=["agents"],
+    )
+    def list_agent_adapters() -> AgentAdapterListResponse:
+        items = runtime.evidence.adapters()
+        return AgentAdapterListResponse(items=items, count=len(items))
+
+    @router.get(
+        "/changes/{change_id}/agents",
+        response_model=AgentRunListResponse,
+        tags=["agents"],
+    )
+    def list_agent_runs(change_id: UUID) -> AgentRunListResponse:
+        items = runtime.evidence.list_agent_runs(change_id)
+        return AgentRunListResponse(items=items, count=len(items))
+
+    @router.post(
+        "/changes/{change_id}/agents/launch",
+        response_model=AgentRun,
+        status_code=status.HTTP_201_CREATED,
+        tags=["agents"],
+    )
+    def launch_agent(change_id: UUID, request: AgentLaunchActionRequest) -> AgentRun:
+        return runtime.evidence.launch_agent(
+            change_id, request.actor_id, request.launch, request.output_limit_bytes
+        )
+
+    @router.post(
+        "/changes/{change_id}/agents/attach",
+        response_model=AgentRun,
+        status_code=status.HTTP_201_CREATED,
+        tags=["agents"],
+    )
+    def attach_agent(change_id: UUID, request: AgentAttachActionRequest) -> AgentRun:
+        return runtime.evidence.attach_agent(change_id, request.actor_id, request.attach)
+
+    @router.post(
+        "/changes/{change_id}/agents/{run_id}/stop",
+        response_model=AgentRun,
+        tags=["agents"],
+    )
+    def stop_agent(change_id: UUID, run_id: UUID, request: ActorActionRequest) -> AgentRun:
+        return runtime.evidence.stop_agent(change_id, run_id, request.actor_id)
+
+    @router.post(
+        "/changes/{change_id}/assurance/plan",
+        response_model=AssurancePlan,
+        status_code=status.HTTP_201_CREATED,
+        tags=["assurance"],
+    )
+    def plan_assurance(change_id: UUID) -> AssurancePlan:
+        return runtime.evidence.plan_assurance(change_id)
+
+    @router.get(
+        "/changes/{change_id}/assurance/plan",
+        response_model=AssurancePlan,
+        tags=["assurance"],
+    )
+    def get_latest_assurance_plan(change_id: UUID) -> AssurancePlan:
+        return runtime.evidence.latest_plan(change_id)
+
+    @router.post(
+        "/changes/{change_id}/assurance/{plan_id}/run",
+        response_model=AssuranceRunListResponse,
+        tags=["assurance"],
+    )
+    def run_assurance(
+        change_id: UUID, plan_id: UUID, request: AssuranceRunActionRequest
+    ) -> AssuranceRunListResponse:
+        items = runtime.evidence.run_assurance(
+            change_id, plan_id, request.actor_id, request.output_limit_bytes
+        )
+        return AssuranceRunListResponse(items=items, count=len(items))
+
+    @router.get(
+        "/changes/{change_id}/assurance/{plan_id}/evaluation",
+        response_model=AssuranceEvaluation,
+        tags=["assurance"],
+    )
+    def evaluate_assurance(change_id: UUID, plan_id: UUID) -> AssuranceEvaluation:
+        return runtime.evidence.evaluate(change_id, plan_id)
+
+    @router.get(
+        "/changes/{change_id}/assurance/facts",
+        response_model=AssuranceFacts,
+        tags=["assurance"],
+    )
+    def get_assurance_facts(change_id: UUID) -> AssuranceFacts:
+        return runtime.evidence.facts(change_id)
 
     return router

@@ -49,6 +49,16 @@ class EvidenceSnapshot(ContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=64)
 
 
+class EvidenceOverview(ContractModel):
+    """What has been captured so far for one Change (read-only)."""
+
+    baseline_captured: bool
+    checkpoints: list[GitCheckpoint] = Field(default_factory=list, max_length=1000)
+    environment: EnvironmentPassport | None = None
+    dependencies: DependencyReport | None = None
+    plan: AssurancePlan | None = None
+
+
 class AssuranceFacts(ContractModel):
     """The ``LifecycleFacts`` fields owned by ``[KB]``, from persisted, fresh evidence."""
 
@@ -126,6 +136,23 @@ class EvidenceService:
         return EvidenceSnapshot(checkpoint=checkpoint, comparison=comparison,
                                 environment=environment, drift=drift, dependencies=dependencies,
                                 limitations=limitations)
+
+    def overview(self, change_id: UUID) -> EvidenceOverview:
+        checkpoints = self._store.list_checkpoints(change_id)
+        stored = self._store.latest_plan(change_id)
+        return EvidenceOverview(
+            baseline_captured=any(c.name == BASELINE for c in checkpoints),
+            checkpoints=checkpoints[-100:],
+            environment=self._store.latest_environment(change_id),
+            dependencies=self._store.latest_dependency_report(change_id),
+            plan=stored.plan if stored else None)
+
+    def latest_plan(self, change_id: UUID) -> AssurancePlan | None:
+        stored = self._store.latest_plan(change_id)
+        return stored.plan if stored else None
+
+    def adapters(self, repository_path: str | None = None) -> list[dict[str, object]]:
+        return self._launcher.adapters(repository_path)
 
     # -- agent --------------------------------------------------------------
 
