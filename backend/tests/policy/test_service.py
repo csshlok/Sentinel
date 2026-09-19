@@ -193,6 +193,41 @@ def test_denies_risk_above_contract_ceiling_and_requires_approval(tmp_path) -> N
     assert decision.required_approval is True
 
 
+def test_known_operations_get_a_real_default_risk_without_a_caller_hint(tmp_path) -> None:
+    """Threat model finding #7: no call site ever populated
+
+    parameters["risk_level"], so the risk gate was dead code -- LOW always
+    won by default and RISK_TOO_HIGH could never fire regardless of an
+    operation's true risk. github.pr.create and recovery.execute now get a
+    real default classification (MEDIUM, matching ChangeContract's own
+    default max_risk so ordinary flows are unaffected) even when the
+    caller passes no risk_level parameter at all.
+    """
+
+    now = datetime.now(UTC)
+    engine, repository, database = _engine(tmp_path, now)
+    actor_id = uuid4()
+    change = _change(database, max_risk="LOW")
+    _delegate(
+        repository, actor_id=actor_id, change_id=change.id, now=now,
+        scopes=["github.pr.create", "recovery.execute", "agent.launch"],
+    )
+
+    pr_decision = engine.evaluate(actor_id, change, "github.pr.create", {})
+    assert pr_decision.allowed is False
+    assert pr_decision.reason_code == "RISK_TOO_HIGH"
+
+    recovery_decision = engine.evaluate(actor_id, change, "recovery.execute", {})
+    assert recovery_decision.allowed is False
+    assert recovery_decision.reason_code == "RISK_TOO_HIGH"
+
+    # An operation with no known default stays LOW, so a LOW-ceiling
+    # contract still allows it -- the fix adds real defaults, it doesn't
+    # make every operation risky by fiat.
+    unclassified = engine.evaluate(actor_id, change, "agent.launch", {})
+    assert unclassified.allowed is True
+
+
 def test_use_limit_is_actually_enforced_across_calls(tmp_path) -> None:
     now = datetime.now(UTC)
     engine, repository, database = _engine(tmp_path, now)

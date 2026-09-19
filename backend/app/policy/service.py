@@ -33,7 +33,22 @@ _DENIAL_EXPLANATIONS: dict[DelegationDenialReason, str] = {
 }
 
 
-def _infer_risk(parameters: dict[str, object]) -> RiskLevel:
+# Threat model finding #7: no call site ever populated
+# parameters["risk_level"], so _infer_risk always fell through to LOW and
+# RISK_TOO_HIGH/required_approval could never fire regardless of an
+# operation's true risk -- the whole gate was dead code. Rather than rely
+# on every future caller remembering to pass a hint (the exact thing that
+# didn't happen here), operations with a known real risk get a sane
+# default; an explicit parameters["risk_level"] still overrides it, so a
+# caller with better information (e.g. a real diff-based classification)
+# is not blocked from providing one.
+_DEFAULT_OPERATION_RISK: dict[str, RiskLevel] = {
+    "github.pr.create": RiskLevel.MEDIUM,
+    "recovery.execute": RiskLevel.MEDIUM,
+}
+
+
+def _infer_risk(operation: str, parameters: dict[str, object]) -> RiskLevel:
     raw = parameters.get("risk_level")
     if isinstance(raw, RiskLevel):
         return raw
@@ -42,7 +57,7 @@ def _infer_risk(parameters: dict[str, object]) -> RiskLevel:
             return RiskLevel(raw)
         except ValueError:
             pass
-    return RiskLevel.LOW
+    return _DEFAULT_OPERATION_RISK.get(operation, RiskLevel.LOW)
 
 
 def _risk_exceeds(risk: RiskLevel, max_risk: RiskLevel) -> bool:
@@ -110,7 +125,7 @@ class DelegationPolicyEngine:
     def _evaluate_operation(
         self, change: ChangeView, operation: str, parameters: dict[str, object]
     ) -> PolicyDecision:
-        risk = _infer_risk(parameters)
+        risk = _infer_risk(operation, parameters)
 
         if operation in DEFAULT_DENIED_OPERATIONS:
             return PolicyDecision(
