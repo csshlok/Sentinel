@@ -30,13 +30,15 @@ The repository now targets the retained Change Assurance Runtime from the projec
 
 - Change lifecycle, contracts, and evidence freshness.
 - Scoped actor/agent identity, delegation, policy, and credential brokering.
-- Top-level agent launch/attach with bounded aggregate results.
-- Git, environment, and dependency checkpoints.
+- Top-level agent launch/attach with bounded aggregate results, including top-level-only
+  pause/resume and incrementally visible (poll-based) output while the agent runs.
+- Git, environment, and dependency checkpoints, including forking a new Change from a captured
+  checkpoint to try an alternate model/prompt/parameters without disturbing the original.
 - Evidence-selected assurance and contract-deviation analysis.
 - Pull-request, CI, artifact, and deployment continuity where real adapters exist.
 - Approved Git/provider compensation and a final Change Passport.
 
-Process supervision and filesystem tracking are deliberately excluded. Capabilities that require those primitives are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed. The event/effect journal and tool registry are retained in bounded form: a per-Change hash-chained mutation record with trace-only replay, and a tool registry scoped to the top-level launched executable and explicitly declared manifests (no descendant-call interception). See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full bounded design and its own explicit non-goals.
+Process supervision and filesystem tracking are deliberately excluded, with one narrow exception: suspending and resuming the single top-level launched process (not its descendants) is retained, Windows-first, honestly unsupported elsewhere. Capabilities that require descendant-process observation/attribution are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed. The event/effect journal and tool registry are retained in bounded form: a per-Change hash-chained mutation record with trace-only replay, and a tool registry scoped to the top-level launched executable and explicitly declared manifests (no descendant-call interception). See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for that bounded design and `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, checkpoint-forking, and incremental-capture bounded design — both with their own explicit non-goals.
 
 ## Current product scope
 

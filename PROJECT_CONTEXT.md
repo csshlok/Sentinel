@@ -44,14 +44,16 @@ A developer can define a bounded Change, delegate scoped authority to an agent, 
 
 The following proposal subsystems are intentionally removed from the product:
 
-- Process supervisor, descendant-process attribution, and process cleanup.
+- Process supervisor, descendant-process attribution, and process cleanup — narrowed, not
+  absolute: suspending/resuming the single top-level launched process is retained (Windows-first,
+  honestly unsupported elsewhere), per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A.
 - Filesystem observation, before-images, snapshots, file-effect attribution, and local-file recovery/undo.
 
-The event/effect journal, causal timeline, and trace-only replay are retained in bounded form, as is a tool registry scoped to the top-level launched executable and explicitly declared manifests. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design and its own non-goals.
+The event/effect journal, causal timeline, and trace-only replay are retained in bounded form, as is a tool registry scoped to the top-level launched executable and explicitly declared manifests. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design and its own non-goals. Checkpoint-based Change forking and incremental, poll-based (TUI-only) agent output are also retained; see `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Parts B and C.
 
 ## Necessary consequences and non-goals
 
-- No descendant-process ownership, orphan cleanup, process-tree policy, or Windows Job Object enforcement because the process supervisor is absent.
+- No descendant-process ownership, orphan cleanup, process-tree policy, or Windows Job Object enforcement because the process supervisor remains cut beyond top-level pause/resume.
 - No uncommitted-file restoration, resource versions, write attribution, or environment rollback because filesystem/process observation is absent.
 - No attribution of an environment/dependency change to a particular process; only checkpoint comparison is claimed.
 - No descendant-process attribution in any replay row, no filesystem-level write timeline, and no re-execution of any kind during replay — replay is a per-Change hash chain reconstruction/verification only.
@@ -82,6 +84,9 @@ Do not claim:
 - General recovery beyond the explicitly supported Git/provider actions.
 - Replay beyond a per-Change hash-chain trace reconstruction/verification with no re-execution.
 - Tool trust beyond the top-level launched executable and explicitly declared manifests.
+- Pause/resume beyond the single top-level process (no descendant suspension), or on any non-Windows platform.
+- Change forking as a Git branch/merge operation — it is an evidence-trail fork only, no repository mutation.
+- Real-time agent output as a push/streaming transport, or in the browser frontend — TUI polling only.
 
 ## Active architecture
 

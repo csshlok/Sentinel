@@ -124,10 +124,13 @@ At Gates 2 through 6 in the plan, `[SD]` posts a review or integration lock nami
 
 The product implements the PDF proposal except for:
 
-- Process supervisor.
+- Process supervisor — narrowed, not absolute: top-level-only pause/resume (suspend/resume the
+  single launched process, Windows-first) is in scope per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md`
+  Part A. Descendant-process observation, attribution, cleanup, and process-tree enforcement
+  remain cut.
 - Filesystem tracker.
 
-Stop and report a scope conflict if work introduces those systems, process-tree attribution, or local-file snapshots/undo. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, constrained Git/provider recovery, the per-Change event/effect journal, trace-only replay, and the bounded tool registry (top-level launched executable plus declared manifests only, no MCP/descendant-call interception) remain in scope. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the exact bounded scope of the journal, replay, and tool registry.
+Stop and report a scope conflict if work introduces descendant-process observation/control or local-file snapshots/undo. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, constrained Git/provider recovery, the per-Change event/effect journal, trace-only replay, the bounded tool registry (top-level launched executable plus declared manifests only, no MCP/descendant-call interception), top-level agent pause/resume, checkpoint-based Change forking, and incremental (poll-based, TUI-only) live agent output all remain in scope. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the journal/replay/tool-registry boundary and `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, forking, and live-capture boundary.
 
 ## Git hygiene
 

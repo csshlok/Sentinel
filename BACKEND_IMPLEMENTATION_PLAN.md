@@ -57,7 +57,7 @@ These cuts also mean:
 | Change object, contract, lifecycle | Keep | `[SD]` | Durable root, guarded state, freshness and idempotency |
 | Actor/agent identity and delegation | Keep | `[AC]` | Scoped, expiring, revocable authority |
 | Credential broker | Keep | `[AC]` | OS-backed secrets and brokered GitHub operations |
-| Process supervisor | Cut | None | Replaced only by a top-level launcher; no process tree |
+| Process supervisor | Cut (narrowed) | `[KB]` | Top-level launcher only; no process tree, except top-level-only pause/resume (Windows-first) per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A |
 | Filesystem tracker | Cut | None | Git checkpoints remain, without filesystem attribution or snapshots |
 | Event/effect journal | Keep (bounded) | `[SD]` infra, `[KB]`/`[AC]` emission | Per-Change hash-chained record of mutations to entities already modeled; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A |
 | Environment tracker | Keep | `[KB]` | Redacted passports and drift comparison |
@@ -164,7 +164,8 @@ Transitions use optimistic concurrency and idempotency. A new Git checkpoint inv
 ## 8. Versioned API
 
 - `/api/v1/changes`: create, list, retrieve, update contract, transition, cancel.
-- `/api/v1/changes/{id}/runs`: launch, attach metadata, stop top-level invocation if supported, retrieve aggregate result.
+- `/api/v1/changes/{id}/runs`: launch, attach metadata, stop, pause, resume top-level invocation if supported, retrieve aggregate result (incrementally visible while running, per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part C).
+- `/api/v1/changes/{id}/fork`, `/api/v1/changes/{id}/forks`: fork a new Change from a captured checkpoint; list a Change's forks (`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part B).
 - `/api/v1/changes/{id}/git`: validate, checkpoint, status, diff, compare.
 - `/api/v1/changes/{id}/environment`: capture and compare drift.
 - `/api/v1/changes/{id}/dependencies`: scan and retrieve changes/risk.
