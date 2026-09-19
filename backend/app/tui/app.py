@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.tui.recovery_screen import RecoveryScreen
 
 _STATE_SYMBOLS = {
     "DRAFT": ("o", "white"),
@@ -32,12 +33,18 @@ def state_label(state: str) -> str:
 class ChangeDashboard(App):
     """Change list dashboard sourced entirely through the local API."""
 
-    BINDINGS = [("r", "refresh", "Refresh"), ("q", "quit", "Quit")]
+    BINDINGS = [
+        ("r", "refresh", "Refresh"),
+        ("v", "recover", "Recovery preview"),
+        ("q", "quit", "Quit"),
+    ]
 
-    def __init__(self, api_url: str = "http://127.0.0.1:8000") -> None:
+    def __init__(self, api_url: str = "http://127.0.0.1:8000", actor_id: str | None = None) -> None:
         super().__init__()
         self.api_url = api_url
+        self.actor_id = actor_id
         self.client = ApiClient(api_url)
+        self._change_ids: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -67,6 +74,7 @@ class ChangeDashboard(App):
 
         items = payload.get("items", [])
         self.call_from_thread(table.clear)
+        self._change_ids = [item["id"] for item in items]
         if not items:
             self.call_from_thread(
                 status.update, "No Changes yet. Create one with the CLI: `change create`."
@@ -82,9 +90,27 @@ class ChangeDashboard(App):
                 item.get("repository_path", ""),
             )
 
+    def action_recover(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(RecoveryScreen(change_id, self.api_url, self.actor_id))
+
 
 def main() -> None:
-    ChangeDashboard().run()
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="change-assurance-tui")
+    parser.add_argument("--api-url", default="http://127.0.0.1:8000")
+    parser.add_argument(
+        "--actor-id", default=None, help="Actor UUID authorizing recovery execution."
+    )
+    args = parser.parse_args()
+    ChangeDashboard(api_url=args.api_url, actor_id=args.actor_id).run()
 
 
 if __name__ == "__main__":
