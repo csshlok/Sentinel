@@ -89,6 +89,7 @@ _DEFAULT_CONFIGURED_CAPABILITIES = {
     "environment_passports",
     "dependency_tracking",
     "assurance",
+    "cli_and_terminal_ui",
 }
 
 
