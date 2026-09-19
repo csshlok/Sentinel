@@ -238,13 +238,29 @@ class ApiClient:
     def get_evidence(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/evidence")
 
-    def capture_baseline(self, change_id: UUID) -> Any:
+    def capture_baseline(self, change_id: UUID, *, idempotency_key: str | None = None) -> Any:
         return self._request("POST", f"/api/v1/changes/{change_id}/evidence/baseline",
-                             timeout_seconds=120)
+                             idempotency_key=idempotency_key, timeout_seconds=120)
 
-    def capture_current_evidence(self, change_id: UUID) -> Any:
+    def capture_current_evidence(
+        self, change_id: UUID, *, idempotency_key: str | None = None
+    ) -> Any:
         return self._request("POST", f"/api/v1/changes/{change_id}/evidence/current",
-                             timeout_seconds=120)
+                             idempotency_key=idempotency_key, timeout_seconds=120)
+
+    def list_checkpoints(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/git/checkpoints")
+
+    def compare_checkpoints(self, change_id: UUID, baseline_id: UUID, current_id: UUID) -> Any:
+        return self._request(
+            "GET", f"/api/v1/changes/{change_id}/git/compare"
+                   f"?baseline_id={baseline_id}&current_id={current_id}")
+
+    def get_environment(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/environment")
+
+    def get_dependencies(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/dependencies")
 
     def list_agent_adapters(self) -> Any:
         return self._request("GET", "/api/v1/agents/adapters")
@@ -302,9 +318,9 @@ class ApiClient:
             "POST", f"/api/v1/changes/{change_id}/agents/{run_id}/stop",
             json_body={"actor_id": str(actor_id)}, timeout_seconds=30)
 
-    def plan_assurance(self, change_id: UUID) -> Any:
+    def plan_assurance(self, change_id: UUID, *, idempotency_key: str | None = None) -> Any:
         return self._request("POST", f"/api/v1/changes/{change_id}/assurance/plan",
-                             timeout_seconds=120)
+                             idempotency_key=idempotency_key, timeout_seconds=120)
 
     def get_assurance_plan(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/assurance/plan")
@@ -312,11 +328,12 @@ class ApiClient:
     def run_assurance(
         self, change_id: UUID, plan_id: UUID, *, actor_id: UUID,
         output_limit_bytes: int = 200_000, wait_seconds: int = 900,
+        idempotency_key: str | None = None,
     ) -> Any:
         return self._request(
             "POST", f"/api/v1/changes/{change_id}/assurance/{plan_id}/run",
             json_body={"actor_id": str(actor_id), "output_limit_bytes": output_limit_bytes},
-            timeout_seconds=wait_seconds)
+            idempotency_key=idempotency_key, timeout_seconds=wait_seconds)
 
     def evaluate_assurance(self, change_id: UUID, plan_id: UUID) -> Any:
         return self._request(

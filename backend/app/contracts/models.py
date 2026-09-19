@@ -731,6 +731,11 @@ class AgentAdapterListResponse(ContractModel):
     count: int = Field(ge=0)
 
 
+class GitCheckpointListResponse(ContractModel):
+    items: list[GitCheckpoint]
+    count: int = Field(ge=0)
+
+
 class AssuranceRunListResponse(ContractModel):
     items: list[AssuranceRun]
     count: int = Field(ge=0)

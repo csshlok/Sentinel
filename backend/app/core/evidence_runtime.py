@@ -14,20 +14,29 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from typing import TypeVar
 from uuid import UUID
 
 from backend.app.assurance.models import AssuranceEvaluation
+from pydantic import TypeAdapter
+
 from backend.app.assurance.service import (
-    AssuranceFacts, EvidenceOverview, EvidenceService, EvidenceSnapshot,
+    AssuranceFacts, EnvironmentView, EvidenceOverview, EvidenceService, EvidenceSnapshot,
 )
 from backend.app.assurance.store import IdempotencyStore
 from backend.app.contracts.models import (
     AgentAdapterInfo, AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan,
-    AssuranceRun, ChangeView,
+    AssuranceRun, ChangeView, DependencyReport, GitCheckpoint, GitCheckpointComparison,
 )
 from backend.app.contracts.ports import PolicyPort
 from backend.app.core.change_service import ChangeService
 from backend.app.core.errors import AppError, policy_denied
+
+T = TypeVar("T")
+_RUN = TypeAdapter(AgentRun)
+_RUNS = TypeAdapter(list[AssuranceRun])
+_PLAN = TypeAdapter(AssurancePlan)
+_SNAPSHOT = TypeAdapter(EvidenceSnapshot)
 
 LAUNCH_SCOPE = "agent.launch"
 ATTACH_SCOPE = "agent.attach"
@@ -57,11 +66,42 @@ class EvidenceAdminService:
         self.change_service.get(change_id)
         return self.evidence.overview(change_id)
 
-    def capture_baseline(self, change_id: UUID) -> EvidenceSnapshot:
-        return self.evidence.capture_baseline(self.change_service.get(change_id))
+    def capture_baseline(
+        self, change_id: UUID, idempotency_key: str | None = None
+    ) -> EvidenceSnapshot:
+        change = self.change_service.get(change_id)
+        return self._once(f"evidence.baseline:{change_id}", idempotency_key, {},
+                          lambda: self.evidence.capture_baseline(change), _SNAPSHOT)
 
-    def capture_current(self, change_id: UUID) -> EvidenceSnapshot:
-        return self.evidence.capture_current(self.change_service.get(change_id))
+    def capture_current(
+        self, change_id: UUID, idempotency_key: str | None = None
+    ) -> EvidenceSnapshot:
+        change = self.change_service.get(change_id)
+        return self._once(f"evidence.current:{change_id}", idempotency_key, {},
+                          lambda: self.evidence.capture_current(change), _SNAPSHOT)
+
+    def checkpoints(self, change_id: UUID) -> list[GitCheckpoint]:
+        self.change_service.get(change_id)
+        return self.evidence.overview(change_id).checkpoints
+
+    def compare_checkpoints(
+        self, change_id: UUID, baseline_id: UUID, current_id: UUID
+    ) -> GitCheckpointComparison:
+        self.change_service.get(change_id)
+        return self.evidence.compare_checkpoints(change_id, baseline_id, current_id)
+
+    def environment(self, change_id: UUID) -> EnvironmentView:
+        self.change_service.get(change_id)
+        return self.evidence.environment_view(change_id)
+
+    def dependencies(self, change_id: UUID) -> DependencyReport:
+        self.change_service.get(change_id)
+        report = self.evidence.latest_dependency_report(change_id)
+        if report is None:
+            raise AppError("DEPENDENCY_REPORT_NOT_FOUND",
+                           "No dependency report has been captured for this Change.",
+                           status_code=404)
+        return report
 
     # -- agents -------------------------------------------------------------
 
@@ -70,8 +110,8 @@ class EvidenceAdminService:
         return [AgentAdapterInfo.model_validate(item) for item in self.evidence.adapters(path)]
 
     def _once(self, scope: str, key: str | None, body: dict[str, object],
-              action: Callable[[], AgentRun]) -> AgentRun:
-        """Run ``action`` at most once per idempotency key; replays return the stored run."""
+              action: Callable[[], T], adapter: TypeAdapter[T]) -> T:
+        """Run ``action`` at most once per idempotency key; replays return the stored result."""
 
         if key is None or self.idempotency is None:
             return action()
@@ -79,14 +119,14 @@ class EvidenceAdminService:
             body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
         stored = self.idempotency.claim(scope, key, digest)
         if stored is not None:
-            return AgentRun.model_validate_json(stored)
+            return adapter.validate_json(stored)
         try:
-            run = action()
+            result = action()
         except BaseException:
             self.idempotency.release(scope, key)
             raise
-        self.idempotency.complete(scope, key, run.model_dump_json())
-        return run
+        self.idempotency.complete(scope, key, adapter.dump_json(result).decode("utf-8"))
+        return result
 
     def launch_agent(
         self, change_id: UUID, actor_id: UUID, request: AgentLaunchRequest,
@@ -98,7 +138,8 @@ class EvidenceAdminService:
         body = {"actor": str(actor_id), "launch": request.model_dump(mode="json"),
                 "limit": output_limit_bytes}
         return self._once(f"agent.launch:{change_id}", idempotency_key, body,
-                          lambda: self.evidence.launch_agent(change, request, output_limit_bytes))
+                          lambda: self.evidence.launch_agent(change, request, output_limit_bytes),
+                          _RUN)
 
     def attach_agent(
         self, change_id: UUID, actor_id: UUID, request: AgentAttachRequest,
@@ -108,7 +149,7 @@ class EvidenceAdminService:
         self._authorize(actor_id, change, ATTACH_SCOPE, {"adapter": request.adapter})
         body = {"actor": str(actor_id), "attach": request.model_dump(mode="json")}
         return self._once(f"agent.attach:{change_id}", idempotency_key, body,
-                          lambda: self.evidence.attach_agent(change, request))
+                          lambda: self.evidence.attach_agent(change, request), _RUN)
 
     def stop_agent(self, change_id: UUID, run_id: UUID, actor_id: UUID) -> AgentRun:
         change = self.change_service.get(change_id)
@@ -124,8 +165,12 @@ class EvidenceAdminService:
 
     # -- assurance ----------------------------------------------------------
 
-    def plan_assurance(self, change_id: UUID) -> AssurancePlan:
-        return self.evidence.plan_assurance(self.change_service.get(change_id))
+    def plan_assurance(
+        self, change_id: UUID, idempotency_key: str | None = None
+    ) -> AssurancePlan:
+        change = self.change_service.get(change_id)
+        return self._once(f"assurance.plan:{change_id}", idempotency_key, {},
+                          lambda: self.evidence.plan_assurance(change), _PLAN)
 
     def latest_plan(self, change_id: UUID) -> AssurancePlan:
         self.change_service.get(change_id)
@@ -136,11 +181,15 @@ class EvidenceAdminService:
         return plan
 
     def run_assurance(
-        self, change_id: UUID, plan_id: UUID, actor_id: UUID, output_limit_bytes: int
+        self, change_id: UUID, plan_id: UUID, actor_id: UUID, output_limit_bytes: int,
+        idempotency_key: str | None = None,
     ) -> list[AssuranceRun]:
         change = self.change_service.get(change_id)
         self._authorize(actor_id, change, ASSURANCE_RUN_SCOPE, {"plan_id": str(plan_id)})
-        return self.evidence.run_assurance(change, plan_id, output_limit_bytes)
+        body = {"actor": str(actor_id), "plan": str(plan_id), "limit": output_limit_bytes}
+        return self._once(
+            f"assurance.run:{change_id}", idempotency_key, body,
+            lambda: self.evidence.run_assurance(change, plan_id, output_limit_bytes), _RUNS)
 
     def evaluate(self, change_id: UUID, plan_id: UUID) -> AssuranceEvaluation:
         return self.evidence.evaluate(self.change_service.get(change_id), plan_id)

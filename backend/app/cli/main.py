@@ -312,16 +312,43 @@ def evidence_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = Js
     _run(lambda: ApiClient(api_url).get_evidence(change_id), as_json=json_, no_color=no_color)
 
 
+IdempotencyKeyOption = typer.Option(None, "--idempotency-key", help="Replays return the first result.")
+
+
 @evidence_app.command("baseline")
-def evidence_baseline(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+def evidence_baseline(change_id: UUID, idempotency_key: str = IdempotencyKeyOption, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Capture the Git checkpoint and environment passport before an agent runs."""
-    _run(lambda: ApiClient(api_url).capture_baseline(change_id), as_json=json_, no_color=no_color)
+    _run(lambda: ApiClient(api_url).capture_baseline(change_id, idempotency_key=idempotency_key), as_json=json_, no_color=no_color)
 
 
 @evidence_app.command("current")
-def evidence_current(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+def evidence_current(change_id: UUID, idempotency_key: str = IdempotencyKeyOption, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Capture current evidence and compare it with the baseline."""
-    _run(lambda: ApiClient(api_url).capture_current_evidence(change_id), as_json=json_, no_color=no_color)
+    _run(lambda: ApiClient(api_url).capture_current_evidence(change_id, idempotency_key=idempotency_key), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("checkpoints")
+def evidence_checkpoints(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """List the persisted Git checkpoints."""
+    _run(lambda: ApiClient(api_url).list_checkpoints(change_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("compare")
+def evidence_compare(change_id: UUID, baseline_id: UUID, current_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Compare two checkpoints of the Change."""
+    _run(lambda: ApiClient(api_url).compare_checkpoints(change_id, baseline_id, current_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("environment")
+def evidence_environment(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show the latest environment passport and its drift from the first one."""
+    _run(lambda: ApiClient(api_url).get_environment(change_id), as_json=json_, no_color=no_color)
+
+
+@evidence_app.command("dependencies")
+def evidence_dependencies(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show the latest dependency report."""
+    _run(lambda: ApiClient(api_url).get_dependencies(change_id), as_json=json_, no_color=no_color)
 
 
 @agent_app.command("adapters")
@@ -389,9 +416,9 @@ def agent_stop(
 
 
 @assurance_app.command("plan")
-def assurance_plan(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+def assurance_plan(change_id: UUID, idempotency_key: str = IdempotencyKeyOption, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Build an evidence-selected assurance plan from the latest evidence."""
-    _run(lambda: ApiClient(api_url).plan_assurance(change_id), as_json=json_, no_color=no_color)
+    _run(lambda: ApiClient(api_url).plan_assurance(change_id, idempotency_key=idempotency_key), as_json=json_, no_color=no_color)
 
 
 @assurance_app.command("show")
@@ -404,12 +431,14 @@ def assurance_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = J
 def assurance_run(
     change_id: UUID, plan_id: UUID, actor_id: UUID,
     output_limit_bytes: int = typer.Option(200_000, "--output-limit"),
+    idempotency_key: str = IdempotencyKeyOption,
     api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
 ) -> None:
     """Run the plan's checks (requires the assurance.run delegation)."""
     _run(
         lambda: ApiClient(api_url).run_assurance(
-            change_id, plan_id, actor_id=actor_id, output_limit_bytes=output_limit_bytes),
+            change_id, plan_id, actor_id=actor_id, output_limit_bytes=output_limit_bytes,
+            idempotency_key=idempotency_key),
         as_json=json_, no_color=no_color,
     )
 

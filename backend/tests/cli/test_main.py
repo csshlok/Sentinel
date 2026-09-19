@@ -181,3 +181,25 @@ def test_policy_denial_surfaces_as_exit_code_1(monkeypatch):
     _patch_client(monkeypatch, transport)
     result = runner.invoke(cli_main.app, ["agent", "launch", CHANGE, ACTOR, "python", "--json"])
     assert result.exit_code == 1 and json.loads(result.stdout)["error"]["code"] == "POLICY_DENIED"
+
+
+@pytest.mark.parametrize(("argv", "method", "suffix"), [
+    (["evidence", "checkpoints", CHANGE], "GET", f"/changes/{CHANGE}/git/checkpoints"),
+    (["evidence", "compare", CHANGE, PLAN, ACTOR], "GET",
+     f"/changes/{CHANGE}/git/compare?baseline_id={PLAN}&current_id={ACTOR}"),
+    (["evidence", "environment", CHANGE], "GET", f"/changes/{CHANGE}/environment"),
+    (["evidence", "dependencies", CHANGE], "GET", f"/changes/{CHANGE}/dependencies"),
+])
+def test_evidence_read_commands(monkeypatch, argv, method, suffix):
+    result, call = _invoke(monkeypatch, {"ok": True}, argv)
+    assert result == {"ok": True}
+    assert call["method"] == method and call["url"].endswith("/api/v1" + suffix)
+
+
+@pytest.mark.parametrize("argv", [
+    ["evidence", "baseline", CHANGE], ["evidence", "current", CHANGE],
+    ["assurance", "plan", CHANGE], ["assurance", "run", CHANGE, PLAN, ACTOR],
+])
+def test_mutating_evidence_commands_forward_the_idempotency_key(monkeypatch, argv):
+    _, call = _invoke(monkeypatch, {}, [*argv, "--idempotency-key", "key-12345678"])
+    assert call["headers"]["Idempotency-Key"] == "key-12345678"

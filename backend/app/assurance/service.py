@@ -49,10 +49,19 @@ class EvidenceSnapshot(ContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=64)
 
 
+class EnvironmentView(ContractModel):
+    """The latest environment passport and its drift from the first one captured."""
+
+    passport: EnvironmentPassport | None = None
+    baseline_id: UUID | None = None
+    drift: EnvironmentDrift | None = None
+
+
 class EvidenceOverview(ContractModel):
     """What has been captured so far for one Change (read-only)."""
 
     baseline_captured: bool
+    latest_checkpoint_fresh: bool | None = None  # None: no checkpoint, or the repository could not be read
     checkpoints: list[GitCheckpoint] = Field(default_factory=list, max_length=1000)
     environment: EnvironmentPassport | None = None
     dependencies: DependencyReport | None = None
@@ -143,12 +152,40 @@ class EvidenceService:
     def overview(self, change_id: UUID) -> EvidenceOverview:
         checkpoints = self._store.list_checkpoints(change_id)
         stored = self._store.latest_plan(change_id)
+        fresh: bool | None = None
+        if checkpoints:
+            try:
+                fresh = self._git.is_current(checkpoints[-1], None, self._patch_limit)
+            except AppError:
+                fresh = None
         return EvidenceOverview(
             baseline_captured=any(c.name == BASELINE for c in checkpoints),
+            latest_checkpoint_fresh=fresh,
             checkpoints=checkpoints[-100:],
             environment=self._store.latest_environment(change_id),
             dependencies=self._store.latest_dependency_report(change_id),
             plan=stored.plan if stored else None)
+
+    def compare_checkpoints(
+        self, change_id: UUID, baseline_id: UUID, current_id: UUID
+    ) -> GitCheckpointComparison:
+        """Compare two persisted checkpoints of the same Change."""
+
+        pair = [self._store.get_checkpoint(baseline_id), self._store.get_checkpoint(current_id)]
+        if any(cp is None or cp.change_id != change_id for cp in pair):
+            raise AppError("CHECKPOINT_NOT_FOUND",
+                           "A checkpoint does not exist for this Change.", status_code=404)
+        return self._git.compare(pair[0], pair[1])
+
+    def environment_view(self, change_id: UUID) -> EnvironmentView:
+        latest = self._store.latest_environment(change_id)
+        first = self._store.first_environment(change_id)
+        drift = (self._environment.compare(first, latest)
+                 if latest and first and latest.id != first.id else None)
+        return EnvironmentView(passport=latest, baseline_id=first.id if first else None, drift=drift)
+
+    def latest_dependency_report(self, change_id: UUID) -> DependencyReport | None:
+        return self._store.latest_dependency_report(change_id)
 
     def latest_plan(self, change_id: UUID) -> AssurancePlan | None:
         stored = self._store.latest_plan(change_id)

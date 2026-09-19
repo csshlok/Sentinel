@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, Query, Response, status
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.service import (
     AssuranceFacts,
+    EnvironmentView,
     EvidenceOverview,
     EvidenceSnapshot,
 )
@@ -25,6 +26,9 @@ from backend.app.contracts.models import (
     AssurancePlan,
     AssuranceRunActionRequest,
     AssuranceRunListResponse,
+    DependencyReport,
+    GitCheckpointComparison,
+    GitCheckpointListResponse,
     CapabilitiesResponse,
     ChangeCancelRequest,
     ChangeContractUpdateRequest,
@@ -397,8 +401,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         tags=["evidence"],
     )
-    def capture_baseline(change_id: UUID) -> EvidenceSnapshot:
-        return runtime.evidence.capture_baseline(change_id)
+    def capture_baseline(
+        change_id: UUID, idempotency_key: IdempotencyHeader = None
+    ) -> EvidenceSnapshot:
+        return runtime.evidence.capture_baseline(change_id, idempotency_key)
 
     @router.post(
         "/changes/{change_id}/evidence/current",
@@ -406,8 +412,45 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         tags=["evidence"],
     )
-    def capture_current_evidence(change_id: UUID) -> EvidenceSnapshot:
-        return runtime.evidence.capture_current(change_id)
+    def capture_current_evidence(
+        change_id: UUID, idempotency_key: IdempotencyHeader = None
+    ) -> EvidenceSnapshot:
+        return runtime.evidence.capture_current(change_id, idempotency_key)
+
+    @router.get(
+        "/changes/{change_id}/git/checkpoints",
+        response_model=GitCheckpointListResponse,
+        tags=["evidence"],
+    )
+    def list_git_checkpoints(change_id: UUID) -> GitCheckpointListResponse:
+        items = runtime.evidence.checkpoints(change_id)
+        return GitCheckpointListResponse(items=items, count=len(items))
+
+    @router.get(
+        "/changes/{change_id}/git/compare",
+        response_model=GitCheckpointComparison,
+        tags=["evidence"],
+    )
+    def compare_git_checkpoints(
+        change_id: UUID, baseline_id: UUID, current_id: UUID
+    ) -> GitCheckpointComparison:
+        return runtime.evidence.compare_checkpoints(change_id, baseline_id, current_id)
+
+    @router.get(
+        "/changes/{change_id}/environment",
+        response_model=EnvironmentView,
+        tags=["evidence"],
+    )
+    def get_environment(change_id: UUID) -> EnvironmentView:
+        return runtime.evidence.environment(change_id)
+
+    @router.get(
+        "/changes/{change_id}/dependencies",
+        response_model=DependencyReport,
+        tags=["evidence"],
+    )
+    def get_dependencies(change_id: UUID) -> DependencyReport:
+        return runtime.evidence.dependencies(change_id)
 
     @router.get(
         "/agents/adapters",
@@ -472,8 +515,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         status_code=status.HTTP_201_CREATED,
         tags=["assurance"],
     )
-    def plan_assurance(change_id: UUID) -> AssurancePlan:
-        return runtime.evidence.plan_assurance(change_id)
+    def plan_assurance(
+        change_id: UUID, idempotency_key: IdempotencyHeader = None
+    ) -> AssurancePlan:
+        return runtime.evidence.plan_assurance(change_id, idempotency_key)
 
     @router.get(
         "/changes/{change_id}/assurance/plan",
@@ -489,10 +534,14 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         tags=["assurance"],
     )
     def run_assurance(
-        change_id: UUID, plan_id: UUID, request: AssuranceRunActionRequest
+        change_id: UUID,
+        plan_id: UUID,
+        request: AssuranceRunActionRequest,
+        idempotency_key: IdempotencyHeader = None,
     ) -> AssuranceRunListResponse:
         items = runtime.evidence.run_assurance(
-            change_id, plan_id, request.actor_id, request.output_limit_bytes
+            change_id, plan_id, request.actor_id, request.output_limit_bytes,
+            idempotency_key=idempotency_key,
         )
         return AssuranceRunListResponse(items=items, count=len(items))
 
