@@ -56,6 +56,10 @@ from backend.app.contracts.models import (
     ReplayTimeline,
     RepositoryInfo,
     RepositoryPathRequest,
+    ToolManifest,
+    ToolManifestListResponse,
+    ToolTrustDecision,
+    ToolTrustRequest,
     VerificationRequest,
 )
 from backend.app.core.change_service import ChangeService
@@ -612,5 +616,48 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     def export_replay(change_id: UUID) -> ReplayTimeline:
         service.get(change_id)
         return runtime.replay.export(change_id)
+
+    # -- Tool Registry (bounded scope: top-level executable + declared -------
+    # manifests only; see B.1/B.10 non-goals echoed in every response) --------
+
+    @router.get(
+        "/tools",
+        response_model=ToolManifestListResponse,
+        tags=["tools"],
+    )
+    def list_tools() -> ToolManifestListResponse:
+        items = runtime.tools.list()
+        return ToolManifestListResponse(items=items, count=len(items))
+
+    @router.get(
+        "/tools/{tool_id}",
+        response_model=ToolManifest,
+        tags=["tools"],
+    )
+    def get_tool(tool_id: UUID) -> ToolManifest:
+        return runtime.tools.get(tool_id)
+
+    @router.post(
+        "/tools/{tool_id}/trust",
+        response_model=ToolTrustDecision,
+        tags=["tools"],
+    )
+    def decide_tool_trust(tool_id: UUID, request: ToolTrustRequest) -> ToolTrustDecision:
+        if request.change_id is not None:
+            service.get(request.change_id)
+        return runtime.tools.decide_trust(
+            tool_id, request.actor_id, request.decision.value, request.scope.value,
+            request.reason, request.change_id,
+        )
+
+    @router.get(
+        "/changes/{change_id}/tools",
+        response_model=ToolManifestListResponse,
+        tags=["tools"],
+    )
+    def list_tools_for_change(change_id: UUID) -> ToolManifestListResponse:
+        service.get(change_id)
+        items = runtime.tools.list_for_change(change_id)
+        return ToolManifestListResponse(items=items, count=len(items))
 
     return router

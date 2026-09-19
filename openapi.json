@@ -3543,6 +3543,313 @@
         "title": "RiskLevel",
         "type": "string"
       },
+      "ToolManifest": {
+        "additionalProperties": false,
+        "description": "A top-level launched executable or explicitly declared tool/MCP\nmanifest (see EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md B.1's bounded\nscope -- this governs what top-level executable may launch, never what\na running agent's descendant process calls).",
+        "properties": {
+          "artifact_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "credential_requirements": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Credential Requirements",
+            "type": "array"
+          },
+          "filesystem_scope": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Filesystem Scope",
+            "type": "array"
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "network_scope": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Network Scope",
+            "type": "array"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "signature_state": {
+            "$ref": "#/components/schemas/ToolSignatureState"
+          },
+          "source": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "trust_state": {
+            "$ref": "#/components/schemas/ToolTrustState"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "source",
+          "artifact_digest",
+          "signature_state",
+          "trust_state",
+          "first_seen_at",
+          "last_seen_at"
+        ],
+        "title": "ToolManifest",
+        "type": "object"
+      },
+      "ToolManifestListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ToolManifest"
+            },
+            "maxItems": 10000,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "ToolManifestListResponse",
+        "type": "object"
+      },
+      "ToolSignatureState": {
+        "enum": [
+          "valid",
+          "invalid",
+          "unsigned",
+          "unknown"
+        ],
+        "title": "ToolSignatureState",
+        "type": "string"
+      },
+      "ToolTrustDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by_actor_id": {
+            "format": "uuid",
+            "title": "Decided By Actor Id",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolTrustDecisionKind"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invalidated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidated At"
+          },
+          "invalidation_reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidation Reason"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ToolTrustScope"
+          },
+          "tool_id": {
+            "format": "uuid",
+            "title": "Tool Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tool_id",
+          "decided_by_actor_id",
+          "decision",
+          "scope",
+          "decided_at"
+        ],
+        "title": "ToolTrustDecision",
+        "type": "object"
+      },
+      "ToolTrustDecisionKind": {
+        "enum": [
+          "APPROVE",
+          "DENY"
+        ],
+        "title": "ToolTrustDecisionKind",
+        "type": "string"
+      },
+      "ToolTrustRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "change_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ToolTrustDecisionKind"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ToolTrustScope"
+          }
+        },
+        "required": [
+          "actor_id",
+          "decision",
+          "scope"
+        ],
+        "title": "ToolTrustRequest",
+        "type": "object"
+      },
+      "ToolTrustScope": {
+        "enum": [
+          "exact_version",
+          "publisher_policy"
+        ],
+        "title": "ToolTrustScope",
+        "type": "string"
+      },
+      "ToolTrustState": {
+        "enum": [
+          "UNKNOWN",
+          "OBSERVED",
+          "PROVISIONAL",
+          "APPROVED",
+          "DENIED"
+        ],
+        "title": "ToolTrustState",
+        "type": "string"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -6580,6 +6887,65 @@
         ]
       }
     },
+    "/api/v1/changes/{change_id}/tools": {
+      "get": {
+        "operationId": "list_tools_for_change_api_v1_changes__change_id__tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolManifestListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tools For Change",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
     "/api/v1/changes/{change_id}/transition": {
       "post": {
         "operationId": "transition_change_api_v1_changes__change_id__transition_post",
@@ -7167,6 +7533,183 @@
         "summary": "Validate Repository",
         "tags": [
           "repositories"
+        ]
+      }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "operationId": "list_tools_api_v1_tools_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolManifestListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tools",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/{tool_id}": {
+      "get": {
+        "operationId": "get_tool_api_v1_tools__tool_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tool Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolManifest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tool",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/{tool_id}/trust": {
+      "post": {
+        "operationId": "decide_tool_trust_api_v1_tools__tool_id__trust_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tool Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolTrustRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolTrustDecision"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Tool Trust",
+        "tags": [
+          "tools"
         ]
       }
     }

@@ -31,6 +31,7 @@ from backend.app.core.journal import JournalWriter
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
 from backend.app.core.replay_service import ReplayService
 from backend.app.core.router import build_router
+from backend.app.core.tool_registry_service import ToolRegistryService
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
     OutcomeRepository,
@@ -271,6 +272,7 @@ def _build_runtime_services(
             evidence_service, policy, service, IdempotencyStore(database)
         ),
         replay=ReplayService(database),
+        tools=ToolRegistryService(database, journal=resolved_journal),
     )
 
 

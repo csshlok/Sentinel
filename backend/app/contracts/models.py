@@ -756,6 +756,104 @@ class ChainVerificationResult(ContractModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class ToolTrustState(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    OBSERVED = "OBSERVED"
+    PROVISIONAL = "PROVISIONAL"
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"
+
+
+class ToolSignatureState(StrEnum):
+    VALID = "valid"
+    INVALID = "invalid"
+    UNSIGNED = "unsigned"
+    UNKNOWN = "unknown"
+
+
+class ToolTrustDecisionKind(StrEnum):
+    APPROVE = "APPROVE"
+    DENY = "DENY"
+
+
+class ToolTrustScope(StrEnum):
+    EXACT_VERSION = "exact_version"
+    PUBLISHER_POLICY = "publisher_policy"
+
+
+class ToolObservationContext(StrEnum):
+    LAUNCH = "launch"
+    ATTACH = "attach"
+    DECLARED_MANIFEST = "declared_manifest"
+
+
+class ToolManifest(ContractModel):
+    """A top-level launched executable or explicitly declared tool/MCP
+    manifest (see EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md B.1's bounded
+    scope -- this governs what top-level executable may launch, never what
+    a running agent's descendant process calls).
+    """
+
+    id: UUID
+    name: ShortText
+    version: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+    publisher: str | None = Field(default=None, max_length=256)
+    source: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
+    artifact_digest: Digest
+    signature_state: ToolSignatureState
+    capabilities: list[CapabilityScope] = Field(default_factory=list, max_length=128)
+    filesystem_scope: list[str] = Field(default_factory=list, max_length=128)
+    network_scope: list[str] = Field(default_factory=list, max_length=128)
+    credential_requirements: list[CapabilityScope] = Field(default_factory=list, max_length=128)
+    trust_state: ToolTrustState
+    first_seen_at: AwareDatetime
+    last_seen_at: AwareDatetime
+
+
+class ToolTrustDecision(ContractModel):
+    id: UUID
+    tool_id: UUID
+    change_id: UUID | None = None
+    decided_by_actor_id: UUID
+    decision: ToolTrustDecisionKind
+    scope: ToolTrustScope
+    reason: str | None = Field(default=None, max_length=1000)
+    decided_at: AwareDatetime
+    invalidated_at: AwareDatetime | None = None
+    invalidation_reason: str | None = Field(default=None, max_length=1000)
+
+
+class ToolObservation(ContractModel):
+    id: UUID
+    tool_id: UUID
+    change_id: UUID
+    agent_run_id: UUID | None = None
+    observed_at: AwareDatetime
+    capabilities_observed: list[CapabilityScope] = Field(default_factory=list, max_length=128)
+    context: ToolObservationContext
+
+
+class DriftReport(ContractModel):
+    tool_id: UUID
+    drifted: bool
+    changed_fields: list[str] = Field(default_factory=list, max_length=32)
+    prior_trust_state: ToolTrustState
+    new_trust_state: ToolTrustState
+
+
+class ToolManifestListResponse(ContractModel):
+    items: list[ToolManifest] = Field(default_factory=list, max_length=10000)
+    count: int = Field(ge=0)
+
+
+class ToolTrustRequest(ContractModel):
+    actor_id: UUID
+    decision: ToolTrustDecisionKind
+    scope: ToolTrustScope
+    reason: str | None = Field(default=None, max_length=1000)
+    change_id: UUID | None = None
+
+
 class ActorCreateRequest(ContractModel):
     kind: ActorKind
     display_name: TrimmedTitle

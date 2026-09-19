@@ -91,6 +91,12 @@ def test_journal_and_tool_registry_routes_are_present() -> None:
     )
     assert "/api/v1/changes/{change_id}/replay/verify" in paths
     assert "/api/v1/changes/{change_id}/replay/export" in paths
+    assert "/api/v1/tools" in paths
+    assert "/api/v1/tools/{tool_id}/trust" in paths
+    assert any(
+        path.startswith("/api/v1/changes/") and path.endswith("/tools")
+        for path in paths
+    )
 
 
 def test_expected_route_families_are_present() -> None:

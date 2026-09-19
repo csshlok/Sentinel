@@ -53,6 +53,7 @@ from backend.app.core.errors import (
 )
 from backend.app.core.journal import JournalWriter
 from backend.app.core.replay_service import ReplayService
+from backend.app.core.tool_registry_service import ToolRegistryService
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
     OutcomeRepository,
@@ -536,3 +537,4 @@ class RuntimeServices:
     passport: PassportService
     evidence: EvidenceAdminService
     replay: ReplayService
+    tools: ToolRegistryService

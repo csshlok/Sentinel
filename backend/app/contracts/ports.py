@@ -16,6 +16,7 @@ from backend.app.contracts.models import (
     ChangeView,
     CredentialGrant,
     DependencyReport,
+    DriftReport,
     EnvironmentDrift,
     EnvironmentPassport,
     GitCheckpoint,
@@ -29,6 +30,9 @@ from backend.app.contracts.models import (
     RecoveryPlan,
     ReplayTimeline,
     RepositoryInfo,
+    ToolManifest,
+    ToolObservation,
+    ToolTrustDecision,
     VerificationRequest,
     VerificationResult,
 )
@@ -216,3 +220,39 @@ class ReplayPort(Protocol):
 
     def verify_chain(self, change_id: UUID) -> ChainVerificationResult:
         """Recompute and verify the per-Change hash chain, without the full timeline."""
+
+
+@runtime_checkable
+class ToolRegistryPort(Protocol):
+    def resolve_or_register(self, executable_path: str, *, source: str) -> ToolManifest:
+        """Resolve a top-level executable's identity, registering it if unseen."""
+
+    def get(self, tool_id: UUID) -> ToolManifest:
+        """Return one tool manifest."""
+
+    def list(self) -> list[ToolManifest]:
+        """List the full tool registry."""
+
+    def record_observation(
+        self,
+        tool_id: UUID,
+        change_id: UUID,
+        agent_run_id: UUID | None,
+        capabilities_observed: list[str],
+        context: str,
+    ) -> ToolObservation:
+        """Record one observation of a tool being used by a Change."""
+
+    def decide_trust(
+        self,
+        tool_id: UUID,
+        actor_id: UUID,
+        decision: str,
+        scope: str,
+        reason: str | None,
+        change_id: UUID | None,
+    ) -> ToolTrustDecision:
+        """Record an explicit human/actor trust decision for a tool."""
+
+    def check_drift(self, tool_id: UUID) -> DriftReport:
+        """Compare current identity/capabilities against the last APPROVED snapshot."""

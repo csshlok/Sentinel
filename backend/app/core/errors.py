@@ -118,3 +118,30 @@ def passport_not_found(change_id: str) -> AppError:
         status_code=404,
         details={"change_id": change_id},
     )
+
+
+def tool_not_found(tool_id: str) -> AppError:
+    return AppError(
+        "TOOL_NOT_FOUND",
+        "The requested tool is not registered.",
+        status_code=404,
+        details={"tool_id": tool_id},
+    )
+
+
+def tool_executable_unreadable(executable_path: str) -> AppError:
+    return AppError(
+        "TOOL_EXECUTABLE_UNREADABLE",
+        "The tool's executable could not be read to compute its identity.",
+        status_code=400,
+        details={"executable_path": executable_path},
+    )
+
+
+def tool_trust_denied(tool_id: str) -> AppError:
+    return AppError(
+        "TOOL_TRUST_DENIED",
+        "This tool is explicitly denied and may not be launched.",
+        status_code=403,
+        details={"tool_id": tool_id},
+    )
