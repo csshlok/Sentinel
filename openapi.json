@@ -1,0 +1,6541 @@
+{
+  "components": {
+    "schemas": {
+      "Actor": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          },
+          "revision": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "display_name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Actor",
+        "type": "object"
+      },
+      "ActorActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id"
+        ],
+        "title": "ActorActionRequest",
+        "type": "object"
+      },
+      "ActorCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "display_name"
+        ],
+        "title": "ActorCreateRequest",
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "HUMAN",
+          "AGENT",
+          "SERVICE"
+        ],
+        "title": "ActorKind",
+        "type": "string"
+      },
+      "AgentAdapterInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Adapter",
+            "type": "string"
+          },
+          "credential_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Credential Keys",
+            "type": "array"
+          },
+          "descendant_control_available": {
+            "const": false,
+            "default": false,
+            "title": "Descendant Control Available",
+            "type": "boolean"
+          },
+          "executables": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Executables",
+            "type": "object"
+          }
+        },
+        "required": [
+          "adapter",
+          "executables"
+        ],
+        "title": "AgentAdapterInfo",
+        "type": "object"
+      },
+      "AgentAdapterListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAdapterInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "AgentAdapterListResponse",
+        "type": "object"
+      },
+      "AgentAttachActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "attach": {
+            "$ref": "#/components/schemas/AgentAttachRequest"
+          }
+        },
+        "required": [
+          "actor_id",
+          "attach"
+        ],
+        "title": "AgentAttachActionRequest",
+        "type": "object"
+      },
+      "AgentAttachRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Adapter",
+            "type": "string"
+          },
+          "declared_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Started At"
+          },
+          "external_run_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "External Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adapter",
+          "external_run_id"
+        ],
+        "title": "AgentAttachRequest",
+        "type": "object"
+      },
+      "AgentLaunchActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "launch": {
+            "$ref": "#/components/schemas/AgentLaunchRequest"
+          },
+          "output_limit_bytes": {
+            "default": 200000,
+            "maximum": 1048576.0,
+            "minimum": 0.0,
+            "title": "Output Limit Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actor_id",
+          "launch"
+        ],
+        "title": "AgentLaunchActionRequest",
+        "type": "object"
+      },
+      "AgentLaunchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Adapter",
+            "type": "string"
+          },
+          "args": {
+            "items": {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Args",
+            "type": "array"
+          },
+          "environment_keys": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Environment Keys",
+            "type": "array"
+          },
+          "executable": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Executable",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 900,
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "adapter",
+          "executable"
+        ],
+        "title": "AgentLaunchRequest",
+        "type": "object"
+      },
+      "AgentRun": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "title": "Adapter",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "descendant_control_available": {
+            "const": false,
+            "default": false,
+            "title": "Descendant Control Available",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "external_run_id": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Run Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "output_truncated": {
+            "default": false,
+            "title": "Output Truncated",
+            "type": "boolean"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentRunStatus"
+          },
+          "stderr": {
+            "default": "",
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "default": "",
+            "title": "Stdout",
+            "type": "string"
+          },
+          "top_level_pid": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Level Pid"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "adapter",
+          "status",
+          "started_at"
+        ],
+        "title": "AgentRun",
+        "type": "object"
+      },
+      "AgentRunListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentRun"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "AgentRunListResponse",
+        "type": "object"
+      },
+      "AgentRunStatus": {
+        "enum": [
+          "ATTACHED",
+          "RUNNING",
+          "PASSED",
+          "FAILED",
+          "TIMED_OUT",
+          "CANCELLED",
+          "ERROR"
+        ],
+        "title": "AgentRunStatus",
+        "type": "string"
+      },
+      "AssuranceCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Args",
+            "type": "array"
+          },
+          "executable": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Executable",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "rationale": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "executable",
+          "rationale"
+        ],
+        "title": "AssuranceCheck",
+        "type": "object"
+      },
+      "AssuranceEvaluation": {
+        "additionalProperties": false,
+        "description": "Freshness-aware decision inputs for one plan and its runs.",
+        "properties": {
+          "assurance_fresh": {
+            "title": "Assurance Fresh",
+            "type": "boolean"
+          },
+          "checkpoint_id": {
+            "format": "uuid",
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "coverage_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 512,
+            "title": "Coverage Gaps",
+            "type": "array"
+          },
+          "deviations": {
+            "items": {
+              "$ref": "#/components/schemas/DeviationFinding"
+            },
+            "maxItems": 10000,
+            "title": "Deviations",
+            "type": "array"
+          },
+          "deviations_resolved": {
+            "title": "Deviations Resolved",
+            "type": "boolean"
+          },
+          "failed": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Failed",
+            "type": "array"
+          },
+          "fresh": {
+            "title": "Fresh",
+            "type": "boolean"
+          },
+          "freshness_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Freshness Reasons",
+            "type": "array"
+          },
+          "missing_required": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Missing Required",
+            "type": "array"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "required_assurance_passed": {
+            "title": "Required Assurance Passed",
+            "type": "boolean"
+          },
+          "required_evidence_complete": {
+            "title": "Required Evidence Complete",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "maxItems": 256,
+            "title": "Results",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          }
+        },
+        "required": [
+          "plan_id",
+          "checkpoint_id",
+          "status",
+          "fresh",
+          "required_assurance_passed",
+          "assurance_fresh",
+          "deviations_resolved",
+          "required_evidence_complete"
+        ],
+        "title": "AssuranceEvaluation",
+        "type": "object"
+      },
+      "AssuranceFacts": {
+        "additionalProperties": false,
+        "description": "The ``LifecycleFacts`` fields owned by ``[KB]``, from persisted, fresh evidence.",
+        "properties": {
+          "assurance_fresh": {
+            "default": false,
+            "title": "Assurance Fresh",
+            "type": "boolean"
+          },
+          "deviations_resolved": {
+            "default": false,
+            "title": "Deviations Resolved",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "required_assurance_passed": {
+            "default": false,
+            "title": "Required Assurance Passed",
+            "type": "boolean"
+          },
+          "required_evidence_complete": {
+            "default": false,
+            "title": "Required Evidence Complete",
+            "type": "boolean"
+          }
+        },
+        "title": "AssuranceFacts",
+        "type": "object"
+      },
+      "AssurancePlan": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "checkpoint_id": {
+            "format": "uuid",
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/AssuranceCheck"
+            },
+            "maxItems": 256,
+            "title": "Checks",
+            "type": "array"
+          },
+          "coverage_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Coverage Gaps",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "checkpoint_id",
+          "created_at"
+        ],
+        "title": "AssurancePlan",
+        "type": "object"
+      },
+      "AssuranceRun": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "check_id": {
+            "title": "Check Id",
+            "type": "string"
+          },
+          "checkpoint_id": {
+            "format": "uuid",
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "output_truncated": {
+            "default": false,
+            "title": "Output Truncated",
+            "type": "boolean"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssuranceStatus"
+          },
+          "stderr": {
+            "default": "",
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "default": "",
+            "title": "Stdout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "plan_id",
+          "checkpoint_id",
+          "check_id",
+          "status",
+          "duration_ms",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "AssuranceRun",
+        "type": "object"
+      },
+      "AssuranceRunActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "output_limit_bytes": {
+            "default": 200000,
+            "maximum": 1048576.0,
+            "minimum": 0.0,
+            "title": "Output Limit Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actor_id"
+        ],
+        "title": "AssuranceRunActionRequest",
+        "type": "object"
+      },
+      "AssuranceRunListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssuranceRun"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "AssuranceRunListResponse",
+        "type": "object"
+      },
+      "AssuranceStatus": {
+        "enum": [
+          "PENDING",
+          "RUNNING",
+          "PASSED",
+          "FAILED",
+          "TIMED_OUT",
+          "ERROR",
+          "SKIPPED"
+        ],
+        "title": "AssuranceStatus",
+        "type": "string"
+      },
+      "CapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CapabilitiesResponse",
+        "type": "object"
+      },
+      "Capability": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CapabilityState"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "title": "Capability",
+        "type": "object"
+      },
+      "CapabilityState": {
+        "enum": [
+          "AVAILABLE",
+          "UNCONFIGURED",
+          "UNSUPPORTED"
+        ],
+        "title": "CapabilityState",
+        "type": "string"
+      },
+      "ChangeCancelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "ChangeCancelRequest",
+        "type": "object"
+      },
+      "ChangeContract": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_paths": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Allowed Paths",
+            "type": "array"
+          },
+          "allowed_provider_operations": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Allowed Provider Operations",
+            "type": "array"
+          },
+          "authority_ceiling": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Authority Ceiling",
+            "type": "array"
+          },
+          "expected_outcomes": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Expected Outcomes",
+            "type": "array"
+          },
+          "forbidden_paths": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Forbidden Paths",
+            "type": "array"
+          },
+          "max_risk": {
+            "$ref": "#/components/schemas/RiskLevel",
+            "default": "MEDIUM"
+          },
+          "recovery_allowed": {
+            "default": true,
+            "title": "Recovery Allowed",
+            "type": "boolean"
+          },
+          "required_checks": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Required Checks",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "ChangeContract",
+        "type": "object"
+      },
+      "ChangeContractUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/ChangeContract"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract",
+          "expected_revision"
+        ],
+        "title": "ChangeContractUpdateRequest",
+        "type": "object"
+      },
+      "ChangeCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/ChangeContract"
+          },
+          "intent": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Intent",
+            "type": "string"
+          },
+          "repository_path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Repository Path",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "intent",
+          "repository_path"
+        ],
+        "title": "ChangeCreateRequest",
+        "type": "object"
+      },
+      "ChangeLifecycleState": {
+        "enum": [
+          "DRAFT",
+          "ACTIVE",
+          "PAUSED",
+          "LOCALLY_VERIFIED",
+          "REVIEW_READY",
+          "PR_OPEN",
+          "CI_VERIFIED",
+          "ARTIFACT_BUILT",
+          "DEPLOYED",
+          "OBSERVING",
+          "STABLE",
+          "BLOCKED",
+          "FAILED",
+          "CANCELLED",
+          "RECOVERY_PENDING",
+          "RECOVERING",
+          "RECOVERED_VERIFIED",
+          "RECOVERY_CONFLICT",
+          "RECOVERY_FAILED"
+        ],
+        "title": "ChangeLifecycleState",
+        "type": "string"
+      },
+      "ChangeListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "ChangeListResponse",
+        "type": "object"
+      },
+      "ChangePassport": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Actor Ids",
+            "type": "array"
+          },
+          "authority_summary": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Authority Summary",
+            "type": "array"
+          },
+          "canonical_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Canonical Digest",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceReference"
+            },
+            "maxItems": 10000,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/ChangeLifecycleState"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "outcomes": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "recovery_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "lifecycle_state",
+          "generated_at",
+          "canonical_digest"
+        ],
+        "title": "ChangePassport",
+        "type": "object"
+      },
+      "ChangeTransitionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_state": {
+            "$ref": "#/components/schemas/ChangeLifecycleState"
+          }
+        },
+        "required": [
+          "target_state",
+          "expected_revision"
+        ],
+        "title": "ChangeTransitionRequest",
+        "type": "object"
+      },
+      "ChangeView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/ChangeContract"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Evidence Revision",
+            "type": "integer"
+          },
+          "git_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "last_refreshed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refreshed At"
+          },
+          "last_transition_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Transition At"
+          },
+          "lifecycle_state": {
+            "$ref": "#/components/schemas/ChangeLifecycleState",
+            "default": "DRAFT"
+          },
+          "repository_path": {
+            "title": "Repository Path",
+            "type": "string"
+          },
+          "review_state": {
+            "$ref": "#/components/schemas/ReviewState"
+          },
+          "revision": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel",
+            "default": "UNKNOWN"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_evidence_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Evidence Revision"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "intent",
+          "repository_path",
+          "created_at",
+          "updated_at",
+          "review_state"
+        ],
+        "title": "ChangeView",
+        "type": "object"
+      },
+      "ChangedPath": {
+        "additionalProperties": false,
+        "properties": {
+          "additions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additions"
+          },
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "category": {
+            "$ref": "#/components/schemas/PathCategory"
+          },
+          "deletions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deletions"
+          },
+          "old_path": {
+            "anyOf": [
+              {
+                "maxLength": 32767,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Path"
+          },
+          "path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "staged": {
+            "title": "Staged",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ChangedPathStatus"
+          },
+          "unstaged": {
+            "title": "Unstaged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "staged",
+          "unstaged",
+          "category"
+        ],
+        "title": "ChangedPath",
+        "type": "object"
+      },
+      "ChangedPathStatus": {
+        "enum": [
+          "ADDED",
+          "MODIFIED",
+          "DELETED",
+          "RENAMED",
+          "COPIED",
+          "UNTRACKED",
+          "CONFLICTED"
+        ],
+        "title": "ChangedPathStatus",
+        "type": "string"
+      },
+      "CheckResult": {
+        "additionalProperties": false,
+        "properties": {
+          "check_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Check Id",
+            "type": "string"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssuranceStatus"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check_id",
+          "required",
+          "status"
+        ],
+        "title": "CheckResult",
+        "type": "object"
+      },
+      "CredentialGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "actor_id",
+          "change_id",
+          "provider",
+          "scopes",
+          "issued_at",
+          "expires_at"
+        ],
+        "title": "CredentialGrant",
+        "type": "object"
+      },
+      "CredentialGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          },
+          "ttl_seconds": {
+            "default": 900,
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Ttl Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "actor_id",
+          "scopes"
+        ],
+        "title": "CredentialGrantRequest",
+        "type": "object"
+      },
+      "Delegation": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "grantee_id": {
+            "format": "uuid",
+            "title": "Grantee Id",
+            "type": "string"
+          },
+          "grantor_id": {
+            "format": "uuid",
+            "title": "Grantor Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "repository_path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Repository Path",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          },
+          "use_limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Limit"
+          },
+          "uses": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Uses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "grantor_id",
+          "grantee_id",
+          "change_id",
+          "repository_path",
+          "scopes",
+          "issued_at",
+          "expires_at"
+        ],
+        "title": "Delegation",
+        "type": "object"
+      },
+      "DelegationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "grantee_id": {
+            "format": "uuid",
+            "title": "Grantee Id",
+            "type": "string"
+          },
+          "grantor_id": {
+            "format": "uuid",
+            "title": "Grantor Id",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "maxLength": 160,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          },
+          "ttl_seconds": {
+            "maximum": 31536000.0,
+            "minimum": 1.0,
+            "title": "Ttl Seconds",
+            "type": "integer"
+          },
+          "use_limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Limit"
+          }
+        },
+        "required": [
+          "grantor_id",
+          "grantee_id",
+          "change_id",
+          "scopes",
+          "ttl_seconds"
+        ],
+        "title": "DelegationCreateRequest",
+        "type": "object"
+      },
+      "DelegationListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Delegation"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "DelegationListResponse",
+        "type": "object"
+      },
+      "DependencyChange": {
+        "additionalProperties": false,
+        "properties": {
+          "causal_attribution_available": {
+            "const": false,
+            "default": false,
+            "title": "Causal Attribution Available",
+            "type": "boolean"
+          },
+          "direct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direct"
+          },
+          "ecosystem": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Ecosystem",
+            "type": "string"
+          },
+          "evidence_status": {
+            "$ref": "#/components/schemas/EvidenceStatus",
+            "default": "CURRENT"
+          },
+          "new_version": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Version"
+          },
+          "old_version": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Version"
+          },
+          "package": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Package",
+            "type": "string"
+          },
+          "risk_notes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Risk Notes",
+            "type": "array"
+          },
+          "source_path": {
+            "maxLength": 32767,
+            "title": "Source Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ecosystem",
+          "package",
+          "source_path"
+        ],
+        "title": "DependencyChange",
+        "type": "object"
+      },
+      "DependencyReport": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/DependencyChange"
+            },
+            "maxItems": 10000,
+            "title": "Changes",
+            "type": "array"
+          },
+          "checkpoint_id": {
+            "format": "uuid",
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "unsupported_ecosystems": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Unsupported Ecosystems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "checkpoint_id",
+          "captured_at"
+        ],
+        "title": "DependencyReport",
+        "type": "object"
+      },
+      "DeviationCategory": {
+        "enum": [
+          "FORBIDDEN_PATH",
+          "OUTSIDE_ALLOWED_PATHS",
+          "MERGE_CONFLICT",
+          "RISK_ABOVE_CEILING",
+          "RISK_NOT_ASSESSED",
+          "DEPENDENCY_CHANGE",
+          "DEPENDENCY_EVIDENCE_GAP",
+          "ENVIRONMENT_DRIFT"
+        ],
+        "title": "DeviationCategory",
+        "type": "string"
+      },
+      "DeviationFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/DeviationCategory"
+          },
+          "detail": {
+            "maxLength": 1000,
+            "title": "Detail",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/DeviationSeverity"
+          },
+          "subject": {
+            "maxLength": 1024,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "severity",
+          "subject",
+          "detail"
+        ],
+        "title": "DeviationFinding",
+        "type": "object"
+      },
+      "DeviationSeverity": {
+        "enum": [
+          "BLOCKING",
+          "WARNING",
+          "INFO"
+        ],
+        "title": "DeviationSeverity",
+        "type": "string"
+      },
+      "EnvironmentDrift": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentFact"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "baseline_id": {
+            "format": "uuid",
+            "title": "Baseline Id",
+            "type": "string"
+          },
+          "causal_attribution_available": {
+            "const": false,
+            "default": false,
+            "title": "Causal Attribution Available",
+            "type": "boolean"
+          },
+          "changed": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentFact"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "current_id": {
+            "format": "uuid",
+            "title": "Current Id",
+            "type": "string"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentFact"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "unknown": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentFact"
+            },
+            "title": "Unknown",
+            "type": "array"
+          }
+        },
+        "required": [
+          "baseline_id",
+          "current_id"
+        ],
+        "title": "EnvironmentDrift",
+        "type": "object"
+      },
+      "EnvironmentFact": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fingerprint"
+          },
+          "key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvidenceStatus",
+            "default": "CURRENT"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "EnvironmentFact",
+        "type": "object"
+      },
+      "EnvironmentPassport": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentFact"
+            },
+            "maxItems": 10000,
+            "title": "Facts",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvidenceStatus",
+            "default": "CURRENT"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "captured_at"
+        ],
+        "title": "EnvironmentPassport",
+        "type": "object"
+      },
+      "EnvironmentView": {
+        "additionalProperties": false,
+        "description": "The latest environment passport and its drift from the first one captured.",
+        "properties": {
+          "baseline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Id"
+          },
+          "drift": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentDrift"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "passport": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentPassport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "EnvironmentView",
+        "type": "object"
+      },
+      "EvidenceOverview": {
+        "additionalProperties": false,
+        "description": "What has been captured so far for one Change (read-only).",
+        "properties": {
+          "baseline_captured": {
+            "title": "Baseline Captured",
+            "type": "boolean"
+          },
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/GitCheckpoint"
+            },
+            "maxItems": 1000,
+            "title": "Checkpoints",
+            "type": "array"
+          },
+          "dependencies": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DependencyReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentPassport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_checkpoint_fresh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Checkpoint Fresh"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssurancePlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "baseline_captured"
+        ],
+        "title": "EvidenceOverview",
+        "type": "object"
+      },
+      "EvidenceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvidenceStatus"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "status"
+        ],
+        "title": "EvidenceReference",
+        "type": "object"
+      },
+      "EvidenceSnapshot": {
+        "additionalProperties": false,
+        "description": "Everything captured at one point in time, with comparisons to the baseline.",
+        "properties": {
+          "checkpoint": {
+            "$ref": "#/components/schemas/GitCheckpoint"
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitCheckpointComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dependencies": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DependencyReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "drift": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentDrift"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentPassport"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Limitations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "checkpoint",
+          "environment"
+        ],
+        "title": "EvidenceSnapshot",
+        "type": "object"
+      },
+      "EvidenceStatus": {
+        "enum": [
+          "CURRENT",
+          "STALE",
+          "MISSING",
+          "UNSUPPORTED",
+          "PARTIAL"
+        ],
+        "title": "EvidenceStatus",
+        "type": "string"
+      },
+      "GitCheckpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "evidence_revision": {
+            "minimum": 1.0,
+            "title": "Evidence Revision",
+            "type": "integer"
+          },
+          "head_sha": {
+            "pattern": "^[0-9a-fA-F]{40}$",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "repository_root": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Repository Root",
+            "type": "string"
+          },
+          "status_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Status Digest",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/GitSummary"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "name",
+          "repository_root",
+          "head_sha",
+          "status_digest",
+          "summary",
+          "evidence_revision",
+          "captured_at"
+        ],
+        "title": "GitCheckpoint",
+        "type": "object"
+      },
+      "GitCheckpointComparison": {
+        "additionalProperties": false,
+        "properties": {
+          "added_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Added Paths",
+            "type": "array"
+          },
+          "baseline_id": {
+            "format": "uuid",
+            "title": "Baseline Id",
+            "type": "string"
+          },
+          "branch_moved": {
+            "title": "Branch Moved",
+            "type": "boolean"
+          },
+          "changed_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Changed Paths",
+            "type": "array"
+          },
+          "current_id": {
+            "format": "uuid",
+            "title": "Current Id",
+            "type": "string"
+          },
+          "head_changed": {
+            "title": "Head Changed",
+            "type": "boolean"
+          },
+          "removed_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Removed Paths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "baseline_id",
+          "current_id",
+          "branch_moved",
+          "head_changed"
+        ],
+        "title": "GitCheckpointComparison",
+        "type": "object"
+      },
+      "GitCheckpointListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GitCheckpoint"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "GitCheckpointListResponse",
+        "type": "object"
+      },
+      "GitSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ChangedPath"
+            },
+            "maxItems": 10000,
+            "title": "Files",
+            "type": "array"
+          },
+          "head_sha": {
+            "pattern": "^[0-9a-fA-F]{40}$",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "is_clean": {
+            "title": "Is Clean",
+            "type": "boolean"
+          },
+          "patch": {
+            "title": "Patch",
+            "type": "string"
+          },
+          "patch_truncated": {
+            "default": false,
+            "title": "Patch Truncated",
+            "type": "boolean"
+          },
+          "refreshed_at": {
+            "format": "date-time",
+            "title": "Refreshed At",
+            "type": "string"
+          },
+          "repository_root": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Repository Root",
+            "type": "string"
+          },
+          "total_additions": {
+            "minimum": 0.0,
+            "title": "Total Additions",
+            "type": "integer"
+          },
+          "total_deletions": {
+            "minimum": 0.0,
+            "title": "Total Deletions",
+            "type": "integer"
+          },
+          "untracked_patch_omitted": {
+            "default": false,
+            "title": "Untracked Patch Omitted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repository_root",
+          "head_sha",
+          "is_clean",
+          "total_additions",
+          "total_deletions",
+          "patch",
+          "refreshed_at"
+        ],
+        "title": "GitSummary",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "title": "Api Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "api_version"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "Outcome": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "head_sha": {
+            "pattern": "^[0-9a-fA-F]{40}$",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OutcomeKind"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "provider_reference": {
+            "maxLength": 2048,
+            "title": "Provider Reference",
+            "type": "string"
+          },
+          "repository": {
+            "maxLength": 2048,
+            "title": "Repository",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutcomeStatus"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "kind",
+          "status",
+          "repository",
+          "head_sha",
+          "provider_reference",
+          "observed_at"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      },
+      "OutcomeKind": {
+        "enum": [
+          "PULL_REQUEST",
+          "CI",
+          "ARTIFACT",
+          "DEPLOYMENT"
+        ],
+        "title": "OutcomeKind",
+        "type": "string"
+      },
+      "OutcomeListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Outcome"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "OutcomeListResponse",
+        "type": "object"
+      },
+      "OutcomeRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "grant_id": {
+            "format": "uuid",
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "required_check_names": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Required Check Names",
+            "type": "array"
+          }
+        },
+        "required": [
+          "grant_id"
+        ],
+        "title": "OutcomeRefreshRequest",
+        "type": "object"
+      },
+      "OutcomeStatus": {
+        "enum": [
+          "UNKNOWN",
+          "PENDING",
+          "PASSED",
+          "FAILED",
+          "CANCELLED",
+          "UNAVAILABLE"
+        ],
+        "title": "OutcomeStatus",
+        "type": "string"
+      },
+      "PathCategory": {
+        "enum": [
+          "SOURCE",
+          "TEST",
+          "DEPENDENCY",
+          "CONFIG",
+          "DOCUMENTATION",
+          "OTHER"
+        ],
+        "title": "PathCategory",
+        "type": "string"
+      },
+      "ProviderConnectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "ProviderConnectRequest",
+        "type": "object"
+      },
+      "ProviderConnectionStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "provider": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "configured"
+        ],
+        "title": "ProviderConnectionStatus",
+        "type": "object"
+      },
+      "ProviderOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provider_reference": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Reference"
+          },
+          "request": {
+            "$ref": "#/components/schemas/ProviderOperationRequest"
+          },
+          "safe_metadata": {
+            "additionalProperties": true,
+            "title": "Safe Metadata",
+            "type": "object"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProviderOperationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "request",
+          "status",
+          "started_at"
+        ],
+        "title": "ProviderOperation",
+        "type": "object"
+      },
+      "ProviderOperationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Operation",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "provider": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "change_id",
+          "actor_id",
+          "idempotency_key"
+        ],
+        "title": "ProviderOperationRequest",
+        "type": "object"
+      },
+      "ProviderOperationStatus": {
+        "enum": [
+          "PENDING",
+          "SUCCEEDED",
+          "FAILED",
+          "PARTIAL",
+          "DENIED"
+        ],
+        "title": "ProviderOperationStatus",
+        "type": "string"
+      },
+      "PullRequestActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "base_branch": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Base Branch",
+            "type": "string"
+          },
+          "grant_id": {
+            "format": "uuid",
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "head_branch": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Head Branch",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "grant_id",
+          "base_branch",
+          "head_branch",
+          "title",
+          "idempotency_key"
+        ],
+        "title": "PullRequestActionRequest",
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "provider_reference": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Reference"
+          },
+          "reversible_commit": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reversible Commit"
+          },
+          "supported": {
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "description",
+          "supported"
+        ],
+        "title": "RecoveryAction",
+        "type": "object"
+      },
+      "RecoveryExecuteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "approval_token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Approval Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "approval_token"
+        ],
+        "title": "RecoveryExecuteRequest",
+        "type": "object"
+      },
+      "RecoveryPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/RecoveryAction"
+            },
+            "maxItems": 1000,
+            "title": "Actions",
+            "type": "array"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source_checkpoint_id": {
+            "format": "uuid",
+            "title": "Source Checkpoint Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RecoveryStatus",
+            "default": "PLANNED"
+          },
+          "unsupported_effects": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Unsupported Effects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "source_checkpoint_id",
+          "created_at"
+        ],
+        "title": "RecoveryPlan",
+        "type": "object"
+      },
+      "RecoveryStatus": {
+        "enum": [
+          "PLANNED",
+          "APPROVED",
+          "EXECUTING",
+          "RECOVERED",
+          "PARTIAL",
+          "RECOVERY_FAILED",
+          "CONFLICTED"
+        ],
+        "title": "RecoveryStatus",
+        "type": "string"
+      },
+      "RepositoryInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "head_sha": {
+            "pattern": "^[0-9a-fA-F]{40}$",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "root": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "head_sha"
+        ],
+        "title": "RepositoryInfo",
+        "type": "object"
+      },
+      "RepositoryPathRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "RepositoryPathRequest",
+        "type": "object"
+      },
+      "ReviewState": {
+        "enum": [
+          "NO_CHANGES",
+          "MISSING_EVIDENCE",
+          "FAILED_VERIFICATION",
+          "READY_FOR_HUMAN_REVIEW"
+        ],
+        "title": "ReviewState",
+        "type": "string"
+      },
+      "RiskLevel": {
+        "enum": [
+          "UNKNOWN",
+          "LOW",
+          "MEDIUM",
+          "HIGH",
+          "CRITICAL"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Args",
+            "type": "array"
+          },
+          "executable": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Executable",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 120,
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executable"
+        ],
+        "title": "VerificationRequest",
+        "type": "object"
+      },
+      "VerificationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Args",
+            "type": "array"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "executable": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Executable",
+            "type": "string"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "output_truncated": {
+            "default": false,
+            "title": "Output Truncated",
+            "type": "boolean"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          },
+          "stderr": {
+            "title": "Stderr",
+            "type": "string"
+          },
+          "stdout": {
+            "title": "Stdout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executable",
+          "status",
+          "duration_ms",
+          "stdout",
+          "stderr",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "VerificationResult",
+        "type": "object"
+      },
+      "VerificationStatus": {
+        "enum": [
+          "PASSED",
+          "FAILED",
+          "TIMED_OUT",
+          "ERROR"
+        ],
+        "title": "VerificationStatus",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "title": "Change Assurance API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/actors": {
+      "post": {
+        "operationId": "create_actor_api_v1_actors_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActorCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Actor",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/actors/{actor_id}": {
+      "get": {
+        "operationId": "get_actor_api_v1_actors__actor_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Actor Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actor"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Actor",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/agents/adapters": {
+      "get": {
+        "operationId": "list_agent_adapters_api_v1_agents_adapters_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentAdapterListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Adapters",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "operationId": "capabilities_api_v1_capabilities_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/changes": {
+      "get": {
+        "operationId": "list_changes_api_v1_changes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Changes",
+        "tags": [
+          "changes"
+        ]
+      },
+      "post": {
+        "operationId": "create_change_api_v1_changes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}": {
+      "delete": {
+        "operationId": "delete_change_api_v1_changes__change_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Change",
+        "tags": [
+          "changes"
+        ]
+      },
+      "get": {
+        "operationId": "get_change_api_v1_changes__change_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/agents": {
+      "get": {
+        "operationId": "list_agent_runs_api_v1_changes__change_id__agents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Runs",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/agents/attach": {
+      "post": {
+        "operationId": "attach_agent_api_v1_changes__change_id__agents_attach_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentAttachActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attach Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/agents/launch": {
+      "post": {
+        "operationId": "launch_agent_api_v1_changes__change_id__agents_launch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentLaunchActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Launch Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/agents/{run_id}/stop": {
+      "post": {
+        "operationId": "stop_agent_api_v1_changes__change_id__agents__run_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActorActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/assurance/facts": {
+      "get": {
+        "operationId": "get_assurance_facts_api_v1_changes__change_id__assurance_facts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssuranceFacts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Assurance Facts",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/assurance/plan": {
+      "get": {
+        "operationId": "get_latest_assurance_plan_api_v1_changes__change_id__assurance_plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssurancePlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latest Assurance Plan",
+        "tags": [
+          "assurance"
+        ]
+      },
+      "post": {
+        "operationId": "plan_assurance_api_v1_changes__change_id__assurance_plan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssurancePlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Assurance",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/assurance/{plan_id}/evaluation": {
+      "get": {
+        "operationId": "evaluate_assurance_api_v1_changes__change_id__assurance__plan_id__evaluation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssuranceEvaluation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Assurance",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/assurance/{plan_id}/run": {
+      "post": {
+        "operationId": "run_assurance_api_v1_changes__change_id__assurance__plan_id__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssuranceRunActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssuranceRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Assurance",
+        "tags": [
+          "assurance"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/cancel": {
+      "post": {
+        "operationId": "cancel_change_api_v1_changes__change_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/contract": {
+      "put": {
+        "operationId": "update_change_contract_api_v1_changes__change_id__contract_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeContractUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Change Contract",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/delegations": {
+      "get": {
+        "operationId": "list_delegations_api_v1_changes__change_id__delegations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Delegations",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/dependencies": {
+      "get": {
+        "operationId": "get_dependencies_api_v1_changes__change_id__dependencies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependencyReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Dependencies",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/environment": {
+      "get": {
+        "operationId": "get_environment_api_v1_changes__change_id__environment_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Environment",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/evidence": {
+      "get": {
+        "operationId": "get_evidence_api_v1_changes__change_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Evidence",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/evidence/baseline": {
+      "post": {
+        "operationId": "capture_baseline_api_v1_changes__change_id__evidence_baseline_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture Baseline",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/evidence/current": {
+      "post": {
+        "operationId": "capture_current_evidence_api_v1_changes__change_id__evidence_current_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Capture Current Evidence",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/git/checkpoints": {
+      "get": {
+        "operationId": "list_git_checkpoints_api_v1_changes__change_id__git_checkpoints_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitCheckpointListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Git Checkpoints",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/git/compare": {
+      "get": {
+        "operationId": "compare_git_checkpoints_api_v1_changes__change_id__git_compare_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Baseline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "current_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Current Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitCheckpointComparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Git Checkpoints",
+        "tags": [
+          "evidence"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/outcomes": {
+      "get": {
+        "operationId": "list_outcomes_api_v1_changes__change_id__outcomes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutcomeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Outcomes",
+        "tags": [
+          "outcomes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/outcomes/refresh": {
+      "post": {
+        "operationId": "refresh_outcomes_api_v1_changes__change_id__outcomes_refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutcomeRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutcomeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Outcomes",
+        "tags": [
+          "outcomes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/passport": {
+      "get": {
+        "operationId": "get_latest_passport_api_v1_changes__change_id__passport_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangePassport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latest Passport",
+        "tags": [
+          "passport"
+        ]
+      },
+      "post": {
+        "operationId": "build_passport_api_v1_changes__change_id__passport_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangePassport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Passport",
+        "tags": [
+          "passport"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/providers/github/grants": {
+      "post": {
+        "operationId": "issue_github_grant_api_v1_changes__change_id__providers_github_grants_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Github Grant",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/providers/github/grants/{grant_id}/revoke": {
+      "post": {
+        "operationId": "revoke_github_grant_api_v1_changes__change_id__providers_github_grants__grant_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Grant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Github Grant",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/providers/github/pulls": {
+      "post": {
+        "operationId": "create_pull_request_api_v1_changes__change_id__providers_github_pulls_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequestActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOperation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Pull Request",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/recovery": {
+      "get": {
+        "operationId": "get_latest_recovery_api_v1_changes__change_id__recovery_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Latest Recovery",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/recovery/preview": {
+      "post": {
+        "operationId": "preview_recovery_api_v1_changes__change_id__recovery_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Recovery",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/recovery/{plan_id}/execute": {
+      "post": {
+        "operationId": "execute_recovery_api_v1_changes__change_id__recovery__plan_id__execute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute Recovery",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/refresh": {
+      "post": {
+        "operationId": "refresh_change_api_v1_changes__change_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/transition": {
+      "post": {
+        "operationId": "transition_change_api_v1_changes__change_id__transition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeTransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transition Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/verify": {
+      "post": {
+        "operationId": "verify_change_api_v1_changes__change_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/delegations": {
+      "post": {
+        "operationId": "create_delegation_api_v1_delegations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Delegation",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/delegations/{delegation_id}": {
+      "get": {
+        "operationId": "get_delegation_api_v1_delegations__delegation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Delegation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Delegation",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/delegations/{delegation_id}/revoke": {
+      "post": {
+        "operationId": "revoke_delegation_api_v1_delegations__delegation_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "delegation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Delegation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Delegation",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/providers/github/connect": {
+      "post": {
+        "operationId": "connect_github_api_v1_providers_github_connect_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConnectionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Github",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/providers/github/disconnect": {
+      "post": {
+        "operationId": "disconnect_github_api_v1_providers_github_disconnect_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConnectionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect Github",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/providers/github/status": {
+      "get": {
+        "operationId": "github_status_api_v1_providers_github_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConnectionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Status",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/repositories/validate": {
+      "post": {
+        "operationId": "validate_repository_api_v1_repositories_validate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepositoryPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Repository",
+        "tags": [
+          "repositories"
+        ]
+      }
+    }
+  }
+}

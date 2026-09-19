@@ -160,6 +160,9 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-19 03:56 -04:00 - Froze the OpenAPI contract (previously never generated)
+
+`AGENT_COORDINATION.md` and `PROJECT_CONTEXT.md`'s required scope both call for `[SD]` to freeze an OpenAPI snapshot for the deferred browser UI phase; none had ever been written to the repo. Generated `openapi.json` at the repo root from `create_app().openapi()` (44 routes, current as of `[AC]`'s outcome-panel/delegation-form TUI commit). Added `test_frozen_openapi_snapshot_matches_the_live_app` in `test_contract_boundaries.py` so the file can't drift silently — it fails with regeneration instructions the moment a route or model changes without the snapshot being updated in the same commit. Full suite: **566 passed, 1 skipped**, no regressions.
 ### `[SD]` - 2026-09-19 03:48:18 -04:00 - Gate 6 release-matrix record (backend/CLI scope)
 
 `BACKEND_IMPLEMENTATION_PLAN.md` §14 Gate 6 and §19's definition of done, checked against the evidence already produced this session plus one fresh live-server smoke check (real `uvicorn`, not `TestClient`: fresh temp database, `GET /api/v1/health` → `200 {"status":"ok"}` with no auth header; `GET /api/v1/capabilities` → `401` with no header, `200` with the real token, 19 capability entries; `GET /openapi.json` → 44 routes; server started and shut down cleanly).

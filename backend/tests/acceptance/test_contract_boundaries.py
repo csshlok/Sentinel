@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,6 +14,8 @@ from backend.app.contracts.models import (
     EnvironmentFact,
 )
 from backend.app.main import create_app
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_change_contract_rejects_duplicate_policy_values() -> None:
@@ -100,4 +104,24 @@ def test_expected_route_families_are_present() -> None:
     assert any(
         path.startswith("/api/v1/changes/") and path.endswith("/passport")
         for path in paths
+    )
+
+
+def test_frozen_openapi_snapshot_matches_the_live_app() -> None:
+    """`openapi.json` at the repo root is the frozen contract plan section 5/8
+    requires for a later browser UI phase. This does not check the file into
+    a drifted state silently: if a route or model changes, regenerate it with
+
+        python -c "import json; from backend.app.main import create_app; \
+            json.dump(create_app().openapi(), open('openapi.json', 'w'), indent=2, sort_keys=True)"
+
+    and commit the result alongside the change that caused it."""
+
+    snapshot_path = REPO_ROOT / "openapi.json"
+    assert snapshot_path.is_file(), "openapi.json is missing from the repo root."
+    on_disk = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    live = create_app().openapi()
+    assert on_disk == live, (
+        "openapi.json is stale. Regenerate it (see this test's docstring) and "
+        "commit it in the same change."
     )
