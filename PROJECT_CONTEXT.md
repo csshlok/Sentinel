@@ -116,6 +116,49 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[AC]` - 2026-09-19 00:50:26 -04:00 - Person 3 AC-0..AC-5 complete; AC-6/AC-7 blocked
+
+#### Completed scope
+
+`[AC]` completed AC-0 through AC-5 of the Person 3 track: identity/delegation, policy, credential broker, GitHub provider/outcomes, constrained Git recovery, and Change Passport. Work was limited to `backend/app/{identity,policy,credentials,providers,outcomes,recovery,passport}/` and matching `backend/tests/` paths; no shared contract, migration, or `[SD]`/`[KB]`-owned file was edited.
+
+#### What each piece does
+
+- `backend/app/identity/`: `Actor`/`Delegation` persistence against `[SD]`'s canonical `actors`/`delegations` migration tables; `IdentityService.authorize()` is default-deny with full decision-table coverage.
+- `backend/app/policy/`: `DelegationPolicyEngine` implements the frozen `PolicyPort` — authority, then default-denied operations, `ChangeContract.forbidden_paths`/`authority_ceiling`/`max_risk`.
+- `backend/app/credentials/`: `CredentialBroker` implements `CredentialBrokerPort`; `WindowsCredentialStore` is a real, live-tested `ctypes` binding to Windows Credential Manager (no new dependency); `resolve_secret` is the only path a durable secret ever leaves the store.
+- `backend/app/providers/` + `backend/app/outcomes/`: `GitHubProvider` behind a swappable `HttpTransport` (real: `urllib`; tests: local fake, no network); `OutcomeTracker` discards any check-run whose `head_sha` doesn't match the requested commit.
+- `backend/app/recovery/`: `GitRecoveryEngine` implements `RecoveryPort` — revert-commit only, on a dedicated branch, conflict-checked in a temporary worktree before any target-repository mutation, approval-token mandatory, never resets/rewrites history.
+- `backend/app/passport/`: `PassportBuilder` implements `PassportPort` from real persisted evidence only; missing evidence becomes an explicit `limitations` sentence, never a fabricated evidence reference; canonical digest is deterministic over evidence content.
+
+#### Contract gaps found (worked around, flagged for `[SD]`)
+
+- `CredentialBrokerPort.issue_grant` has no `provider` parameter although `CredentialGrant.provider` is required; inferred from the scope prefix (e.g. `"github.pr.create"` → `"github"`).
+- `OutcomePort.refresh(change)` takes no actor/grant although GitHub access needs a resolved token; worked around with a constructor-supplied `read_grant_id`.
+- `ChangeView` has no GitHub repository slug; resolved read-only via `git remote get-url origin` in `backend/app/providers/repository_slug.py`.
+
+#### Validation results
+
+- AC-owned suite: **90 passed, 1 skipped** (opt-in Windows Credential Manager smoke test — run manually with `RUN_WINDOWS_CREDENTIAL_SMOKE_TEST=1`, verified live against the real OS credential store; `cmdkey /list` confirmed no leftover credential).
+- Full repository suite: **255 passed, 1 skipped**, no regressions from any owner's work.
+- `python -m compileall -q backend`: passed.
+- Every AC-owned port implementation verified via `isinstance(x, FrozenPort)` conformance in its own tests.
+- Grep audit: no `print`/`logging` call exists anywhere in AC-owned modules — zero accidental secret-leakage surface.
+- Recovery specifically tested against real disposable Git repositories, including a genuine merge-commit conflict (not mocked), with proof the target repository's HEAD/branches are never touched on preview or on conflict.
+
+#### Commits
+
+- `2672bc2`, `9a33210`, `d0ff17d`, `f062414`, `30babfe`, `34557df` — all pushed to `origin/master`.
+
+#### AC-6/AC-7 status: blocked, not unstarted
+
+Two independent blockers, detailed with exact remaining steps in `backend/app/cli/AC_REMAINING_WORK.md`:
+
+1. `typer`, `rich`, and `textual` are not declared in `pyproject.toml`. Root dependency manifests are `[SD]`-owned; a `CONTRACT CHANGE REQUEST` was submitted (see that file) rather than editing `pyproject.toml` directly.
+2. Most routes AC-6 commands would call (`assure`/`outcome`/`recovery`/`passport`) do not exist yet — that is Gate 3 wiring, which needs both `[KB]` and `[AC]` stream-complete handoffs reviewed first.
+
+A hand-rolled terminal UI without Textual was deliberately not attempted; it would be exactly the kind of unsupported-capability-shown-as-supported this project's "no safety theater" invariant forbids.
+
 ### `[kb]` - 2026-09-19 00:01 -04:00 - Assignment review and three-commit delivery
 
 The user requested a recheck of all assigned Person 2 work, removal of `.vscode/settings.json`, exactly three commits, and `[kb]` tags with timestamps and milestone updates going forward. The local settings file was removed; it was untracked and therefore has no Git deletion diff.
