@@ -116,6 +116,75 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[kb]` - 2026-09-19 00:01 -04:00 - Assignment review and three-commit delivery
+
+The user requested a recheck of all assigned Person 2 work, removal of `.vscode/settings.json`, exactly three commits, and `[kb]` tags with timestamps and milestone updates going forward. The local settings file was removed; it was untracked and therefore has no Git deletion diff.
+
+KB-0 through KB-6 were rechecked against the plan. Existing Git and bounded execution work is tested; the new checkpoint/launcher/environment/dependency/assurance interfaces and full stream remain incomplete. `backend/app/git/KB_HANDOFF.md` now provides the per-assignment milestone table and remaining gates.
+
+Review corrected numeric-bound validation: fractional/boolean/non-integer output limits and non-finite/invalid collector timeouts now fail before subprocess startup. No shared contracts or other owner's feature code changed.
+
+- Milestone 1, 00:00 -04:00: review and settings removal complete.
+- Milestone 2, 00:01 -04:00: `python -m coverage run --branch --source=backend/app/git,backend/app/execution -m pytest` passed **150 tests in 28.96 seconds**, no skips/xfails. `python -m coverage report -m` reports **100% statement and branch coverage** (445 statements, 178 branches) for both packages. `git diff --check` passed.
+- Milestone 3: three-commit delivery — `5bf01cb` execution foundation, `47ea584` Git hardening, then the documentation commit containing this record. Every commit uses `[kb]` and an offset-qualified timestamp. No push was requested.
+
+This review does not represent `[SD]` acceptance or completion of KB-1 through KB-6. Continue reporting timestamped Person 2 milestones, including blockers and actual verification evidence.
+
+### `[KB]` - 2026-09-18 23:57 -04:00 - Owned Git and execution hardening implemented
+
+Following the user's confirmation to continue as Person 2, work proceeded against the existing frozen ports without changing shared contracts or composition. `backend/app/git/KB_HANDOFF.md` contains the exact paths, contract hashes, review boundary, tests and integration instructions.
+
+- Git inspection now bounds capture memory, suppresses external diff/textconv/fsmonitor/filter execution and optional index writes, rejects malformed evidence with domain errors, and checks repeated status/statistics/full-diff reads for observed movement. It preserves normal Windows line-ending configuration. Active content filters and submodules are explicitly unsupported rather than silently producing incomplete evidence.
+- `backend/app/execution/runner.py` provides `BoundedVerificationRunner`, a concrete existing `VerificationPort` implementation for Person 2 assurance work. It uses a reduced environment, safe executable resolution, a shared output budget and nonblocking pipes with a deadline. Timeout affects only the direct child; inherited descendant pipes cannot hang the caller. This primitive does not substitute for the missing launcher authority/attach/cancel/idempotency contracts.
+- The existing uncommitted Git startup-error fix was preserved. No other owner's implementation, root dependency manifest or application wiring was edited. The new runner is exercised through dependency injection in owner tests; the production default remains the older verification runner.
+- `python -m coverage run --branch --source=backend/app/git,backend/app/execution -m pytest`: **139 passed in 27.89 seconds**, no skips/xfails. `python -m coverage report -m`: **100% statement and branch coverage** across both owned packages (445 statements, 178 branches, no exclusions).
+- Tests include real Windows Git repositories, hooks/filters, merge conflict, Unicode, submodule rejection, unchanged repository bytes/mtimes, bounded subprocesses, environment canaries, and an API create/refresh/verify/restart/refresh flow using real SQLite and the new runner.
+
+This supersedes the earlier audit's no-runtime-change status. It does not complete KB-1 through KB-6: the five new shared ports/models are still absent. The full checkpoint, launcher, environment, dependency and assurance interfaces remain a concrete `[SD]` handoff dependency. Repeated Git reads are not an atomic checkpoint, and passing checks are not proof of correctness. The complete retained-proposal flow is not claimed.
+
+### `[KB]` - 2026-09-18 23:41 -04:00 - Person 2 compatibility audit and blocked handoff
+
+This entry records an audit, not completion of KB-1 through KB-6. The user explicitly requested updates to both context documents; this documentation update does not transfer shared-code ownership or represent an `[SD]` acceptance.
+
+`git pull` reported already up to date at `3ccf0b8e8f0ebb4c5471637f73aa967a07752ef7`. The working tree already contained changes in `backend/app/git/adapter.py`, `backend/tests/git/test_git_adapter.py`, and an untracked `.vscode/` directory. Those changes were preserved and are not attributed to this audit. Future pulls must follow the clean-tree coordination rule.
+
+#### Proposal comprehension submitted for `[SD]` acknowledgement
+
+- Owned capabilities: Git baseline/current evidence (proposal pages 22 and 29), top-level agent adapters (pages 10 and 29), environment passports (pages 8 and 16), dependency comparison (pages 22 and 29), and evidence-selected assurance/deviation analysis (pages 12 and 22).
+- Preserved principles: Change is the root, observation over narration, native operation, least authority, agent neutrality, and evidence coverage rather than a probability of safety (pages 2-4 and 12).
+- Approved cuts: no event journal, process supervisor, filesystem tracker, or tool registry. Therefore no causal attribution, replay, descendant cleanup, local-file/environment undo, or tool-trust claims. Attach results describe supplied metadata only.
+- Existing consumed contracts: `GitInspectionPort`, `VerificationPort`, `RepositoryInfo`, `GitSummary`, `ChangedPath`, `VerificationRequest`, `VerificationResult`, and `AppError`. The five planned Person 2 ports and their new evidence/authority models are absent from the shared contract package.
+- Principal risks: stale or mixed Git evidence; repository-configured command execution during observation; secret inheritance/disclosure; unbounded subprocess capture or timeout escape through inherited pipes; and optimistic dependency/assurance conclusions from malformed, partial, or unsupported evidence.
+- Conflicts/gaps: the execution plan assumes frozen new ports that are not implemented; the existing schema stores only latest Git/verification state; the current API has no authority or idempotency boundary. Historical UI-readiness statements describe the earlier prototype, not completion of the retained proposal.
+
+#### `[KB]` CONTRACT CHANGE REQUEST to `[SD]`
+
+Freeze versioned immutable Pydantic input/output models, safe errors, and port-contract tests for the following interfaces before their concrete implementations begin:
+
+| Work item | Required interface decisions |
+| --- | --- |
+| KB-1 | `GitStatePort`: checkpoint identity, repository binding, content/status/index digest semantics, comparison, freshness, detached/unborn state, truncation and limitations; preserve existing `GitInspectionPort` compatibility |
+| KB-2 | `AgentLauncherPort`: launch/attach/cancel, authority and idempotency binding, executable/argument/environment policy, aggregate statuses and explicit descendant limitations |
+| KB-3 | `EnvironmentPort`: collectors, normalization, fingerprint salt/key ownership, redaction, capture completeness, comparison and unsupported states |
+| KB-4 | `DependencyPort`: explicit supported manifest/lock versions, normalized identities, direct/resolved provenance, mismatches, bounded parsing and partial/unsupported results |
+| KB-5 | `AssurancePort`: discovery/selection/run, Change Contract and evidence references, required checks, freshness, structured reporter results, deviations and coverage gaps |
+
+Proposed concrete implementations after contract freeze: `GitStateTracker`, `AgentLauncher`, `EnvironmentTracker`, `DependencyTracker`, and `AssuranceEngine`, in the corresponding Person 2 application packages. Persistence remains a shared-core integration responsibility; no private replacement contracts or cross-owner concrete imports were introduced.
+
+#### Review findings and verification
+
+- `python -m pytest`: **49 passed in 7.31 seconds**. This ran the unchanged baseline, including its pre-existing uncommitted Git fix. Real temporary repositories, SQLite, API requests through TestClient, and short verification subprocesses were exercised; CORE tests also use explicit fakes.
+- Reproduced: `_parse_numstat('invalid\\t0\\tfile.py\\0')` raises raw `ValueError` rather than `GitCommandError`. The parser needs stable handling of malformed numeric input, negative statistics and incomplete rename records.
+- Reproduced with a synthetic value only: a parent `KB_REVIEW_SECRET_CANARY` environment variable reaches verification child output. The current runner is not suitable for the planned launcher secret boundary without an allowlisted environment and output-redaction design.
+- Static finding: both Git and verification use `capture_output=True` and truncate after completion. Returned payload limits do not bound capture memory.
+- Static finding: Git patch inspection uses `--no-ext-diff` but omits `--no-textconv`; repository-configured text conversion must be disabled for read-only evidence collection. Review optional index writes and inherited Git environment overrides as well.
+- Static finding: independent Git commands do not establish a coherent checkpoint across concurrent repository changes. Verification results are not bound to checkpoint/contract identities; refresh invalidation alone does not prove freshness.
+- No new-package coverage, Windows environment collectors, Node assurance flows, launcher cancellation, or retained-proposal end-to-end completion is claimed. Coverage tooling is not installed in the current interpreter.
+
+Required test matrix after contract freeze: real Git status/rename/conflict/binary/unborn/Unicode fixtures; read-only and concurrent-change probes; short subprocess timeout/cancel/output/environment tests; deterministic collector redaction and partial-failure fixtures; Python/Node parser fixtures with malformed and unsupported cases; and assurance discovery, selection, freshness, deviation and missing-evidence decision tables. Each new package must report the plan's statement/branch coverage targets and owner-local flow evidence.
+
+Handoff status: **blocked on shared contracts and comprehension acknowledgement**, not stream-complete. `[SD]` must resolve the listed contract decisions and clarify ownership of the legacy verification runner before reuse or modification. A user scope clarification was requested because implementing shared contracts/application wiring exceeds the Person 2-only ownership assignment. No runtime implementation or integration was changed by this audit.
+
 ### `[SD]` - 2026-09-18 23:27:01 -04:00 - Parallel execution packets and test depth defined
 
 The plan now gives `[KB]` and `[AC]` complete independent execution tracks through stream-level completion before `[SD]` begins integration. Each contributor must read the entire proposal PDF, use the page-specific study guide, and submit a comprehension statement covering owned proposal capabilities, preserved principles, cut-dependent limitations, ports, risks, and document conflicts.
