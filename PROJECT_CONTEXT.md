@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 02:20 -04:00 - Persistence and orchestration completed; only `[SD]` composition remains
+
+`backend/app/assurance/store.py` (`EvidenceStore`) and `service.py` (`EvidenceService`) now persist and drive the full Person 2 flow against `[SD]`'s existing evidence tables, restart-safe and compatible with `[AC]`'s `PassportBuilder`. `AgentLauncher.adapters()` reports adapter/executable availability. The remaining Person 2 work is `[SD]`-owned composition: build `EvidenceService(EvidenceStore(database))` in `create_app`, add routes, map `assurance_facts` into `RuntimeLifecycleFacts`, and mark the KB capabilities available; `[AC]` TUI items 3 and 4 wait on those routes. Whole repository (excluding `backend/tests/tui`, needing the uninstalled `textual` extra): **502 passed, 1 skipped**; `[KB]` suites **339 passed**, 98% coverage. See `backend/app/git/KB_HANDOFF.md`.
+
 ### `[KB]` - 2026-09-19 01:55 -04:00 - Person 2 stream complete (KB-0..KB-6), ready for `[SD]` review
 
 The five ports `[KB]` requested were frozen in `backend/app/contracts/` by `[SD]`, which cleared the earlier blocker, so the whole Person 2 stream is now implemented against them. Full handoff, contract gaps and limitations: `backend/app/git/KB_HANDOFF.md`. This is self-verification, not `[SD]` acceptance, and no application wiring was done.

@@ -29,7 +29,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.errors import AppError
 from backend.app.execution._process import capture, minimal_environment
-from backend.app.execution.resolve import resolve_argv, safe_path_entries
+from backend.app.execution.resolve import find_executable, resolve_argv, safe_path_entries
 
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_TIMEOUT_SECONDS = 86_400
@@ -228,6 +228,29 @@ class AgentLauncher:
         return self._with_limitation(
             state, "Cancellation was requested but has not completed yet."
         )
+
+    def adapters(self, repository_path: str | None = None) -> list[dict[str, object]]:
+        """Adapter metadata with explicit executable discovery.
+
+        Reports which permitted executables are installed outside the repository
+        (a bare name is resolved exactly as ``launch`` would resolve it). Nothing
+        is executed and no path is disclosed: availability is a boolean per name.
+        """
+
+        root = self._root(repository_path) if repository_path else Path.cwd().resolve()
+        env = minimal_environment()
+        env["PATH"] = os.pathsep.join(str(p) for p in safe_path_entries(env, root))
+        listing: list[dict[str, object]] = []
+        for name in sorted(self._adapters):
+            adapter = self._adapters[name]
+            listing.append({
+                "adapter": name,
+                "executables": {exe: find_executable(exe, env, root) is not None
+                                for exe in sorted(adapter.executables)},
+                "credential_keys": sorted(adapter.credential_keys),
+                "descendant_control_available": False,
+            })
+        return listing
 
     # -- helpers ------------------------------------------------------------
 

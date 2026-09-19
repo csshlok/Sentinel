@@ -89,6 +89,31 @@ environment drift) and the four booleans `[SD]` needs for `LifecycleFacts`
 (`required_assurance_passed`, `assurance_fresh`, `deviations_resolved`,
 `required_evidence_complete`).
 
+## Persistence and orchestration (added after the first handoff)
+
+`backend/app/assurance/store.py` (`EvidenceStore`) writes the `[SD]`-owned
+`agent_runs`, `git_checkpoints`, `environment_passports`, `dependency_reports`,
+`assurance_plans` and `assurance_runs` tables through the frozen models' JSON, using
+`Database` unchanged. Evidence rows are immutable; agent runs are replaced as they
+change. Plans are stored as a `{"plan", "contract_sha256"}` envelope so a restarted
+process still notices a contract change; read plans only through `EvidenceStore`.
+
+`backend/app/assurance/service.py` (`EvidenceService`) is the whole retained flow
+for one Change: `capture_baseline` (refuses to redo a baseline) -> `launch_agent` /
+`attach_agent` / `stop_agent` -> `capture_current` (comparison, drift, dependencies)
+-> `plan_assurance` -> `run_assurance` -> `evaluate` -> `assurance_facts`. It is
+restart-safe: plans are rebound to their persisted checkpoint and contract digest.
+`assurance_facts(change)` returns exactly the four `LifecycleFacts` fields `[KB]`
+owns (all `False` with a reason when unproven) for `RuntimeLifecycleFacts`.
+`AgentLauncher.adapters()` reports adapter metadata and executable availability
+without disclosing paths. Rows written here feed `PassportBuilder` unchanged
+(verified by a test using `[AC]`'s real builder).
+
+What is left for `[SD]` is only composition: construct `EvidenceService(EvidenceStore(database))`
+in `create_app`, add routes, map `AssuranceFacts` into `RuntimeLifecycleFacts`, and
+mark the KB capabilities available. `launch_agent` is blocking, so run it off the
+request thread.
+
 ## Verification
 
 ```text
@@ -98,10 +123,11 @@ python -m coverage report
 python -m compileall -q backend
 ```
 
-- Whole repository: **473 passed, 1 skipped** (the opt-in Windows Credential
-  Manager test), 142.9 s, no regressions.
-- `[KB]` suites: **328 passed**, combined statement+branch coverage **98%** across
-  the five owned packages (1886 statements, 748 branches). Targets were 90%/85%.
+- Whole repository (excluding `backend/tests/tui`, which needs the optional
+  `textual` extra that is not installed here): **502 passed, 1 skipped** (the opt-in
+  Windows Credential Manager test), no regressions.
+- `[KB]` suites: **339 passed**, combined statement+branch coverage **98%** across
+  the five owned packages (2107 statements, 774 branches). Targets were 90%/85%.
 - Real boundaries: disposable Git repositories (staged, unstaged, untracked,
   rename, delete, binary, conflict, detached, unborn, Unicode, spaces); real
   subprocesses for launch/timeout/cancel/output-budget/environment canaries; real
@@ -119,11 +145,14 @@ python -m compileall -q backend
 
 1. `AgentLauncherPort` carries no actor or idempotency key. Authority must be
    enforced upstream; `launch` blocks, so composition should call it off the
-   request thread. Run records are in memory (bounded to 512); persist `AgentRun`.
+   request thread. The launcher's own records are in memory (bounded to 512);
+   `EvidenceService` persists every `AgentRun`, but a run in flight during a restart
+   cannot be stopped afterwards (reported as a limitation).
 2. `AssurancePort.run` receives no checkpoint. The engine remembers each plan's
-   checkpoint and contract digest in memory (bounded to 256). After a restart call
-   `AssuranceEngine.remember(change, plan, checkpoint)` before `run`/`evaluate`, or
-   they raise `ASSURANCE_PLAN_UNKNOWN`. `evaluate`, `remember` and
+   checkpoint and contract digest in memory (bounded to 256). `EvidenceService`
+   rebinds persisted plans after a restart via
+   `AssuranceEngine.remember(change, plan, checkpoint, contract_sha256)`; without it
+   `run`/`evaluate` raise `ASSURANCE_PLAN_UNKNOWN`. `evaluate`, `remember` and
    `analyze_deviations` are additive methods outside the frozen protocol.
 3. `EnvironmentDrift` has no expected/unexpected classification. Contract
    comparison is done in deviation analysis using the contract's
@@ -165,8 +194,7 @@ validates commands and limits and pins Python to the daemon interpreter.
 ## Consumer action
 
 1. Independently review and add acceptance probes under `backend/tests/acceptance/`.
-2. Compose the five classes in `create_app`, persist their outputs into the existing
-   `git_checkpoints`, `environment_passports`, `dependency_reports` and
-   `assurance_runs` tables, and add the routes.
-3. Feed `AssuranceEvaluation` into `RuntimeLifecycleFacts` for the four assurance
-   facts and mark the KB capabilities `AVAILABLE`.
+2. Compose `EvidenceService(EvidenceStore(database))` in `create_app` and add the
+   routes (persistence is already done in `EvidenceStore`).
+3. Feed `EvidenceService.assurance_facts` into `RuntimeLifecycleFacts` for the four
+   assurance facts and mark the KB capabilities `AVAILABLE`.

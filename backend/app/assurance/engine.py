@@ -173,15 +173,23 @@ class AssuranceEngine:
         self.remember(change, plan, checkpoint)
         return plan
 
-    def remember(self, change: ChangeView, plan: AssurancePlan, checkpoint: GitCheckpoint) -> None:
-        """Bind ``plan`` to the checkpoint and contract it was built from."""
+    def remember(
+        self, change: ChangeView, plan: AssurancePlan, checkpoint: GitCheckpoint,
+        contract_sha256: str | None = None,
+    ) -> None:
+        """Bind ``plan`` to the checkpoint and contract it was built from.
+
+        After a restart pass the persisted ``contract_sha256`` so a contract that
+        changed since planning still invalidates the plan.
+        """
 
         if plan.checkpoint_id != checkpoint.id:
             raise AppError("ASSURANCE_CHECKPOINT_MISMATCH",
                            "The checkpoint does not belong to the plan.", status_code=409)
         with self._lock:
             self._plans[plan.id] = _Binding(
-                checkpoint, contract_digest(change), tuple(c.id for c in plan.checks),
+                checkpoint, contract_sha256 or contract_digest(change),
+                tuple(c.id for c in plan.checks),
                 tuple(plan.coverage_gaps))
             while len(self._plans) > MAX_REMEMBERED_PLANS:
                 del self._plans[next(iter(self._plans))]

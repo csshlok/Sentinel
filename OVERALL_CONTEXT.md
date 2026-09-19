@@ -160,6 +160,14 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 02:20 -04:00 - Person 2 persistence and orchestration completed
+
+After reviewing `[AC]`'s latest updates (CLI, TUI recovery and Passport screens) and `[SD]`'s Gate 2 review, `[KB]` finished the remaining Person 2 items that do not touch `[SD]`-owned code. New in `backend/app/assurance/`: `EvidenceStore` persists agent runs, Git checkpoints, environment passports, dependency reports, assurance plans and runs into `[SD]`'s existing tables (the layout `[AC]`'s Passport builder already reads, verified with the real builder), and `EvidenceService` drives the whole retained flow for a Change (baseline, agent launch/attach/stop, current evidence with comparison/drift/dependencies, assurance plan/run/evaluate) and survives an application restart, including noticing a contract change made after planning. `assurance_facts(change)` returns exactly the four `LifecycleFacts` fields `[KB]` owns. `AgentLauncher.adapters()` adds explicit adapter and executable availability.
+
+Nothing in `backend/app/core/` was edited, so the KB capabilities are still reported `UNCONFIGURED` and the API/CLI/TUI cannot reach them until `[SD]` composes `EvidenceService` into `create_app`, adds routes and maps `assurance_facts` into `RuntimeLifecycleFacts`; that is the only Person 2 item left and it is `[SD]`-owned. `[AC]`'s TUI items 3 and 4 (Git/dependency tables, assurance panel) depend on those routes.
+
+Verification: whole repository (excluding `backend/tests/tui`, which needs the uninstalled optional `textual` extra) **502 passed, 1 skipped**; `[KB]` suites **339 passed**, 98% statement+branch coverage. Details: `backend/app/git/KB_HANDOFF.md`.
+
 ### `[KB]` - 2026-09-19 01:55 -04:00 - Person 2 evidence/execution/assurance stream complete
 
 `[KB]` implemented every remaining Person 2 item (KB-1 through KB-6) against the ports `[SD]` froze: `GitStateTracker`, `AgentLauncher`, `EnvironmentTracker`, `DependencyTracker` and `AssuranceEngine`, in `backend/app/{git,execution,environment,dependencies,assurance}/` with matching tests under `backend/tests/`. No shared contract, migration, composition or other owner's module was edited; nothing is wired into the application yet. The earlier blocked status in the `[KB]` entries below is superseded.

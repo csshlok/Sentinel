@@ -257,3 +257,18 @@ def test_finished_runs_are_evicted_beyond_the_cap(tmp_path, monkeypatch):
     assert set(launcher._runs) == set(ids[-3:])
     run = launcher.launch(CHANGE, str(tmp_path), request("print(1)"), 100)
     assert len(launcher._runs) == 3 and launcher.get(run.id).status is AgentRunStatus.PASSED
+
+
+def test_adapter_metadata_reports_availability_without_paths(tmp_path):
+    launcher = AgentLauncher(adapters={"ghost": AgentAdapter("ghost", frozenset({"no-such-agent-xyz"}),
+                                                            frozenset({"GHOST_API_KEY"}))})
+    listing = {item["adapter"]: item for item in launcher.adapters(str(tmp_path))}
+    assert set(listing) == {"generic", "codex", "claude", "ghost"}
+    assert listing["generic"]["executables"]["python"] is True
+    assert listing["ghost"]["executables"] == {"no-such-agent-xyz": False}
+    assert listing["ghost"]["credential_keys"] == ["GHOST_API_KEY"]
+    assert all(item["descendant_control_available"] is False for item in listing.values())
+    assert str(tmp_path) not in repr(listing) and sys.executable not in repr(listing)
+    assert launcher.adapters()      # default location works
+    with pytest.raises(AppError):
+        launcher.adapters(str(tmp_path / "missing"))
