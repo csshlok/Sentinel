@@ -141,9 +141,9 @@ class DetailScreen(Screen):
         try:
             change = self.client.get_change(self.change_id)
         except ApiConnectionError as error:
-            self.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
             return
-        self.call_from_thread(view.update, format_change(change))
+        self.app.call_from_thread(view.update, format_change(change))

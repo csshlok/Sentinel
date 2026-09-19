@@ -59,22 +59,22 @@ class OutcomeScreen(Screen):
         try:
             payload = self.client.list_outcomes(self.change_id)
         except ApiConnectionError as error:
-            self.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
             return
 
         items = payload.get("items", [])
-        self.call_from_thread(table.clear)
+        self.app.call_from_thread(table.clear)
         if not items:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 status.update, "No outcomes recorded yet. Press 'f' to refresh from GitHub."
             )
             return
-        self.call_from_thread(status.update, f"{len(items)} outcome(s)")
+        self.app.call_from_thread(status.update, f"{len(items)} outcome(s)")
         for item in items:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 table.add_row,
                 item.get("kind", ""),
                 outcome_status_label(item.get("status", "UNKNOWN")),
@@ -97,9 +97,9 @@ class OutcomeScreen(Screen):
         try:
             self.client.refresh_outcomes(self.change_id, grant_id=self.grant_id)
         except ApiConnectionError as error:
-            self.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
             return
         self._load()

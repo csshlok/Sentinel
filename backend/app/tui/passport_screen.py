@@ -99,18 +99,18 @@ class PassportScreen(Screen):
         try:
             passport = self.client.get_latest_passport(self.change_id)
         except ApiConnectionError as error:
-            self.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
             if error.code == "PASSPORT_NOT_FOUND":
-                self.call_from_thread(
+                self.app.call_from_thread(
                     view.update, "No passport has been built for this Change yet. Press 'b' to build one."
                 )
                 return
-            self.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
             return
         self.passport = passport
-        self.call_from_thread(view.update, format_passport(passport))
+        self.app.call_from_thread(view.update, format_passport(passport))
 
     def action_build(self) -> None:
         self.run_worker(self._build, thread=True)
@@ -120,13 +120,13 @@ class PassportScreen(Screen):
         try:
             passport = self.client.build_passport(self.change_id)
         except ApiConnectionError as error:
-            self.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
             return
         self.passport = passport
-        self.call_from_thread(view.update, format_passport(passport))
+        self.app.call_from_thread(view.update, format_passport(passport))
 
     def action_export(self) -> None:
         status = self.query_one("#export_status", Static)

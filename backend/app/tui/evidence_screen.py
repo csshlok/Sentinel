@@ -129,4 +129,4 @@ class EvidenceScreen(Screen):
             lambda: self.client.get_assurance_facts(self.change_id)
         )
         text = format_evidence(checkpoints, environment, dependencies, assurance_plan, assurance_facts)
-        self.call_from_thread(view.update, text)
+        self.app.call_from_thread(view.update, text)

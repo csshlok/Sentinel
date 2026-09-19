@@ -76,12 +76,12 @@ class ContractScreen(Screen):
                 max_risk=max_risk,
             )
         except ApiConnectionError as error:
-            self.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(status.update, f"[red]x {error.code}: {error.message}[/red]")
             return
         self.current_revision = updated.get("revision", self.current_revision)
-        self.call_from_thread(
+        self.app.call_from_thread(
             status.update, f"[green]Saved. New revision: {self.current_revision}[/green]"
         )

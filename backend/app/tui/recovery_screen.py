@@ -86,13 +86,13 @@ class RecoveryScreen(Screen):
         try:
             plan = self.client.preview_recovery(self.change_id)
         except ApiConnectionError as error:
-            self.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(view.update, f"[red]x {error.code}: {error.message}[/red]")
             return
         self.plan = plan
-        self.call_from_thread(view.update, format_plan(plan))
+        self.app.call_from_thread(view.update, format_plan(plan))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "approval_token":
@@ -119,9 +119,9 @@ class RecoveryScreen(Screen):
                 self.change_id, self.plan["id"], actor_id=self.actor_id, approval_token=token
             )
         except ApiConnectionError as error:
-            self.call_from_thread(result_widget.update, f"[red]x Could not reach the API: {error}[/red]")
+            self.app.call_from_thread(result_widget.update, f"[red]x Could not reach the API: {error}[/red]")
             return
         except ApiError as error:
-            self.call_from_thread(result_widget.update, f"[red]x {error.code}: {error.message}[/red]")
+            self.app.call_from_thread(result_widget.update, f"[red]x {error.code}: {error.message}[/red]")
             return
-        self.call_from_thread(result_widget.update, f"Recovery status: {result['status']}")
+        self.app.call_from_thread(result_widget.update, f"Recovery status: {result['status']}")
