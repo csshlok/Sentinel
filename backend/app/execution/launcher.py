@@ -16,6 +16,7 @@ memory only; persisting them is a shared-core integration responsibility.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import threading
@@ -137,7 +138,20 @@ class AgentLauncher:
             raise AppError("INVALID_OUTPUT_LIMIT", "Output limit must be between zero and one MiB.")
         root = self._root(repository_path)
         env, secrets = self._environment(request, adapter, root)
-        tool_manifest = self._check_tool_trust(change_id, request.executable, env, root)
+        # Resolve the executable path exactly once and reuse it for both the
+        # trust-check hash and the actual spawn below. Re-resolving the same
+        # name a second time (the previous shape: once here, once inside the
+        # try block further down) leaves a window where a file swapped in
+        # between the two resolutions is hashed as one thing and executed as
+        # another -- resolving once cannot widen that window and removes the
+        # redundant second lookup that could observe a different file.
+        try:
+            argv = resolve_argv(request.executable, env, root)
+            resolve_error: AppError | None = None
+        except AppError as exc:
+            argv = None
+            resolve_error = exc
+        tool_manifest = self._check_tool_trust(change_id, argv)
 
         run_id = uuid4()
         started_at = utc_now()
@@ -165,7 +179,8 @@ class AgentLauncher:
         truncated = False
         pid: int | None = None
         try:
-            argv = resolve_argv(request.executable, env, root)
+            if resolve_error is not None:
+                raise resolve_error
             result = capture(
                 [*argv, *request.args], cwd=root, env=env,
                 timeout=request.timeout_seconds, limit=output_limit_bytes,
@@ -280,26 +295,24 @@ class AgentLauncher:
     # -- Tool Registry integration (Part B.6) --------------------------------
 
     def _check_tool_trust(
-        self, change_id: UUID, executable: str, env: dict[str, str], root: Path,
+        self, change_id: UUID, argv: list[str] | None,
     ) -> ToolManifest | None:
         """Resolve-or-register the top-level executable and refuse a DENIED
         tool before anything starts. Governs only this one launch surface
         (B.6's "deliberately the only enforcement point"): it says nothing
         about what a running agent does afterward.
 
-        A resolution failure here (executable not found) is deliberately
-        swallowed, not raised: the existing `capture(...)` call inside
-        `launch` re-resolves the same executable and reports a normal
-        `AgentRunStatus.ERROR` result exactly as it did before this
-        integration existed, so behavior for an unresolvable executable is
-        unchanged.
+        Takes the executable path `launch` already resolved, rather than
+        resolving it again here, so the bytes hashed for trust are the same
+        bytes that get executed (see the call site's comment).
+
+        `argv` is `None` when `launch`'s own resolution failed (executable
+        not found): deliberately swallowed, not raised, here. `launch`
+        re-raises the original error at execution time, so behavior for an
+        unresolvable executable is unchanged.
         """
 
-        if self._tool_registry is None:
-            return None
-        try:
-            argv = resolve_argv(executable, env, root)
-        except AppError:
+        if self._tool_registry is None or argv is None:
             return None
         manifest = self._tool_registry.resolve_or_register(argv[0], source="launcher_executable")
         if manifest.trust_state == "DENIED":
@@ -419,7 +432,25 @@ class AgentLauncher:
 
     @staticmethod
     def _text(data: bytes, secrets: list[str]) -> str:
+        """Best-effort redaction of captured output.
+
+        Matches each secret verbatim and in its common reversible encodings
+        (base64, hex), since those are the cheapest ways a script would
+        transform a value before printing it. This is a mitigation, not a
+        guarantee: arbitrary transformation (splitting across lines, a
+        custom encoding, compression) by a compromised agent can still
+        defeat it. Callers must not treat captured output as safe to
+        display or store merely because it passed through here.
+        """
+
         text = data.decode("utf-8", errors="ignore")
         for secret in secrets:
             text = text.replace(secret, REDACTION)
+            raw = secret.encode("utf-8")
+            for variant in (
+                base64.b64encode(raw).decode("ascii"),
+                base64.urlsafe_b64encode(raw).decode("ascii"),
+                raw.hex(),
+            ):
+                text = text.replace(variant, REDACTION)
         return text

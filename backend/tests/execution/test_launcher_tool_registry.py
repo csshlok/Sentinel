@@ -122,6 +122,33 @@ def test_approved_then_denied_tool_second_launch_is_refused(tmp_path) -> None:
     assert excinfo.value.code == "POLICY_DENIED"
 
 
+def test_launch_resolves_the_executable_exactly_once(tmp_path, monkeypatch) -> None:
+    """Regression: the trust-check hash and the actual spawn must come from
+    one resolution, not two independent ones. Two resolutions leave a window
+    where a file swapped in between is hashed as one thing and executed as
+    another; this asserts the launcher no longer creates that window."""
+    import backend.app.execution.launcher as launcher_module
+
+    database = _database(tmp_path)
+    _make_change(database, CHANGE)
+    registry = ToolRegistryService(database)
+    launcher = AgentLauncher(tool_registry=registry)
+
+    calls: list[str] = []
+    original = launcher_module.resolve_argv
+
+    def spy(executable, env, root):
+        calls.append(executable)
+        return original(executable, env, root)
+
+    monkeypatch.setattr(launcher_module, "resolve_argv", spy)
+
+    run = launcher.launch(CHANGE, str(tmp_path), _python_request("print(1)"), 10_000)
+
+    assert run.status is AgentRunStatus.PASSED
+    assert len(calls) == 1
+
+
 def test_supply_chain_digest_swap_invalidates_approved_trust(tmp_path, monkeypatch) -> None:
     """Adversarial supply-chain simulation: the same declared tool name
     resolves to different bytes on a second launch. This must be detected
