@@ -10,6 +10,7 @@ never be bypassed.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 from uuid import UUID
 
@@ -47,10 +48,18 @@ class ApiClient:
         *,
         transport: HttpTransport | None = None,
         timeout_seconds: float = 10.0,
+        token: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.transport = transport or UrllibHttpTransport()
         self.timeout_seconds = timeout_seconds
+        # Every non-health route requires a bearer token (plan section 17).
+        # Falls back to the environment variable so existing `ApiClient(url)`
+        # call sites in `cli/main.py` keep working unchanged once the token
+        # is exported into the CLI's environment.
+        self.token = token if token is not None else os.environ.get(
+            "CHANGE_ASSURANCE_API_TOKEN"
+        )
 
     def _request(
         self,
@@ -62,6 +71,8 @@ class ApiClient:
         timeout_seconds: float | None = None,
     ) -> Any:
         headers = {"Accept": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         body = None
         if json_body is not None:
             body = json.dumps(json_body).encode("utf-8")

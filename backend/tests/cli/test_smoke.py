@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -35,11 +36,20 @@ def live_api_url(tmp_path):
     deadline = time.monotonic() + 10
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.05)
+    # Every non-health route now requires a bearer token. The CLI is invoked
+    # in-process by CliRunner below, so exporting it into this process's
+    # environment is enough for ApiClient to pick it up automatically.
+    previous_token = os.environ.get("CHANGE_ASSURANCE_API_TOKEN")
+    os.environ["CHANGE_ASSURANCE_API_TOKEN"] = app.state.api_token
     try:
         yield f"http://127.0.0.1:{port}"
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+        if previous_token is None:
+            os.environ.pop("CHANGE_ASSURANCE_API_TOKEN", None)
+        else:
+            os.environ["CHANGE_ASSURANCE_API_TOKEN"] = previous_token
 
 
 def test_capabilities_and_change_lifecycle_against_a_real_server(live_api_url, tmp_path) -> None:

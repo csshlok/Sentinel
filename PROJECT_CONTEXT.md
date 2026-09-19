@@ -116,6 +116,14 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[SD]` - 2026-09-19 03:40:16 -04:00 - Fixed a real `[KB]` bug, formal Gate 2 review of `[KB]`, and API authentication
+
+`[KB]`'s self-reported pass counts (509/544/560) were not reproducible here: a real, environment-dependent bug in `backend/app/execution/runner.py` (`minimal_environment()` strips `APPDATA`, breaking per-user-site-installed tools like `pytest` on this machine) made every assurance check silently fail. Fixed by re-injecting `APPDATA`/`USERPROFILE` in `BoundedVerificationRunner.run`, mirroring the identical pattern `[KB]` already uses in `git/adapter.py` for `HOME`/`USERPROFILE`. With only that fix, the full suite reaches exactly **560 passed, 1 skipped**, confirming the fix and ruling out any other hidden regression.
+
+Formal Gate 2 review of the `[KB]` stream: **ACCEPT WITH NON-BLOCKING FINDINGS** (the bug above, now fixed; one low-severity informational finding about an unused parameter in `EvidenceService._dependencies_for`). Full seven-step writeup in `OVERALL_CONTEXT.md`.
+
+Implemented API authentication (plan section 17), previously absent entirely: a single-user local bearer token (`backend/app/core/auth.py`), generated once and persisted next to the database, required on every `/api/v1/*` route except `/health`. `[AC]`'s CLI (`cli/client.py`) picks it up automatically from `CHANGE_ASSURANCE_API_TOKEN` with no changes needed to the 39 command call sites in `cli/main.py`. Every test file that builds the app/a live server directly was updated to send the token. Full detail and verification in `OVERALL_CONTEXT.md`.
+
 ### `[KB]` - 2026-09-19 03:55 -04:00 - Plan reconciliation: `[KB]` scope complete; API authentication and the rest of the release path are open
 
 `[KB]`'s scope is complete against the plan, including the section 8 read routes, idempotency keys on every `[KB]` mutation and a visible checkpoint freshness flag. A clean clone of `origin/master` (`d8c2300`) passes **560 passed, 1 skipped**. Open items owned by others: **API authentication (plan section 17) is not implemented anywhere**, `[SD]` Gate 2 review of `[KB]` and recording of the release matrix, and the remaining `[AC]` terminal UI screens and interaction tests. Full detail in `OVERALL_CONTEXT.md`.

@@ -60,7 +60,9 @@ def build_client(tmp_path) -> TestClient:
         git_inspection=git,
         verification=verification,
     )
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {app.state.api_token}"
+    return client
 
 
 def test_change_refresh_and_verify_flow(tmp_path) -> None:

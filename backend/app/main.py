@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +20,7 @@ from backend.app.contracts.ports import (
     LifecycleFactsPort,
     VerificationPort,
 )
+from backend.app.core.auth import load_or_create_api_token, require_bearer_token
 from backend.app.core.change_repository import ChangeRepository
 from backend.app.core.change_service import ChangeService
 from backend.app.core.config import Settings
@@ -103,6 +104,9 @@ def create_app(
     evidence: EvidenceService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
+    api_token = resolved_settings.api_token or load_or_create_api_token(
+        resolved_settings.database_path
+    )
     database = Database(resolved_settings.database_path)
     repository = ChangeRepository(database)
     evidence_service = evidence or EvidenceService(EvidenceStore(database))
@@ -189,11 +193,15 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(status="ok", api_version=API_VERSION)
 
-    app.include_router(build_router(service, runtime))
+    app.include_router(
+        build_router(service, runtime),
+        dependencies=[Depends(require_bearer_token(api_token))],
+    )
     app.state.settings = resolved_settings
     app.state.database = database
     app.state.change_service = service
     app.state.runtime_services = runtime
+    app.state.api_token = api_token
     return app
 
 

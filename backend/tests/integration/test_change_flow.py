@@ -36,7 +36,9 @@ def test_real_create_refresh_verify_flow(tmp_path: Path) -> None:
         settings=Settings(database_path=tmp_path / "change-assurance.sqlite3")
     )
 
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Authorization": f"Bearer {app.state.api_token}"}
+    ) as client:
         created = client.post(
             "/api/v1/changes",
             json={
@@ -86,7 +88,9 @@ def test_repository_validation_error_uses_stable_envelope(tmp_path: Path) -> Non
     non_repo.mkdir()
     app = create_app(settings=Settings(database_path=tmp_path / "errors.sqlite3"))
 
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Authorization": f"Bearer {app.state.api_token}"}
+    ) as client:
         response = client.post(
             "/api/v1/repositories/validate",
             json={"path": str(non_repo)},
@@ -109,7 +113,9 @@ def test_verification_failure_timeout_and_policy_errors_through_api(
         )
     )
 
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Authorization": f"Bearer {app.state.api_token}"}
+    ) as client:
         created = client.post(
             "/api/v1/changes",
             json={

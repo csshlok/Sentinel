@@ -201,7 +201,8 @@ def test_api_flow_with_real_git_and_bounded_runner(tmp_path):
     repo = committed_repository(tmp_path)
     settings = Settings(database_path=tmp_path / "owner-flow.sqlite3")
     app = create_app(settings=settings, verification=BoundedVerificationRunner())
-    with TestClient(app) as client:
+    auth = {"Authorization": f"Bearer {app.state.api_token}"}
+    with TestClient(app, headers=auth) as client:
         response = client.post("/api/v1/changes", json={
             "title": "Person 2 flow", "intent": "Exercise real owned evidence", "repository_path": str(repo),
         })
@@ -214,6 +215,8 @@ def test_api_flow_with_real_git_and_bounded_runner(tmp_path):
         })
         assert response.status_code == 200
         assert response.json()["review_state"] == "READY_FOR_HUMAN_REVIEW"
-    with TestClient(create_app(settings=settings, verification=BoundedVerificationRunner())) as client:
+    with TestClient(
+        create_app(settings=settings, verification=BoundedVerificationRunner()), headers=auth
+    ) as client:
         assert client.get(f"/api/v1/changes/{identifier}").json()["verification"]["status"] == "PASSED"
         assert client.post(f"/api/v1/changes/{identifier}/refresh").json()["verification"] is None

@@ -121,7 +121,9 @@ def _build_client(tmp_path, repo_path: str, current_sha: str, transport, *, sett
         credential_store=InMemoryCredentialStore(),
         http_transport=transport,
     )
-    return app, TestClient(app)
+    client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {app.state.api_token}"
+    return app, client
 
 
 def test_identity_provider_outcome_recovery_passport_flow(tmp_path) -> None:

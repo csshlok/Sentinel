@@ -72,6 +72,14 @@ class BoundedVerificationRunner:
         except (OSError, ValueError, RuntimeError) as exc:
             raise AppError("INVALID_EXECUTION_DIRECTORY", "The execution directory is invalid.") from exc
         env = minimal_environment()
+        # Preserve per-user site-packages resolution on Windows. Without APPDATA,
+        # Python cannot find packages installed with `pip install --user` (no
+        # venv), so an allowlisted executable like pytest silently reports
+        # "No module named X" even though it is genuinely installed. Neither
+        # variable is a credential.
+        for key in ("APPDATA", "USERPROFILE"):
+            if key in os.environ:
+                env[key] = os.environ[key]
         # Do not expose relative or repository-owned PATH entries to children.
         paths = []
         for value in env.get("PATH", "").split(os.pathsep):

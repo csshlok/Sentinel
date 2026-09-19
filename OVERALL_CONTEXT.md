@@ -160,6 +160,44 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-19 03:40:16 -04:00 - Fixed a real `[KB]` environment bug, formal Gate 2 review of the `[KB]` stream, and API authentication (plan section 17)
+
+Three items, done together because the second and third depend on the first being resolved first.
+
+#### 1. Fixed a reproducible defect in `[KB]`'s check execution (`backend/app/execution/runner.py`)
+
+`[KB]`'s self-reported test counts (509, then 544, then 560 passed) were not reproducible in this environment. Reproduced deterministically, twice, across two different commits: `backend/tests/assurance/test_service.py::test_runs_keep_history_but_evaluation_uses_the_latest` and four others always failed, with the "pytest" assurance check coming back `FAILED` with empty `stdout` even for code that genuinely passes its own tests.
+
+Root cause, isolated with a minimal reproduction: `BoundedVerificationRunner.run` (`backend/app/execution/runner.py`) calls `minimal_environment()`, which strips the subprocess environment to `{PATH, SYSTEMROOT, WINDIR, TEMP, TMP, TMPDIR}` plus fixed `LANG`/`LC_ALL`. On this machine, `pytest` (and other Python tools) are installed to the per-user site-packages directory (`pip install --user`, no venv), which Windows Python resolves via the `APPDATA` environment variable — not in the allowlist. Confirmed directly: `python -c "import site; print(site.getusersitepackages())"` returns the real path normally but the literal, unexpanded `~\Python\Python314\site-packages` under `[KB]`'s stripped environment, and running the exact check command (`python -B -m pytest -q -p no:cacheprovider`) under that stripped environment produces `No module named pytest`.
+
+**Fix**: `backend/app/execution/_process.py`'s `minimal_environment()` itself was left unchanged (it is used broadly, including by the Agent Launcher, where stripping as much as possible from an agent-run process is the more conservative default). Instead, `BoundedVerificationRunner.run` now re-injects `APPDATA` and `USERPROFILE` from the real environment after calling `minimal_environment()` — the exact same pattern already established in `[KB]`'s own `backend/app/git/adapter.py` (`_capture_git` re-injects `HOME`/`USERPROFILE` for Git config lookups) and `backend/app/environment/tracker.py`. Neither variable is a credential.
+
+`execution/` is `[KB]`'s exclusive path; this was fixed directly with the user's explicit authorization given in this session, following the same precedent `[KB]` itself used when composing into `[SD]`'s paths. Verified: the full repository suite (`python -m pytest`, no changes besides this one fix) now passes **560 passed, 1 skipped** — exactly matching `[KB]`'s own most recent claimed figure, confirming the fix is both correct and complete, and that no other regression exists in the baseline.
+
+#### 2. Formal Gate 2 review of the `[KB]` stream (KB-0..KB-6, plus its Gate 3 composition into `[SD]`'s paths)
+
+Following §14's seven-step sequence: intake (commits `93d1f84`..`4452b27`, KB-owned paths plus explicitly user-authorized edits to `[SD]`'s `main.py`/`router.py`/`runtime_service.py`/`lifecycle_facts_service.py`/`contracts/models.py`, itemized in `[KB]`'s own records); scope trace (every capability maps to a retained plan item; no removed-subsystem capability implemented, confirmed by the existing forbidden-route test and by reading `execution/resolve.py`, `_process.py`, `environment/tracker.py`, `assurance/deviations.py` in full — subprocess safety is `shell=False`/argument-arrays throughout, executable resolution excludes repository-owned directories so a hostile repo cannot shadow `python`/`node`, environment redaction uses a regex sensitive-key detector plus keyed fingerprints, never raw values); reproduction (see item 1 — now clean); independent probes (the real end-to-end acceptance flow in `backend/tests/acceptance/test_evidence_routes.py`, which this record's fix was required to make pass, plus the restart-safety and default-deny/authority-ceiling cases already in that file); findings below; disposition.
+
+**Findings:**
+- **Blocking, now fixed** — item 1 above.
+- **Low, informational** — `EvidenceService._dependencies_for` accepts a `checkpoint` parameter but ignores it, always returning the latest persisted dependency report for the Change rather than the one tied to a specific (possibly older) checkpoint. In every current call site the two coincide, so this has no observed effect today, but it is a latent staleness gap if evidence is ever captured a second time before an earlier plan is evaluated. Not fixed here (KB's file, narrow edge case, no reproducing test).
+- **Low, informational** — `AgentLauncherPort` carries no actor or idempotency key (`[KB]`-flagged); authority is enforced upstream in `EvidenceAdminService` exactly as `[AC]`'s pattern already established for other operations.
+
+**Disposition: ACCEPT WITH NON-BLOCKING FINDINGS.** The `[KB]` stream, including its own Gate 3 composition, is sound once item 1's fix is applied. Both remaining findings are informational and do not block further work.
+
+#### 3. API authentication (plan section 17), previously entirely absent
+
+`[KB]`'s reconciliation record correctly flagged this as unowned and unimplemented: every route, including credential and recovery operations, was reachable by any local process. Implemented a single-user, local shared-secret bearer token — not a multi-user session system, consistent with this product's one-operator local-first scope (`[AC]`'s `Actor`/`Delegation` model already answers "who may do what to this Change"; this answers the separate question "may this caller talk to the API at all").
+
+- New `backend/app/core/auth.py`: `load_or_create_api_token` persists a `secrets.token_urlsafe(32)` token next to the database (generated once, reused across restarts); `require_bearer_token` is a FastAPI dependency doing a constant-time (`hmac.compare_digest`) comparison against the `Authorization: Bearer <token>` header, raising the stable `UNAUTHENTICATED` (401) error otherwise.
+- `Settings` gained `api_token: str | None` (read from `CHANGE_ASSURANCE_API_TOKEN` in `from_environment`). `create_app` resolves the token (explicit setting, else load-or-create) and applies `require_bearer_token` as a router-level dependency on everything registered through `build_router` — every `/api/v1/*` route except `/api/v1/health`, which stays open by design (it is defined directly on `app`, not through the router). The resolved token is exposed as `app.state.api_token` for callers (and tests) that need it.
+- `[AC]`'s `backend/app/cli/client.py` (`ApiClient`) gained a `token` parameter defaulting to the `CHANGE_ASSURANCE_API_TOKEN` environment variable, so every existing `ApiClient(api_url)` call site in `cli/main.py` (39 of them) picks up the token automatically once it is exported into the CLI's environment — no changes needed to `cli/main.py` itself. `backend/tests/cli/test_smoke.py`'s live-server fixture now exports the server's generated token into the test process's environment (with proper save/restore) since the CLI is invoked in-process there.
+- Every test file that builds a `TestClient`/live server directly (`test_api.py`, `test_runtime_routes.py`, `test_evidence_routes.py`, `test_runner.py`, `test_change_flow.py` — confirmed complete by grepping the whole test tree for `TestClient(`/`create_app(`) now sets the `Authorization` header from `app.state.api_token`.
+
+**Verified**: manual check confirmed all four cases (no header → 401, wrong token → 401, `/health` → 200 with no header, correct token → 200). Every directly-affected test file re-run clean: 71 acceptance/core/integration tests plus all 34 CLI tests (including both live-server smoke tests, proving the token round-trips through a real subprocess-free in-process server). Full repository re-run with the auth change included: **560 passed, 1 skipped**, no regressions — identical to the count with only the item-1 fix applied, confirming authentication added zero collateral breakage.
+
+**Not done**: authentication is a single static token, not per-actor sessions or rotation/expiry — sufficient for the stated loopback, single-operator scope, but a future multi-user or remote-deployment mode would need real sessions tied to `[AC]`'s `Actor` model.
+
 ### `[KB]` - 2026-09-19 03:55 -04:00 - Reconciliation of `[KB]` scope against `BACKEND_IMPLEMENTATION_PLAN.md` and all commits to date
 
 `[KB]` re-read the plan (sections 6-8, 10, 13.2, 14, 17-19) and every commit through `0cb2cae`, and closed the last gaps in its own scope:

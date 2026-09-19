@@ -33,6 +33,7 @@ def build(tmp_path):
     app = create_app(settings=Settings(database_path=tmp_path / "state" / "api.sqlite3"),
                      credential_store=InMemoryCredentialStore())
     client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {app.state.api_token}"
     client.__enter__()          # run the lifespan: creates and migrates the database
     return client
 

@@ -14,6 +14,7 @@ class Settings:
     patch_limit_bytes: int = 1_048_576
     verification_output_limit_bytes: int = 262_144
     list_limit: int = 100
+    api_token: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -28,5 +29,6 @@ class Settings:
             ui_origin=os.environ.get(
                 "CHANGE_ASSURANCE_UI_ORIGIN", "http://localhost:5173"
             ),
+            api_token=os.environ.get("CHANGE_ASSURANCE_API_TOKEN"),
         )
 
