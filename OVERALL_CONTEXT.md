@@ -160,6 +160,10 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-19 04:10 -04:00 - Investigated the async-test blocker `[AC]` flagged; no `[SD]` action needed
+
+`AC_REMAINING_WORK.md` item 9 (Textual `Pilot` interaction tests) was recorded as blocked on a missing async pytest runner. Added `pytest-asyncio` to `pyproject.toml` to unblock it, matching the earlier `typer`/`rich`/`textual` precedent — but before committing, `[AC]`'s own `86fc9db` landed correcting the premise: `anyio`'s pytest plugin, already transitively installed via FastAPI, runs `@pytest.mark.anyio` async tests with no new dependency at all. Reverted the `pytest-asyncio` addition rather than leave an unnecessary dependency in place. No `pyproject.toml` change was needed; AC-7 item 9 is now done (6 Pilot tests covering 80x24/120x30 mounting, refresh, screen push/pop, quit) entirely within `[AC]`'s own path.
+
 ### `[SD]` - 2026-09-19 03:56 -04:00 - Froze the OpenAPI contract (previously never generated)
 
 `AGENT_COORDINATION.md` and `PROJECT_CONTEXT.md`'s required scope both call for `[SD]` to freeze an OpenAPI snapshot for the deferred browser UI phase; none had ever been written to the repo. Generated `openapi.json` at the repo root from `create_app().openapi()` (44 routes, current as of `[AC]`'s outcome-panel/delegation-form TUI commit). Added `test_frozen_openapi_snapshot_matches_the_live_app` in `test_contract_boundaries.py` so the file can't drift silently — it fails with regeneration instructions the moment a route or model changes without the snapshot being updated in the same commit. Full suite: **566 passed, 1 skipped**, no regressions.
