@@ -96,6 +96,24 @@ async def _select_first_row(pilot) -> None:
     await pilot.pause()
 
 
+async def _wait_for_rows(pilot, selector: str, *, at_least: int = 1, timeout: float = 5.0) -> None:
+    """Poll a DataTable's row_count with real wall-clock waits.
+
+    A single `pilot.pause()` yields one event-loop tick, which is not
+    guaranteed to be enough wall-clock time for a background-thread worker
+    doing several real sequential HTTP calls (e.g. `BranchScreen._load`) to
+    finish and call back into the UI thread. Polling with real `pause(delay)`
+    ticks avoids both flaky under-waiting and an unbounded hang.
+    """
+
+    from textual.widgets import DataTable
+
+    deadline = time.monotonic() + timeout
+    table = pilot.app.query_one(selector, DataTable)
+    while table.row_count < at_least and time.monotonic() < deadline:
+        await pilot.pause(0.05)
+
+
 @pytest.mark.anyio
 async def test_detail_screen_real_load_and_refresh(live_change) -> None:
     api_url, change_id, actor_id, _human_id = live_change
@@ -277,6 +295,84 @@ async def test_tools_screen_real_approve_decision_reaches_the_api(live_change) -
 
 
 @pytest.mark.anyio
+async def test_branch_screen_real_tree_with_no_forks_yet(live_change) -> None:
+    """No fork exists yet: the real backend returns an empty forks list.
+    Must render the honest single-node tree, not crash."""
+
+    from backend.app.tui.branch_screen import BranchScreen
+
+    api_url, change_id, actor_id, _human_id = live_change
+    app = ChangeDashboard(api_url=api_url, actor_id=actor_id)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _select_first_row(pilot)
+        await pilot.press("b")
+        await pilot.pause()
+        assert isinstance(app.screen, BranchScreen)
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.anyio
+async def test_branch_screen_real_fork_flow(live_change) -> None:
+    """Capture a baseline, open Branches, fork from the checkpoint through
+    the real interactive form, and confirm a real second Change exists
+    with the correct forked_from_* provenance -- not a stubbed worker."""
+
+    from textual.widgets import Button, DataTable, Input
+
+    from backend.app.cli.client import ApiClient
+    from backend.app.tui.branch_screen import BranchScreen
+
+    api_url, change_id, actor_id, human_id = live_change
+    client = ApiClient(api_url)
+    client.capture_baseline(change_id)
+    client.create_delegation(
+        grantor_id=human_id, grantee_id=actor_id, change_id=change_id,
+        scopes=["change.fork"], ttl_seconds=3600,
+    )
+
+    app = ChangeDashboard(api_url=api_url, actor_id=actor_id)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _select_first_row(pilot)
+        await pilot.press("b")
+        await pilot.pause()
+        assert isinstance(app.screen, BranchScreen)
+        await _wait_for_rows(pilot, "#checkpoints")
+
+        table = pilot.app.query_one("#checkpoints", DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        pilot.app.query_one("#fork_title", Input).value = "alternate model"
+        pilot.app.query_one("#fork_intent", Input).value = "compare outcomes"
+        # Real button press (not a mouse click) -- the layout can push this
+        # button below the default test-terminal's visible region, which
+        # would make a coordinate-based pilot.click() fail with OutOfBounds
+        # even though the button is a perfectly real, reachable widget.
+        pilot.app.query_one("#fork", Button).press()
+        await pilot.pause()
+
+        deadline = time.monotonic() + 5.0
+        forks = client.list_change_forks(change_id)
+        while forks["count"] < 1 and time.monotonic() < deadline:
+            await pilot.pause(0.05)
+            forks = client.list_change_forks(change_id)
+        assert forks["count"] == 1
+        assert forks["items"][0]["title"] == "alternate model"
+        assert forks["items"][0]["forked_from_change_id"] == change_id
+
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_full_tour_of_every_screen_in_one_session(live_change) -> None:
     """One session visiting every screen in sequence, the way a real user
     would, rather than one isolated screen per test — catches state that
@@ -291,7 +387,7 @@ async def test_full_tour_of_every_screen_in_one_session(live_change) -> None:
         await _select_first_row(pilot)
         for key in ("i", "escape", "g", "escape", "o", "escape",
                     "d", "escape", "c", "escape", "v", "escape",
-                    "p", "escape", "u", "escape", "r"):
+                    "p", "escape", "u", "escape", "b", "escape", "r"):
             await pilot.press(key)
             await pilot.pause()
         assert app.is_running

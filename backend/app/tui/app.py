@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.tui.branch_screen import BranchScreen
 from backend.app.tui.contract_screen import ContractScreen
 from backend.app.tui.delegation_screen import DelegationScreen
 from backend.app.tui.detail_screen import DetailScreen
@@ -52,6 +53,7 @@ class ChangeDashboard(App):
         ("c", "contract", "Edit contract"),
         ("t", "timeline", "Timeline"),
         ("u", "tools", "Tools"),
+        ("b", "branches", "Branches"),
         ("q", "quit", "Quit"),
     ]
 
@@ -208,6 +210,16 @@ class ChangeDashboard(App):
         except IndexError:
             return
         self.push_screen(ToolTrustScreen(change_id, self.api_url, actor_id=self.actor_id))
+
+    def action_branches(self) -> None:
+        table = self.query_one(DataTable)
+        if not self._change_ids or table.cursor_row is None:
+            return
+        try:
+            change_id = self._change_ids[table.cursor_row]
+        except IndexError:
+            return
+        self.push_screen(BranchScreen(change_id, self.api_url, actor_id=self.actor_id))
 
 
 def main() -> None:
