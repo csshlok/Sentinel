@@ -1,10 +1,9 @@
-"""Guided delegation creation/list/revoke form (AC-7 item 6, partial).
+"""Guided delegation creation/list/revoke form (AC-7 item 6).
 
-Covers delegations (scoped authority grants); Change Contract editing
-is not covered here (still CLI-only via `change contract update` —
-not yet implemented in the CLI either, see AC_REMAINING_WORK.md).
-Every mutation goes through the real API, so policy/lifecycle guards
-are never bypassed.
+Covers delegations (scoped authority grants); Change Contract editing is
+a separate screen (`contract_screen.py`), reachable from the same
+dashboard. Every mutation goes through the real API, so policy/lifecycle
+guards are never bypassed.
 """
 
 from __future__ import annotations
