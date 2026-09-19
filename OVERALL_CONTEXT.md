@@ -157,3 +157,112 @@ Changing a stable product invariant requires an explicit decision recorded by `[
 
 The product is not complete because a happy-path screen renders. It is complete when real state flows through the actual backend, boundaries are honest, failures are legible, tests demonstrate the promised behavior, and every visible claim is supported by evidence.
 
+## Implementation record
+
+Implementation records describe completed work without changing the stable product principles above.
+
+### `[SD]` - 2026-09-18 22:22:49 -04:00 - Person 1 CORE foundation
+
+#### Assignment and ownership
+
+`[SD]` accepted the Person 1 assignment covering the `[INTEGRATION]` bootstrap and `[CORE]` backend areas. Work was limited to root Python configuration, `backend/app/main.py`, `backend/app/contracts/`, `backend/app/core/`, and `backend/tests/core/`. No files owned by `[GIT]`, `[VERIFY]`, `[QA]`, or `[UI]` were created or edited.
+
+The required context was read before implementation in this order: `OVERALL_CONTEXT.md`, `PROJECT_CONTEXT.md`, `BACKEND_IMPLEMENTATION_PLAN.md`, and `AGENT_COORDINATION.md`.
+
+#### Runtime and project bootstrap
+
+- Added `pyproject.toml` for Python 3.12 or newer.
+- Selected FastAPI, Pydantic v2, standard-library SQLite, Uvicorn, pytest, and HTTPX.
+- Configured editable installation and backend test discovery.
+- Added `.gitignore` entries for Python caches, local virtual environments, coverage data, SQLite files, local Change Assurance data, and editable-install metadata.
+- Confirmed installation under Python 3.14.2 using `python -m pip install -e ".[test]"`.
+
+#### Frozen shared contracts
+
+Added strict Pydantic contracts in `backend/app/contracts/models.py` and adapter protocols in `backend/app/contracts/ports.py`.
+
+The shared contract now defines:
+
+- Change creation, Change views, and paginated-list response shape.
+- Repository validation input and canonical repository information.
+- Changed-path status, category, staging state, line statistics, binary state, and optional previous path.
+- Git summary including branch, HEAD SHA, cleanliness, changed files, totals, bounded patch, truncation state, untracked-patch omission, and refresh time.
+- Verification request as an executable plus argument array and bounded timeout; no shell command string is accepted.
+- Verification result including status, exit code, duration, stdout, stderr, output truncation, and timestamps.
+- Review states: `NO_CHANGES`, `MISSING_EVIDENCE`, `FAILED_VERIFICATION`, and `READY_FOR_HUMAN_REVIEW`.
+- Stable health and error-envelope response models.
+- `GitInspectionPort.validate_repository` and `GitInspectionPort.inspect` for Person 2.
+- `VerificationPort.run` for Person 3.
+
+Contracts reject undeclared fields and apply explicit length, range, timezone-awareness, UUID, and Git SHA validation where applicable.
+
+#### Persistence
+
+Added a standard-library SQLite boundary and parameterized Change repository.
+
+- The database initializes idempotently and creates its parent data directory.
+- SQLite uses foreign-key enforcement and a five-second busy timeout.
+- The `changes` table stores Change identity, intent, canonical repository path, timestamps, and only the latest Git and verification JSON documents.
+- Git and verification JSON is validated through the frozen Pydantic contracts when read back.
+- Change metadata supports create, get, newest-first list, latest-Git update, latest-verification update, and delete.
+- Persistence was verified across separate SQLite connections.
+- Deletion removes Change metadata only and never touches the selected repository.
+- Refreshing Git evidence clears the previous verification result so stale passing evidence cannot mark newly refreshed code ready.
+
+#### Core services and review behavior
+
+Added a Change service that composes persistence with the two adapter ports.
+
+- Change creation validates and canonicalizes the selected repository through `GitInspectionPort` before persistence.
+- Git refresh uses the configured one-megabyte patch limit.
+- Verification uses the configured 256 KiB output limit.
+- Unknown Change identifiers return the stable `CHANGE_NOT_FOUND` error.
+- Review-state calculation is pure and deterministic.
+- No Git evidence or a clean working tree produces `NO_CHANGES`.
+- Changed files without verification produce `MISSING_EVIDENCE`.
+- Any non-passing verification produces `FAILED_VERIFICATION`.
+- Changed files plus a passing verification produce `READY_FOR_HUMAN_REVIEW`.
+- Readiness remains a review-evidence summary and is not described as correctness proof.
+
+#### HTTP API
+
+Implemented these versioned routes:
+
+- `GET /api/v1/health`
+- `POST /api/v1/repositories/validate`
+- `POST /api/v1/changes`
+- `GET /api/v1/changes`
+- `GET /api/v1/changes/{change_id}`
+- `POST /api/v1/changes/{change_id}/refresh`
+- `POST /api/v1/changes/{change_id}/verify`
+- `DELETE /api/v1/changes/{change_id}`
+
+The API has a FastAPI application factory, lifespan-based database initialization, bounded list parameters, response models, loopback-oriented configuration, and CORS restricted to the configured local UI origin.
+
+Application errors use the documented `{ "error": { "code", "message", "details" } }` envelope. Request-validation responses omit submitted values so repository paths and other sensitive input are not echoed. Unexpected exceptions are logged server-side and returned as a generic `INTERNAL_ERROR` without a stack trace or local path.
+
+Until adapter handoff, explicit unavailable adapters return `CAPABILITY_UNAVAILABLE`; they do not provide fake success results. Contract-conforming fakes exist only under CORE tests.
+
+#### Verification performed
+
+- `python -m pytest`: 13 tests passed.
+- `python -m compileall -q backend`: passed.
+- OpenAPI generation: passed and listed all expected routes.
+- Live Uvicorn check on `127.0.0.1:8765`: health and OpenAPI requests returned HTTP 200.
+- Health response was `{"status":"ok","api_version":"1"}` from the running backend.
+- Working tree was clean after the implementation commits.
+
+Tests cover strict contract validation, JSON round trips, all review-state branches, persistence across connections, metadata deletion, canonical repository-path use, complete create-refresh-verify behavior, verification invalidation after refresh, stable missing-Change errors, and sanitized validation failures.
+
+#### Commits
+
+- `5c6c587` - `[INTEGRATION] Bootstrap Python backend`
+- `d4431d8` - `[CORE] Add contracts persistence and API`
+
+At the time of this record, local `master` was two commits ahead of `origin/master`; the commits had not been pushed by `[SD]`.
+
+#### Handoff and remaining work
+
+Person 2 must implement `GitInspectionPort` without editing shared contracts. Person 3 must implement `VerificationPort` without editing shared contracts. Adapter domain failures should use or extend `AppError` so the HTTP layer can preserve stable error codes rather than converting expected failures into `INTERNAL_ERROR`.
+
+Person 1's concrete adapter wiring remains pending the two formal handoffs. Real Git inspection, real verification execution, integration fixtures, end-to-end tests, and UI integration are not claimed as complete by this record.

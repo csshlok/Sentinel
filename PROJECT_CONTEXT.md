@@ -100,3 +100,94 @@ The coding agent does not run inside or through this prototype. It modifies the 
 The project is demo-ready when a user can create a Change for a sample repository, modify that repository outside the app, refresh and inspect its Git diff, run one verification command, and view a clear review summary. No demo path or UI text may imply event journaling, process supervision, filesystem tracking, tool trust, or recovery.
 
 The final demo must use real backend responses and a real Git repository. Mock data, hardcoded health/readiness labels, and placeholder success values are allowed during isolated UI development only and must be removed before acceptance.
+
+## Current implementation status
+
+### `[SD]` - 2026-09-18 22:22:49 -04:00 - Person 1
+
+#### Completed scope
+
+`[SD]` completed the initial `[INTEGRATION]` bootstrap and the Person 1 `[CORE]` implementation. The completed paths are `pyproject.toml`, `.gitignore`, `backend/app/main.py`, `backend/app/contracts/`, `backend/app/core/`, and `backend/tests/core/`. Work did not overlap the `[GIT]`, `[VERIFY]`, `[QA]`, or `[UI]` ownership areas.
+
+The backend now has:
+
+- A Python 3.12+ FastAPI project with Pydantic v2, SQLite, Uvicorn, pytest, and HTTPX.
+- Strict shared models for Change, repository validation, Git summaries, changed paths, verification requests/results, review states, health, and errors.
+- Frozen `GitInspectionPort` and `VerificationPort` interfaces for parallel implementation.
+- An idempotent SQLite schema and parameterized persistence layer.
+- Durable Change creation, retrieval, newest-first listing, update, and metadata deletion.
+- Storage of only the latest Git summary and latest verification result, not an event journal.
+- Pure deterministic review-state calculation.
+- A FastAPI application factory and versioned API routes.
+- Restricted CORS, bounded pagination, safe validation responses, and stable error envelopes.
+- Explicit unavailable adapters until real Git and verification modules are handed off.
+- CORE-only fakes used in tests, never as final application success data.
+
+#### API delivered
+
+- `GET /api/v1/health`
+- `POST /api/v1/repositories/validate`
+- `POST /api/v1/changes`
+- `GET /api/v1/changes`
+- `GET /api/v1/changes/{change_id}`
+- `POST /api/v1/changes/{change_id}/refresh`
+- `POST /api/v1/changes/{change_id}/verify`
+- `DELETE /api/v1/changes/{change_id}`
+
+#### Review-state behavior
+
+1. Missing Git evidence or a clean Git summary returns `NO_CHANGES`.
+2. Working-tree changes without verification return `MISSING_EVIDENCE`.
+3. Non-passing verification returns `FAILED_VERIFICATION`.
+4. Working-tree changes with passing verification return `READY_FOR_HUMAN_REVIEW`.
+
+A Git refresh clears the stored verification result. This prevents an earlier passing command from being treated as evidence for newly refreshed repository state.
+
+#### Data and safety behavior
+
+- Repository canonicalization is delegated to the Git adapter before a Change is stored.
+- Persistence uses parameterized SQLite queries.
+- Database initialization is safe to repeat.
+- Change data survives separate database connections and process restarts once the same database path is reused.
+- Metadata deletion never deletes repository files.
+- Git patch requests are configured for a one-megabyte limit.
+- Verification output is configured for a 256 KiB limit.
+- The API accepts verification executable and arguments separately; the real runner must not use a shell.
+- Validation errors do not echo submitted repository paths.
+- Unexpected errors do not expose local paths or stack traces through HTTP.
+- Missing concrete adapters return `CAPABILITY_UNAVAILABLE`, not a fabricated successful result.
+
+#### Validation results
+
+- 13 CORE tests passed with `python -m pytest`.
+- Backend compilation passed with `python -m compileall -q backend`.
+- Generated OpenAPI included all expected routes.
+- A live Uvicorn server bound to `127.0.0.1:8765` returned HTTP 200 for health and OpenAPI.
+- The live health payload was `{"status":"ok","api_version":"1"}`.
+
+Covered behavior includes contract strictness, serialization, review-state precedence, persistence, deletion, Change creation, canonical paths, refresh, verification, stale-verification invalidation, list responses, missing-Change errors, and sanitized validation failures.
+
+#### Commits and repository state
+
+- `5c6c587` - `[INTEGRATION] Bootstrap Python backend`
+- `d4431d8` - `[CORE] Add contracts persistence and API`
+- Local `master` was two commits ahead of `origin/master` at the time of this record.
+- `[SD]` did not push the commits.
+
+#### Parallel handoff
+
+Person 2 consumes `backend.app.contracts.ports.GitInspectionPort` and the Git-related models from `backend.app.contracts.models`. Person 3 consumes `backend.app.contracts.ports.VerificationPort` and the verification models. Neither owner should edit the frozen contracts without a contract-change request.
+
+Expected adapter failures must use or extend `backend.app.core.errors.AppError` so expected Git and verification errors retain stable API codes.
+
+#### Still pending
+
+- Person 2's real Git adapter and tests.
+- Person 3's real verification runner and tests.
+- Person 1's final concrete-adapter wiring after both handoffs.
+- QA integration fixtures and real end-to-end testing.
+- UI integration with the real API.
+- Final removal of any UI mock data.
+- Push or merge of the two local implementation commits.
+
+The current backend is a tested CORE implementation with fake ports, not yet the complete integrated backend.
