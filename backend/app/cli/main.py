@@ -138,6 +138,35 @@ def change_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = Json
     _run(lambda: ApiClient(api_url).get_change(change_id), as_json=json_, no_color=no_color)
 
 
+@change_app.command("contract-update")
+def change_contract_update(
+    change_id: UUID,
+    expected_revision: int,
+    allowed_path: list[str] = typer.Option(["**"], "--allowed-path"),
+    forbidden_path: list[str] = typer.Option([], "--forbidden-path"),
+    required_check: list[str] = typer.Option([], "--required-check"),
+    authority_scope: list[str] = typer.Option([], "--authority-scope"),
+    max_risk: str = "MEDIUM",
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Update a Change Contract (allowed/forbidden paths, authority ceiling, max risk)."""
+    _run(
+        lambda: ApiClient(api_url).update_change_contract(
+            change_id,
+            expected_revision=expected_revision,
+            allowed_paths=allowed_path,
+            forbidden_paths=forbidden_path,
+            required_checks=required_check,
+            authority_ceiling=authority_scope,
+            max_risk=max_risk,
+        ),
+        as_json=json_,
+        no_color=no_color,
+    )
+
+
 @actor_app.command("create")
 def actor_create(
     kind: str, display_name: str, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption

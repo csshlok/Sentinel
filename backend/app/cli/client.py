@@ -127,6 +127,36 @@ class ApiClient:
     def get_change(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}")
 
+    def update_change_contract(
+        self,
+        change_id: UUID,
+        *,
+        expected_revision: int,
+        allowed_paths: list[str] | None = None,
+        forbidden_paths: list[str] | None = None,
+        expected_outcomes: list[str] | None = None,
+        required_checks: list[str] | None = None,
+        authority_ceiling: list[str] | None = None,
+        allowed_provider_operations: list[str] | None = None,
+        max_risk: str = "MEDIUM",
+        recovery_allowed: bool = True,
+    ) -> Any:
+        contract: dict[str, Any] = {
+            "allowed_paths": allowed_paths if allowed_paths is not None else ["**"],
+            "forbidden_paths": forbidden_paths or [],
+            "expected_outcomes": expected_outcomes or [],
+            "required_checks": required_checks or [],
+            "authority_ceiling": authority_ceiling or [],
+            "allowed_provider_operations": allowed_provider_operations or [],
+            "max_risk": max_risk,
+            "recovery_allowed": recovery_allowed,
+        }
+        return self._request(
+            "PUT",
+            f"/api/v1/changes/{change_id}/contract",
+            json_body={"contract": contract, "expected_revision": expected_revision},
+        )
+
     # -- identity --
     def create_actor(self, kind: str, display_name: str) -> Any:
         return self._request(
