@@ -11,6 +11,7 @@ from backend.app.contracts.models import (
     AgentRun,
     AssurancePlan,
     AssuranceRun,
+    ChainVerificationResult,
     ChangePassport,
     ChangeView,
     CredentialGrant,
@@ -26,6 +27,7 @@ from backend.app.contracts.models import (
     ProviderOperation,
     ProviderOperationRequest,
     RecoveryPlan,
+    ReplayTimeline,
     RepositoryInfo,
     VerificationRequest,
     VerificationResult,
@@ -205,3 +207,12 @@ class RecoveryPort(Protocol):
 class PassportPort(Protocol):
     def build(self, change: ChangeView) -> ChangePassport:
         """Build a deterministic Passport from retained evidence."""
+
+
+@runtime_checkable
+class ReplayPort(Protocol):
+    def reconstruct(self, change_id: UUID) -> ReplayTimeline:
+        """Reconstruct and hash-verify a Change's causal timeline. No re-execution."""
+
+    def verify_chain(self, change_id: UUID) -> ChainVerificationResult:
+        """Recompute and verify the per-Change hash chain, without the full timeline."""

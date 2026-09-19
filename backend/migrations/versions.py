@@ -251,9 +251,164 @@ def migration_002_change_runtime_core(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def migration_003_event_effect_journal(connection: sqlite3.Connection) -> None:
+    """Append-only, hash-chained Event/Effect Journal.
+
+    See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A. Application code
+    never issues UPDATE/DELETE against these tables; the triggers below
+    enforce that as a real, testable constraint (defense in depth), not a
+    comment.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS journal_events (
+            id TEXT PRIMARY KEY,
+            change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            actor_id TEXT NULL,
+            subject_type TEXT NULL,
+            subject_id TEXT NULL,
+            payload_json TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            prev_event_hash TEXT NULL,
+            event_hash TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            UNIQUE (change_id, seq)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_journal_events_change "
+        "ON journal_events(change_id, seq)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_journal_events_type "
+        "ON journal_events(change_id, event_type)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS journal_effects (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES journal_events(id) ON DELETE CASCADE,
+            change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+            resource_type TEXT NOT NULL,
+            resource_id TEXT NOT NULL,
+            before_digest TEXT NULL,
+            produced_digest TEXT NULL,
+            restoration_class TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_journal_effects_change "
+        "ON journal_effects(change_id, resource_type)"
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS journal_events_immutable_update
+        BEFORE UPDATE ON journal_events
+        BEGIN SELECT RAISE(ABORT, 'journal_events is append-only'); END
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS journal_events_immutable_delete
+        BEFORE DELETE ON journal_events
+        BEGIN SELECT RAISE(ABORT, 'journal_events is append-only'); END
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS journal_effects_immutable_update
+        BEFORE UPDATE ON journal_effects
+        BEGIN SELECT RAISE(ABORT, 'journal_effects is append-only'); END
+        """
+    )
+    connection.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS journal_effects_immutable_delete
+        BEFORE DELETE ON journal_effects
+        BEGIN SELECT RAISE(ABORT, 'journal_effects is append-only'); END
+        """
+    )
+
+
+def migration_004_tool_registry(connection: sqlite3.Connection) -> None:
+    """Tool Registry + supply-chain trust tables. See plan Part B.
+
+    Applied after migration 3: `tool.manifest.registered` / `tool.trust.decided`
+    / `tool.trust.invalidated` are journal event types, so `journal_events`
+    must exist first.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_manifests (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            publisher TEXT NULL,
+            source TEXT NOT NULL,
+            artifact_digest TEXT NOT NULL,
+            signature_state TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            filesystem_scope_json TEXT NOT NULL,
+            network_scope_json TEXT NOT NULL,
+            credential_requirements_json TEXT NOT NULL,
+            trust_state TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            UNIQUE (name, version, artifact_digest)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_trust_decisions (
+            id TEXT PRIMARY KEY,
+            tool_id TEXT NOT NULL REFERENCES tool_manifests(id) ON DELETE CASCADE,
+            change_id TEXT NULL REFERENCES changes(id) ON DELETE CASCADE,
+            decided_by_actor_id TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            reason TEXT NULL,
+            snapshot_json TEXT NOT NULL,
+            decided_at TEXT NOT NULL,
+            invalidated_at TEXT NULL,
+            invalidation_reason TEXT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_trust_decisions_tool "
+        "ON tool_trust_decisions(tool_id, decided_at)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tool_observations (
+            id TEXT PRIMARY KEY,
+            tool_id TEXT NOT NULL REFERENCES tool_manifests(id) ON DELETE CASCADE,
+            change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+            agent_run_id TEXT NULL,
+            observed_at TEXT NOT NULL,
+            capabilities_observed_json TEXT NOT NULL,
+            context TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_observations_change "
+        "ON tool_observations(change_id, observed_at)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
+    Migration(3, "event_effect_journal", migration_003_event_effect_journal),
+    Migration(4, "tool_registry", migration_004_tool_registry),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

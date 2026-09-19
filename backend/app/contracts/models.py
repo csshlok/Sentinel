@@ -635,6 +635,127 @@ class ChangePassport(ContractModel):
     canonical_digest: Digest
 
 
+class RestorationClass(StrEnum):
+    EXACT = "exact"
+    CONDITIONAL = "conditional"
+    COMPENSATING = "compensating"
+    STAGEABLE = "stageable"
+    NONE = "none"
+    UNKNOWN = "unknown"
+
+
+class JournalEventType(StrEnum):
+    """Closed, namespaced set of mutations this backend can honestly journal.
+
+    Every member corresponds to a mutation of an entity this backend already
+    models (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no
+    `filesystem.write` or `process.spawn` member: the filesystem tracker and
+    process supervisor stay cut, so those effects are never claimed here.
+    """
+
+    CHANGE_CREATED = "change.created"
+    CHANGE_CONTRACT_UPDATED = "change.contract_updated"
+    CHANGE_TRANSITIONED = "change.transitioned"
+    CHANGE_GIT_SUMMARY_REFRESHED = "change.git_summary_refreshed"
+    CHANGE_LEGACY_VERIFICATION_RUN = "change.legacy_verification_run"
+    CHANGE_DELETED = "change.deleted"
+    DELEGATION_ISSUED = "delegation.issued"
+    DELEGATION_REVOKED = "delegation.revoked"
+    CREDENTIAL_GRANT_ISSUED = "credential.grant.issued"
+    CREDENTIAL_GRANT_REVOKED = "credential.grant.revoked"
+    CREDENTIAL_SECRET_RESOLVED = "credential.secret.resolved"
+    GIT_CHECKPOINT_CAPTURED = "git.checkpoint.captured"
+    AGENT_LAUNCHED = "agent.launched"
+    AGENT_ATTACHED = "agent.attached"
+    AGENT_STOP_REQUESTED = "agent.stop_requested"
+    AGENT_COMPLETED = "agent.completed"
+    ENVIRONMENT_PASSPORT_CAPTURED = "environment.passport.captured"
+    DEPENDENCY_REPORT_CAPTURED = "dependency.report.captured"
+    ASSURANCE_PLAN_CREATED = "assurance.plan.created"
+    ASSURANCE_CHECK_COMPLETED = "assurance.check.completed"
+    PROVIDER_PULL_REQUEST_CREATED = "provider.pull_request.created"
+    PROVIDER_PULL_REQUEST_REFRESHED = "provider.pull_request.refreshed"
+    PROVIDER_CI_REFRESHED = "provider.ci_refreshed"
+    OUTCOME_RECORDED = "outcome.recorded"
+    RECOVERY_PLAN_CREATED = "recovery.plan.created"
+    RECOVERY_ACTION_COMPLETED = "recovery.action.completed"
+    RECOVERY_PLAN_COMPLETED = "recovery.plan.completed"
+    PASSPORT_BUILT = "passport.built"
+    POLICY_DECISION_DENIED = "policy.decision.denied"
+    TOOL_MANIFEST_REGISTERED = "tool.manifest.registered"
+    TOOL_TRUST_DECIDED = "tool.trust.decided"
+    TOOL_TRUST_INVALIDATED = "tool.trust.invalidated"
+
+
+class JournalEvent(ContractModel):
+    """One immutable, hash-chained row in a Change's causal timeline.
+
+    The chain is scoped per Change (`seq` is monotonic within `change_id`,
+    starting at 1): see A.3/A.7 of the plan for why, and for the explicit
+    limitation that this proves within-Change tamper evidence only, not
+    cross-Change tamper evidence.
+    """
+
+    id: UUID
+    change_id: UUID
+    seq: int = Field(ge=1)
+    event_type: JournalEventType
+    actor_id: UUID | None = None
+    subject_type: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)] | None = None
+    subject_id: UUID | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: AwareDatetime
+    prev_event_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = None
+    event_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    schema_version: int = Field(default=1, ge=1)
+
+
+class JournalEffect(ContractModel):
+    """A structured before/produced digest transition attached to one event.
+
+    Narrower than the PDF's generic filesystem/process effect model: only
+    covers resources that already carry a comparable digest today (see A.2).
+    """
+
+    id: UUID
+    event_id: UUID
+    change_id: UUID
+    resource_type: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+    resource_id: UUID
+    before_digest: Digest | None = None
+    produced_digest: Digest | None = None
+    restoration_class: RestorationClass
+
+
+class JournalEventListResponse(ContractModel):
+    items: list[JournalEvent] = Field(default_factory=list, max_length=100000)
+    count: int = Field(ge=0)
+
+
+class ReplayTimeline(ContractModel):
+    """Deterministic reconstruction of a Change's causal timeline.
+
+    Trace-only: no re-execution of any kind. See A.7 for the full list of
+    explicit non-goals, echoed in `limitations` on every response.
+    """
+
+    change_id: UUID
+    events: list[JournalEvent] = Field(default_factory=list, max_length=200000)
+    effects: list[JournalEffect] = Field(default_factory=list, max_length=200000)
+    chain_verified: bool
+    first_break_seq: int | None = None
+    limitations: list[str] = Field(default_factory=list, max_length=32)
+    generated_at: AwareDatetime
+
+
+class ChainVerificationResult(ContractModel):
+    change_id: UUID
+    verified: bool
+    checked_events: int = Field(ge=0)
+    first_break_seq: int | None = None
+    reason: str | None = Field(default=None, max_length=1000)
+
+
 class ActorCreateRequest(ContractModel):
     kind: ActorKind
     display_name: TrimmedTitle
