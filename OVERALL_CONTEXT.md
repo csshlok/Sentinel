@@ -266,3 +266,39 @@ At the time of this record, local `master` was two commits ahead of `origin/mast
 Person 2 must implement `GitInspectionPort` without editing shared contracts. Person 3 must implement `VerificationPort` without editing shared contracts. Adapter domain failures should use or extend `AppError` so the HTTP layer can preserve stable error codes rather than converting expected failures into `INTERNAL_ERROR`.
 
 Person 1's concrete adapter wiring remains pending the two formal handoffs. Real Git inspection, real verification execution, integration fixtures, end-to-end tests, and UI integration are not claimed as complete by this record.
+
+### `[AC]` - 2026-09-18 22:40:41 -04:00 - Person 3 VERIFY implementation
+
+#### Assignment and ownership
+
+`[AC]` accepted the Person 3 assignment covering the `[VERIFY]` verification module described in `BACKEND_IMPLEMENTATION_PLAN.md` (steps V1-V3). Work was limited to `backend/app/verification/` and `backend/tests/verification/`. No files owned by `[CORE]`, `[GIT]`, `[QA]`, or `[UI]` were created or edited, and the frozen contracts were consumed, not modified.
+
+The required context was read before implementation: `OVERALL_CONTEXT.md`, `PROJECT_CONTEXT.md`, `BACKEND_IMPLEMENTATION_PLAN.md`, and `AGENT_COORDINATION.md`. Because no bootstrap or frozen contracts existed at the start of this work, implementation was deliberately held until Person 1's `[INTEGRATION]`/`[CORE]` commits were pulled, per the plan's Gate 0/Gate 1 sequencing.
+
+#### Command validation (V1)
+
+- Added an executable allowlist matching the plan's demo list (`python`, `python3`, `pytest`, `uv`, `node`, `npm`, `npm.cmd`, `pnpm`, `pnpm.cmd`, `yarn`, `yarn.cmd`, `cargo`, `go`, `dotnet`).
+- Rejected any executable containing a path separator, so only bare allowlisted names are accepted.
+- Resolved the executable with `shutil.which` and distinguished "not allowed" from "not found" using two separate stable error codes.
+- Left argument-count, argument-length, and timeout-range enforcement to the already-frozen `VerificationRequest` contract rather than re-implementing bounds the contract already guarantees.
+
+#### One-shot execution and bounds (V2-V3)
+
+- Implemented `SubprocessVerificationRunner`, the concrete `VerificationPort`, using `subprocess.run` with an argument list, `shell=False`, and `cwd` set to the canonical repository root.
+- Captured stdout and stderr separately, recorded monotonic duration and UTC start/completion timestamps, and classified exit code 0 as `PASSED` and any other exit code as `FAILED`.
+- Enforced the requested timeout on the direct child process only; a `subprocess.TimeoutExpired` produces a `TIMED_OUT` result with a null exit code rather than an unhandled exception. Descendant-process supervision and orphan cleanup are explicitly out of scope, consistent with this document's recovery/environment non-goals.
+- Bounded stdout and stderr independently to the configured output limit and set a combined `output_truncated` flag when either stream was cut.
+
+#### Verification performed
+
+- `python -m pytest backend/tests/verification`: 11 tests passed, covering allowlist rejection, path-separator rejection, missing-executable resolution, pass/fail/timeout results, working-directory propagation, and output truncation.
+- Full backend suite after pulling Person 2's Git adapter commit: 29 tests passed (13 CORE + 5 GIT + 11 VERIFY), no regressions in other owners' tests.
+
+#### Commits
+
+- Not yet committed at the time of this record; commit and push both require this developer's explicit approval before they happen.
+- Local `master` was fast-forwarded to `d4ed137` (`[KB]` Person 2 Git inspection) immediately before this work was recorded.
+
+#### Handoff and remaining work
+
+Person 1 can wire the concrete adapter with `backend.app.verification.runner.SubprocessVerificationRunner()` (no constructor arguments) into `create_app(verification=...)` once ready for Gate 3 concrete wiring; `backend/app/main.py` itself was intentionally left unedited by this record. After that handoff is acknowledged, Person 3 switches to `[QA]`: integration fixtures, API integration tests, and the demo smoke test are not yet started.

@@ -191,3 +191,43 @@ Expected adapter failures must use or extend `backend.app.core.errors.AppError` 
 - Push or merge of the two local implementation commits.
 
 The current backend is a tested CORE implementation with fake ports, not yet the complete integrated backend.
+
+### `[AC]` - 2026-09-18 22:40:41 -04:00 - Person 3
+
+#### Completed scope
+
+`[AC]` completed the Person 3 `[VERIFY]` verification module (plan steps V1-V3). The completed paths are `backend/app/verification/` and `backend/tests/verification/`. Work did not overlap `[CORE]`, `[GIT]`, `[QA]`, or `[UI]` ownership areas; `backend/app/main.py` was left untouched because final concrete-adapter wiring is Person 1's Gate 3 responsibility, not Person 3's.
+
+The verification module now has:
+
+- An executable allowlist (`python`, `python3`, `pytest`, `uv`, `node`, `npm`, `npm.cmd`, `pnpm`, `pnpm.cmd`, `yarn`, `yarn.cmd`, `cargo`, `go`, `dotnet`) with rejection of path-separator-qualified executables.
+- A concrete `VerificationPort` implementation, `SubprocessVerificationRunner`, that resolves the executable, then runs it with `subprocess.run`, `shell=False`, and `cwd` set to the canonical repository root.
+- Pass/fail classification from the child exit code, and a `TIMED_OUT` result with a null exit code when the requested timeout elapses.
+- Stdout/stderr bounded to the configured output limit with a combined `output_truncated` flag.
+- Two distinct stable error codes, `VERIFICATION_EXECUTABLE_NOT_ALLOWED` and `VERIFICATION_EXECUTABLE_NOT_FOUND`, raised through `AppError` before any subprocess starts.
+
+Argument count/length and timeout-range bounds were already enforced by the frozen `VerificationRequest` contract, so this module only validates and resolves the executable.
+
+#### Validation results
+
+- 11 new verification tests passed with `python -m pytest`.
+- Full backend suite passed after pulling Person 2's Git adapter: 29 tests (13 CORE + 5 GIT + 11 VERIFY), no regressions.
+
+#### Known limitations
+
+- Only the direct child process is supervised. Descendant processes are not tracked or terminated on timeout, matching the project's documented non-goal around process-tree control.
+
+#### Commits and repository state
+
+- Not yet committed; pending explicit approval per this developer's workflow rules.
+- Local `master` was fast-forwarded to `d4ed137` (`[KB]` Person 2 Git inspection) before this record was written.
+
+#### Handoff
+
+Person 1 can wire `backend.app.verification.runner.SubprocessVerificationRunner()` into `create_app(verification=...)` at Gate 3; the class takes no constructor arguments and implements `VerificationPort.run(repository_path, request, output_limit_bytes)`.
+
+#### Still pending
+
+- Person 1's final concrete-adapter wiring (Git and verification) into `main.py`.
+- Person 3's `[QA]` phase: integration fixtures, API integration tests, and the demo smoke test.
+- UI integration with the real API.
