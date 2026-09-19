@@ -8,6 +8,9 @@ restart safety. Only the credential store is in-memory.
 
 from __future__ import annotations
 
+import threading
+import time
+
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import Settings
@@ -315,3 +318,98 @@ def test_stale_evidence_blocks_local_verification_transition(tmp_path):
         "target_state": "LOCALLY_VERIFIED", "expected_revision": active["revision"]})
     assert blocked.status_code == 409
     assert "assurance_fresh" in blocked.text or "required_assurance_passed" in blocked.text
+
+
+def test_pause_and_resume_a_running_agent_over_the_api(tmp_path):
+    """Part A over the real HTTP API: pause a real running top-level agent
+    process, prove its output stops growing while suspended, resume it, and
+    prove it completes -- then prove pausing a terminal run is rejected."""
+
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, agent, _ = setup_change(client, repo, ["agent.launch", "agent.pause", "agent.resume"])
+    base = f"/api/v1/changes/{change['id']}"
+    launch_body = {
+        "actor_id": agent,
+        "launch": {
+            "adapter": "generic", "executable": "python",
+            "args": ["-c",
+                     "import sys, time\n"
+                     "for i in range(8):\n"
+                     "    print(i)\n"
+                     "    sys.stdout.flush()\n"
+                     "    time.sleep(0.25)\n"],
+            "timeout_seconds": 30,
+        },
+        "output_limit_bytes": 10_000,
+    }
+    holder: dict[str, object] = {}
+
+    def go() -> None:
+        holder["response"] = client.post(f"{base}/agents/launch", json=launch_body)
+
+    thread = threading.Thread(target=go)
+    thread.start()
+    run_id = None
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and run_id is None:
+        runs = client.get(f"{base}/agents").json()["items"]
+        if runs:
+            run_id = runs[0]["id"]
+        else:
+            time.sleep(0.05)
+    assert run_id is not None, "the run never appeared in the store"
+    time.sleep(0.5)   # let it actually start producing before pausing
+
+    paused = client.post(f"{base}/agents/{run_id}/pause", json={"actor_id": agent})
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == "PAUSED"
+    assert paused.json()["paused_at"] is not None
+    stdout_at_pause = paused.json()["stdout"]
+
+    time.sleep(1.0)
+    still = client.get(f"{base}/agents").json()["items"][0]
+    assert still["status"] == "PAUSED"
+    assert still["stdout"] == stdout_at_pause, "no output should grow while the process is suspended"
+
+    resumed = client.post(f"{base}/agents/{run_id}/resume", json={"actor_id": agent})
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "RUNNING"
+    assert resumed.json()["resumed_at"] is not None
+
+    thread.join(20)
+    final = holder["response"].json()
+    assert final["status"] == "PASSED" and final["exit_code"] == 0
+
+    # Pausing an already-terminal run is rejected, not silently accepted.
+    terminal_pause = client.post(f"{base}/agents/{run_id}/pause", json={"actor_id": agent})
+    assert terminal_pause.status_code == 409
+    assert terminal_pause.json()["error"]["code"] == "AGENT_RUN_NOT_PAUSABLE"
+
+
+def test_pause_and_resume_are_default_denied_without_their_scopes(tmp_path):
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, agent, _ = setup_change(client, repo, ["agent.attach"])
+    base = f"/api/v1/changes/{change['id']}"
+    attached = client.post(f"{base}/agents/attach", json={
+        "actor_id": agent, "attach": {"adapter": "claude", "external_run_id": "ext-pause"}})
+    run_id = attached.json()["id"]
+    assert client.post(f"{base}/agents/{run_id}/pause", json={"actor_id": agent}).status_code == 403
+    assert client.post(f"{base}/agents/{run_id}/resume", json={"actor_id": agent}).status_code == 403
+
+
+def test_pause_and_resume_reject_an_attached_run(tmp_path):
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, agent, _ = setup_change(client, repo, ["agent.attach", "agent.pause", "agent.resume"])
+    base = f"/api/v1/changes/{change['id']}"
+    attached = client.post(f"{base}/agents/attach", json={
+        "actor_id": agent, "attach": {"adapter": "claude", "external_run_id": "ext-pause-2"}})
+    run_id = attached.json()["id"]
+    pause_response = client.post(f"{base}/agents/{run_id}/pause", json={"actor_id": agent})
+    assert pause_response.status_code == 409
+    assert pause_response.json()["error"]["code"] == "AGENT_RUN_NOT_PAUSABLE"
+    resume_response = client.post(f"{base}/agents/{run_id}/resume", json={"actor_id": agent})
+    assert resume_response.status_code == 409
+    assert resume_response.json()["error"]["code"] == "AGENT_RUN_NOT_RESUMABLE"

@@ -404,6 +404,16 @@ class ApiClient:
             "POST", f"/api/v1/changes/{change_id}/agents/{run_id}/stop",
             json_body={"actor_id": str(actor_id)}, timeout_seconds=30)
 
+    def pause_agent(self, change_id: UUID, run_id: UUID, *, actor_id: UUID) -> Any:
+        return self._request(
+            "POST", f"/api/v1/changes/{change_id}/agents/{run_id}/pause",
+            json_body={"actor_id": str(actor_id)}, timeout_seconds=30)
+
+    def resume_agent(self, change_id: UUID, run_id: UUID, *, actor_id: UUID) -> Any:
+        return self._request(
+            "POST", f"/api/v1/changes/{change_id}/agents/{run_id}/resume",
+            json_body={"actor_id": str(actor_id)}, timeout_seconds=30)
+
     def plan_assurance(self, change_id: UUID, *, idempotency_key: str | None = None) -> Any:
         return self._request("POST", f"/api/v1/changes/{change_id}/assurance/plan",
                              idempotency_key=idempotency_key, timeout_seconds=120)

@@ -93,6 +93,94 @@ def test_cancel_running_child(tmp_path):
     assert launcher.stop(run_id).status is AgentRunStatus.CANCELLED
 
 
+def test_pause_and_resume_a_real_running_agent(tmp_path):
+    launcher = AgentLauncher()
+    holder = {}
+
+    def go():
+        holder["run"] = launcher.launch(
+            CHANGE, str(tmp_path),
+            request("import sys, time\n"
+                    "for i in range(6):\n"
+                    "    print(i)\n"
+                    "    sys.stdout.flush()\n"
+                    "    time.sleep(0.2)\n", timeout_seconds=30),
+            10_000,
+        )
+
+    thread = threading.Thread(target=go)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not launcher._runs:
+        time.sleep(0.02)
+    run_id = next(iter(launcher._runs))
+    # Let it actually start producing before pausing.
+    time.sleep(0.4)
+    paused = launcher.pause(run_id)
+    assert paused.status is AgentRunStatus.PAUSED and paused.paused_at is not None
+    stdout_at_pause = launcher.get(run_id).stdout
+    time.sleep(1.0)
+    assert launcher.get(run_id).stdout == stdout_at_pause, (
+        "no new output should be captured while the process is suspended")
+    resumed = launcher.resume(run_id)
+    assert resumed.status is AgentRunStatus.RUNNING and resumed.resumed_at is not None
+    thread.join(15)
+    final = holder["run"]
+    assert final.status is AgentRunStatus.PASSED and final.exit_code == 0
+    assert launcher.get(run_id).status is AgentRunStatus.PASSED
+
+
+def test_pause_and_resume_reject_non_pausable_runs(tmp_path):
+    launcher = AgentLauncher()
+    with pytest.raises(AppError) as info:
+        launcher.pause(uuid4())
+    assert info.value.code == "AGENT_RUN_NOT_FOUND" and info.value.status_code == 404
+    with pytest.raises(AppError) as info:
+        launcher.resume(uuid4())
+    assert info.value.code == "AGENT_RUN_NOT_FOUND"
+
+    attached = launcher.attach(CHANGE, AgentAttachRequest(adapter="claude", external_run_id="ext-p"))
+    with pytest.raises(AppError) as info:
+        launcher.pause(attached.id)
+    assert info.value.code == "AGENT_RUN_NOT_PAUSABLE"
+    with pytest.raises(AppError) as info:
+        launcher.resume(attached.id)
+    assert info.value.code == "AGENT_RUN_NOT_RESUMABLE"
+
+    finished = launcher.launch(CHANGE, str(tmp_path), request("print(1)"), 10_000)
+    with pytest.raises(AppError) as info:
+        launcher.pause(finished.id)
+    assert info.value.code == "AGENT_RUN_NOT_PAUSABLE"
+    with pytest.raises(AppError) as info:
+        launcher.resume(finished.id)
+    assert info.value.code == "AGENT_RUN_NOT_RESUMABLE"
+
+
+def test_incremental_output_is_persisted_before_completion(tmp_path, monkeypatch):
+    """Part C: on_update must see growing stdout while the run is still in
+    flight, not only the final aggregate once it finishes."""
+
+    from backend.app.execution import launcher as module
+    monkeypatch.setattr(module, "CHUNK_NOTIFY_INTERVAL_SECONDS", 0.05)
+    launcher = AgentLauncher()
+    seen_running_stdout_lengths: list[int] = []
+    launcher.on_update = lambda run: seen_running_stdout_lengths.append(
+        len(run.stdout)) if run.status is AgentRunStatus.RUNNING else None
+    run = launcher.launch(
+        CHANGE, str(tmp_path),
+        request("import sys, time\n"
+                "for i in range(6):\n"
+                "    print(i)\n"
+                "    sys.stdout.flush()\n"
+                "    time.sleep(0.2)\n"),
+        10_000,
+    )
+    assert run.status is AgentRunStatus.PASSED
+    growing = [n for n in seen_running_stdout_lengths if n > 0]
+    assert growing, "at least one in-flight update should have carried partial output"
+    assert len(set(growing)) > 1, "stdout should have grown across more than one in-flight update"
+
+
 def test_stop_unknown_and_attached(tmp_path):
     launcher = AgentLauncher()
     with pytest.raises(AppError) as info:

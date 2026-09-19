@@ -227,6 +227,10 @@ def test_attach_stop_and_assurance_run_bodies(monkeypatch):
     assert json.loads(call["body"])["attach"] == {"adapter": "claude", "external_run_id": "ext-9"}
     _, call = _invoke(monkeypatch, {}, ["agent", "stop", CHANGE, PLAN, ACTOR])
     assert call["url"].endswith(f"/agents/{PLAN}/stop") and json.loads(call["body"]) == {"actor_id": ACTOR}
+    _, call = _invoke(monkeypatch, {}, ["agent", "pause", CHANGE, PLAN, ACTOR])
+    assert call["url"].endswith(f"/agents/{PLAN}/pause") and json.loads(call["body"]) == {"actor_id": ACTOR}
+    _, call = _invoke(monkeypatch, {}, ["agent", "resume", CHANGE, PLAN, ACTOR])
+    assert call["url"].endswith(f"/agents/{PLAN}/resume") and json.loads(call["body"]) == {"actor_id": ACTOR}
     _, call = _invoke(monkeypatch, {}, ["assurance", "run", CHANGE, PLAN, ACTOR, "--output-limit", "500"])
     assert json.loads(call["body"]) == {"actor_id": ACTOR, "output_limit_bytes": 500}
 

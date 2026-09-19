@@ -508,6 +508,26 @@ def agent_stop(
          as_json=json_, no_color=no_color)
 
 
+@agent_app.command("pause")
+def agent_pause(
+    change_id: UUID, run_id: UUID, actor_id: UUID,
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """Suspend the top-level process of a running agent (Windows only; direct child only)."""
+    _run(lambda: ApiClient(api_url).pause_agent(change_id, run_id, actor_id=actor_id),
+         as_json=json_, no_color=no_color)
+
+
+@agent_app.command("resume")
+def agent_resume(
+    change_id: UUID, run_id: UUID, actor_id: UUID,
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """Resume a previously paused agent run's top-level process."""
+    _run(lambda: ApiClient(api_url).resume_agent(change_id, run_id, actor_id=actor_id),
+         as_json=json_, no_color=no_color)
+
+
 @assurance_app.command("plan")
 def assurance_plan(change_id: UUID, idempotency_key: str = IdempotencyKeyOption, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Build an evidence-selected assurance plan from the latest evidence."""

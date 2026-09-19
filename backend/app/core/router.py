@@ -555,6 +555,22 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         return runtime.evidence.stop_agent(change_id, run_id, request.actor_id)
 
     @router.post(
+        "/changes/{change_id}/agents/{run_id}/pause",
+        response_model=AgentRun,
+        tags=["agents"],
+    )
+    def pause_agent(change_id: UUID, run_id: UUID, request: ActorActionRequest) -> AgentRun:
+        return runtime.evidence.pause_agent(change_id, run_id, request.actor_id)
+
+    @router.post(
+        "/changes/{change_id}/agents/{run_id}/resume",
+        response_model=AgentRun,
+        tags=["agents"],
+    )
+    def resume_agent(change_id: UUID, run_id: UUID, request: ActorActionRequest) -> AgentRun:
+        return runtime.evidence.resume_agent(change_id, run_id, request.actor_id)
+
+    @router.post(
         "/changes/{change_id}/assurance/plan",
         response_model=AssurancePlan,
         status_code=status.HTTP_201_CREATED,

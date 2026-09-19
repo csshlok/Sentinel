@@ -42,6 +42,8 @@ _SNAPSHOT = TypeAdapter(EvidenceSnapshot)
 LAUNCH_SCOPE = "agent.launch"
 ATTACH_SCOPE = "agent.attach"
 STOP_SCOPE = "agent.stop"
+PAUSE_SCOPE = "agent.pause"
+RESUME_SCOPE = "agent.resume"
 ASSURANCE_RUN_SCOPE = "assurance.run"
 FORK_SCOPE = "change.fork"
 
@@ -179,6 +181,22 @@ class EvidenceAdminService:
             raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist for this Change.",
                            status_code=404)
         return self.evidence.stop_agent(change_id, run_id)
+
+    def pause_agent(self, change_id: UUID, run_id: UUID, actor_id: UUID) -> AgentRun:
+        change = self.change_service.get(change_id)
+        self._authorize(actor_id, change, PAUSE_SCOPE, {"run_id": str(run_id)})
+        if all(run.id != run_id for run in self.evidence.agent_runs(change_id)):
+            raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist for this Change.",
+                           status_code=404)
+        return self.evidence.pause_agent(change_id, run_id)
+
+    def resume_agent(self, change_id: UUID, run_id: UUID, actor_id: UUID) -> AgentRun:
+        change = self.change_service.get(change_id)
+        self._authorize(actor_id, change, RESUME_SCOPE, {"run_id": str(run_id)})
+        if all(run.id != run_id for run in self.evidence.agent_runs(change_id)):
+            raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist for this Change.",
+                           status_code=404)
+        return self.evidence.resume_agent(change_id, run_id)
 
     def list_agent_runs(self, change_id: UUID) -> list[AgentRun]:
         self.change_service.get(change_id)

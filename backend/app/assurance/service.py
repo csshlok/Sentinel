@@ -325,6 +325,35 @@ class EvidenceService:
         self._store.save_agent_run(run)
         return run
 
+    def pause_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
+        """Suspend a run's top-level process only (Part A); persist the result.
+
+        Unlike ``stop_agent``, this has no restart-tolerant fallback: pausing
+        needs a live in-memory handle onto the process this launcher itself
+        started, which a restarted process does not have. A run unknown to
+        this process (after a restart) fails cleanly with
+        ``AGENT_RUN_NOT_FOUND`` rather than a fabricated partial success.
+        """
+
+        run = self._launcher.pause(run_id)
+        self._store.save_agent_run(run)
+        self._journal_append(
+            change_id, JournalEventType.AGENT_PAUSED,
+            subject_type="agent_run", subject_id=run_id, payload={},
+        )
+        return run
+
+    def resume_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
+        """Resume a previously paused run's top-level process; persist the result."""
+
+        run = self._launcher.resume(run_id)
+        self._store.save_agent_run(run)
+        self._journal_append(
+            change_id, JournalEventType.AGENT_RESUMED,
+            subject_type="agent_run", subject_id=run_id, payload={},
+        )
+        return run
+
     def agent_runs(self, change_id: UUID) -> list[AgentRun]:
         return self._store.list_agent_runs(change_id)
 

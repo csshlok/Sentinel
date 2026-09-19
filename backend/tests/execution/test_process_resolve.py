@@ -60,6 +60,64 @@ def test_cancel_after_completion_is_ignored():
     assert result.returncode in {0, None}
 
 
+def test_on_chunk_sees_output_incrementally_before_completion():
+    """Part C: the same bytes captured in the final result must have been
+    visible to on_chunk mid-run, not only after the process finished."""
+
+    chunks: list[tuple[bytes, bytes]] = []
+    result = run(
+        "import sys, time\n"
+        "for i in range(4):\n"
+        "    print(i)\n"
+        "    sys.stdout.flush()\n"
+        "    time.sleep(0.2)\n",
+        timeout=15, on_chunk=lambda out, err: chunks.append((out, err)),
+    )
+    assert result.returncode == 0
+    assert len(chunks) >= 2, "output arriving in separate reads should yield separate on_chunk calls"
+    assert b"".join(out for out, _ in chunks) == result.stdout
+    assert all(err == b"" for _, err in chunks)
+
+
+def test_on_chunk_exception_does_not_break_capture():
+    def boom(_out, _err):
+        raise RuntimeError("observer down")
+
+    result = run("print('still works')", on_chunk=boom)
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"still works"
+
+
+def test_paused_event_stops_reads_and_extends_the_deadline():
+    """While `paused` is set, no new output is read and the deadline does
+    not fire early; the paused duration must not count against timeout."""
+
+    paused = threading.Event()
+
+    def go():
+        holder["result"] = run(
+            "import sys, time\n"
+            "print('start'); sys.stdout.flush()\n"
+            "time.sleep(0.6)\n"
+            "print('end'); sys.stdout.flush()\n",
+            timeout=2, paused=paused,
+        )
+
+    holder: dict[str, object] = {}
+    paused.set()
+    thread = threading.Thread(target=go)
+    thread.start()
+    # Stay paused well past the process's own nominal timeout budget; if
+    # paused time counted against the deadline this would time out.
+    time.sleep(2.5)
+    paused.clear()
+    thread.join(timeout=10)
+    result = holder["result"]
+    assert result.returncode == 0
+    assert result.stdout.replace(b"\r\n", b"\n").strip() == b"start\nend"
+    assert not result.timed_out
+
+
 def test_safe_path_entries_skip_relative_and_repository(tmp_path):
     inside = tmp_path / "bin"
     inside.mkdir()

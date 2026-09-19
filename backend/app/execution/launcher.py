@@ -33,12 +33,18 @@ from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
 from backend.app.execution.resolve import find_executable, resolve_argv, safe_path_entries
+from backend.app.execution.signal_control import resume_process, suspend_process
 
 MAX_OUTPUT_BYTES = 1_048_576
 MAX_TIMEOUT_SECONDS = 86_400
 MAX_RETAINED_RUNS = 512
 STOP_WAIT_SECONDS = 10.0
 REDACTION = "[REDACTED]"
+# Part C: how often an in-flight run's partial stdout/stderr is persisted via
+# on_update while it is still running. A chatty process must not flood the
+# journal/store with an update per byte -- this is a simple monotonic-clock
+# gate, not a new scheduler.
+CHUNK_NOTIFY_INTERVAL_SECONDS = 0.5
 
 DESCENDANT_LIMITATION = (
     "Only the top-level invocation was launched and observed; descendant "
@@ -88,6 +94,7 @@ class _State:
     record: AgentRun
     cancel: threading.Event
     done: threading.Event
+    paused: threading.Event
     attached: bool = False
 
 
@@ -160,7 +167,7 @@ class AgentLauncher:
             status=AgentRunStatus.RUNNING, started_at=started_at,
             limitations=[DESCENDANT_LIMITATION],
         )
-        state = _State(running, threading.Event(), threading.Event())
+        state = _State(running, threading.Event(), threading.Event(), threading.Event())
         with self._lock:
             self._runs[run_id] = state
         self._notify(running)
@@ -178,13 +185,40 @@ class AgentLauncher:
         stdout = stderr = ""
         truncated = False
         pid: int | None = None
+        last_notify = [0.0]
+
+        def on_chunk(stdout_delta: bytes, stderr_delta: bytes) -> None:
+            # Part C: surface partial output while the run is still in
+            # flight, through the same redaction pass the final result
+            # already goes through -- this is not a new redaction path.
+            if not stdout_delta and not stderr_delta:
+                return
+            with self._lock:
+                current = state.record
+                new_stdout = current.stdout
+                new_stderr = current.stderr
+                if stdout_delta:
+                    new_stdout = (new_stdout + self._text(stdout_delta, secrets))[:output_limit_bytes]
+                if stderr_delta:
+                    new_stderr = (new_stderr + self._text(stderr_delta, secrets))[:output_limit_bytes]
+                if new_stdout == current.stdout and new_stderr == current.stderr:
+                    return
+                state.record = current.model_copy(
+                    update={"stdout": new_stdout, "stderr": new_stderr})
+                updated = state.record
+            now = time.monotonic()
+            if now - last_notify[0] >= CHUNK_NOTIFY_INTERVAL_SECONDS:
+                last_notify[0] = now
+                self._notify(updated)
+
         try:
             if resolve_error is not None:
                 raise resolve_error
             result = capture(
                 [*argv, *request.args], cwd=root, env=env,
                 timeout=request.timeout_seconds, limit=output_limit_bytes,
-                max_timeout=MAX_TIMEOUT_SECONDS, cancel=state.cancel, on_start=on_start,
+                max_timeout=MAX_TIMEOUT_SECONDS, cancel=state.cancel, paused=state.paused,
+                on_start=on_start, on_chunk=on_chunk,
             )
         except AppError as exc:
             limitations.append(f"The agent did not start: {exc.message}")
@@ -243,7 +277,7 @@ class AgentLauncher:
                 DESCENDANT_LIMITATION,
             ],
         )
-        state = _State(run, threading.Event(), threading.Event(), attached=True)
+        state = _State(run, threading.Event(), threading.Event(), threading.Event(), attached=True)
         state.done.set()
         with self._lock:
             self._runs[run.id] = state
@@ -268,6 +302,63 @@ class AgentLauncher:
         return self._with_limitation(
             state, "Cancellation was requested but has not completed yet."
         )
+
+    def pause(self, run_id: UUID) -> AgentRun:
+        """Suspend the top-level process only (Windows-first, no descendants).
+
+        Requires the run to be ``RUNNING`` with an observed PID; a run that
+        is attached, already paused, or already terminal is rejected with a
+        stable ``AGENT_RUN_NOT_PAUSABLE`` error rather than silently
+        accepted -- pausing something that cannot be paused is a caller bug.
+        """
+
+        state = self._runnable_state(run_id)
+        if state.attached or state.record.status is not AgentRunStatus.RUNNING:
+            raise AppError("AGENT_RUN_NOT_PAUSABLE",
+                           "Only a running agent run can be paused.", status_code=409)
+        pid = state.record.top_level_pid
+        if pid is None:
+            raise AppError("AGENT_RUN_NOT_PAUSABLE",
+                           "The agent run has no observed process yet.", status_code=409)
+        suspend_process(pid)
+        with self._lock:
+            state.record = state.record.model_copy(
+                update={"status": AgentRunStatus.PAUSED, "paused_at": utc_now()})
+            paused = state.record
+        # capture()'s read loop must not treat a suspended process as timed
+        # out or dead: while set, its deadline check is skipped and the
+        # paused duration is added back once cleared (see _process.capture).
+        state.paused.set()
+        self._notify(paused)
+        return paused
+
+    def resume(self, run_id: UUID) -> AgentRun:
+        """Resume a previously paused top-level process."""
+
+        state = self._runnable_state(run_id)
+        if state.attached or state.record.status is not AgentRunStatus.PAUSED:
+            raise AppError("AGENT_RUN_NOT_RESUMABLE",
+                           "Only a paused agent run can be resumed.", status_code=409)
+        pid = state.record.top_level_pid
+        if pid is None:
+            raise AppError("AGENT_RUN_NOT_RESUMABLE",
+                           "The agent run has no observed process.", status_code=409)
+        resume_process(pid)
+        with self._lock:
+            state.record = state.record.model_copy(
+                update={"status": AgentRunStatus.RUNNING, "resumed_at": utc_now()})
+            resumed = state.record
+        state.paused.clear()
+        self._notify(resumed)
+        return resumed
+
+    def _runnable_state(self, run_id: UUID) -> _State:
+        with self._lock:
+            state = self._runs.get(run_id)
+        if state is None:
+            raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist.",
+                           status_code=404)
+        return state
 
     def adapters(self, repository_path: str | None = None) -> list[dict[str, object]]:
         """Adapter metadata with explicit executable discovery.
