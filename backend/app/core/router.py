@@ -59,6 +59,7 @@ from backend.app.contracts.models import (
     ToolManifest,
     ToolManifestListResponse,
     ToolTrustDecision,
+    ToolDeclareRequest,
     ToolTrustRequest,
     VerificationActionRequest,
 )
@@ -660,5 +661,15 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         service.get(change_id)
         items = runtime.tools.list_for_change(change_id)
         return ToolManifestListResponse(items=items, count=len(items))
+
+    @router.post(
+        "/changes/{change_id}/tools/declare",
+        response_model=ToolManifest,
+        status_code=status.HTTP_201_CREATED,
+        tags=["tools"],
+    )
+    def declare_tool_manifest(change_id: UUID, request: ToolDeclareRequest) -> ToolManifest:
+        service.get(change_id)
+        return runtime.tools.declare_manifest(change_id, request.manifest_path)
 
     return router

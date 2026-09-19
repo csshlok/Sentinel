@@ -429,6 +429,12 @@ class ApiClient:
     def list_tools_for_change(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/tools")
 
+    def declare_tool_manifest(self, change_id: UUID, manifest_path: str) -> Any:
+        return self._request(
+            "POST", f"/api/v1/changes/{change_id}/tools/declare",
+            json_body={"manifest_path": manifest_path},
+        )
+
     def decide_tool_trust(
         self,
         tool_id: UUID,

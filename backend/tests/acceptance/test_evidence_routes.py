@@ -219,6 +219,28 @@ def test_errors_for_missing_changes_evidence_and_plans(tmp_path):
     assert bad.status_code == 422 and bad.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
+def test_declare_tool_manifest_registers_and_lists_for_the_change(tmp_path):
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, _agent, _human = setup_change(client, repo, [])
+    manifest_path = tmp_path / "server.mcp.json"
+    manifest_path.write_text('{"name": "Weather MCP", "version": "1.0.0"}', encoding="utf-8")
+
+    declared = client.post(
+        f"/api/v1/changes/{change['id']}/tools/declare",
+        json={"manifest_path": str(manifest_path)},
+    )
+    assert declared.status_code == 201, declared.text
+    body = declared.json()
+    assert body["name"] == "weather mcp"
+    assert body["version"] == "1.0.0"
+    assert body["source"].startswith("declared_manifest:")
+
+    for_change = client.get(f"/api/v1/changes/{change['id']}/tools").json()
+    assert for_change["count"] == 1
+    assert for_change["items"][0]["id"] == body["id"]
+
+
 def test_stale_evidence_blocks_local_verification_transition(tmp_path):
     repo = make_repo(tmp_path / "repo", FILES)
     client = build(tmp_path)

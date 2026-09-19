@@ -255,6 +255,16 @@ class ToolRegistryPort(Protocol):
     ) -> ToolObservation:
         """Record one observation of a tool being used by a Change."""
 
+    def declare_manifest(self, change_id: UUID, manifest_path: str) -> ToolManifest:
+        """Register (or resolve) a declared tool/MCP manifest for a Change.
+
+        Reading the declared config file is a bounded filesystem read of a
+        static artifact -- not interception of a running process -- so it
+        stays inside the read-only-collector boundary (B.1). Records a
+        "declared_manifest" observation against the Change, same as a
+        launcher executable gets a "launch" observation.
+        """
+
     def decide_trust(
         self,
         tool_id: UUID,

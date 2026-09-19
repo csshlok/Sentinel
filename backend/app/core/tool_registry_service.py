@@ -69,13 +69,20 @@ class ToolRegistryService:
 
     # -- port ---------------------------------------------------------------
 
-    def resolve_or_register(self, executable_path: str, *, source: str) -> ToolManifest:
+    def resolve_or_register(
+        self, executable_path: str, *, source: str,
+        name: str | None = None, version: str | None = None,
+    ) -> ToolManifest:
         digest = self._digest_file(executable_path)
-        name = Path(executable_path).stem.lower() or "tool"
-        version = "unknown"  # a bare executable's semantic version cannot be
-        # derived without executing it, which is out of scope for a
-        # read-only collector; declared manifests may carry a real version
-        # once §B.1's "declared_manifest" registration path is exercised.
+        # A bare launcher executable's semantic version cannot be derived
+        # without executing it, which is out of scope for a read-only
+        # collector, so it falls back to "unknown". A declared manifest can
+        # carry a real name/version parsed from its own declared content
+        # (see declare_manifest/_parse_declared_manifest below); callers
+        # pass those through here rather than duplicating the registration
+        # logic.
+        name = name or Path(executable_path).stem.lower() or "tool"
+        version = version or "unknown"
         now = utc_now()
         with self.database.connection(immediate=True) as connection:
             row = connection.execute(
@@ -216,6 +223,43 @@ class ToolRegistryService:
                     connection=connection,
                 )
         return observation
+
+    def declare_manifest(self, change_id: UUID, manifest_path: str) -> ToolManifest:
+        name, version = self._parse_declared_manifest(manifest_path)
+        manifest = self.resolve_or_register(
+            manifest_path, source=f"declared_manifest:{manifest_path}",
+            name=name, version=version,
+        )
+        self.record_observation(
+            manifest.id, change_id, None, [],
+            ToolObservationContext.DECLARED_MANIFEST.value,
+        )
+        return self.get(manifest.id)
+
+    @staticmethod
+    def _parse_declared_manifest(manifest_path: str) -> tuple[str | None, str | None]:
+        """Best-effort name/version from a declared manifest's own JSON content.
+
+        Read-only and bounded (the same size ceiling _digest_file already
+        enforces catches an oversized file before this ever runs); a
+        manifest that is not valid JSON, or has no usable name/version
+        field, falls back to resolve_or_register's own filename-stem/
+        "unknown" default rather than raising -- an unparsable declared
+        manifest is still a real observation worth recording, not a reason
+        to refuse registration entirely.
+        """
+
+        try:
+            data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            return None, None
+        if not isinstance(data, dict):
+            return None, None
+        name = data.get("name")
+        version = data.get("version")
+        clean_name = name.strip().lower()[:200] if isinstance(name, str) and name.strip() else None
+        clean_version = version.strip()[:100] if isinstance(version, str) and version.strip() else None
+        return clean_name, clean_version
 
     def decide_trust(
         self,

@@ -875,6 +875,10 @@ class ToolTrustRequest(ContractModel):
     change_id: UUID | None = None
 
 
+class ToolDeclareRequest(ContractModel):
+    manifest_path: str = Field(max_length=4096)
+
+
 class ActorCreateRequest(ContractModel):
     kind: ActorKind
     display_name: TrimmedTitle

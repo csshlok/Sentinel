@@ -558,6 +558,21 @@ def tool_for_change(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = 
     _run(lambda: ApiClient(api_url).list_tools_for_change(change_id), as_json=json_, no_color=no_color)
 
 
+@tool_app.command("declare")
+def tool_declare(
+    change_id: UUID,
+    manifest_path: str,
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Register a declared tool/MCP manifest (a config file, not a launcher executable) for a Change."""
+    _run(
+        lambda: ApiClient(api_url).declare_tool_manifest(change_id, manifest_path),
+        as_json=json_, no_color=no_color,
+    )
+
+
 @tool_app.command("trust")
 def tool_trust(
     tool_id: UUID,

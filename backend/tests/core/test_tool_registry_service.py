@@ -138,6 +138,104 @@ def test_record_observation_widens_manifest_capabilities(tmp_path) -> None:
     assert updated.capabilities == ["github.repo.read"]
 
 
+# -- declared manifest registration ---------------------------------------
+
+
+def _manifest_file(tmp_path, name="server.mcp.json", content: str | None = None) -> str:
+    path = tmp_path / name
+    path.write_text(
+        content if content is not None else
+        '{"name": "Weather MCP", "version": "2.1.0"}',
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_declare_manifest_registers_with_parsed_name_and_version(tmp_path) -> None:
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    registry = ToolRegistryService(database)
+
+    manifest = registry.declare_manifest(change_id, _manifest_file(tmp_path))
+
+    assert manifest.name == "weather mcp"
+    assert manifest.version == "2.1.0"
+    assert manifest.source.startswith("declared_manifest:")
+    assert manifest.trust_state is ToolTrustState.OBSERVED
+
+
+def test_declare_manifest_records_a_declared_manifest_observation(tmp_path) -> None:
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    journal = JournalWriter(database)
+    registry = ToolRegistryService(database, journal=journal)
+
+    manifest = registry.declare_manifest(change_id, _manifest_file(tmp_path))
+
+    assert manifest.id in {m.id for m in registry.list_for_change(change_id)}
+    with database.connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM journal_events WHERE change_id = ?", (str(change_id),)
+        ).fetchall()
+    events = [row_to_event(r) for r in rows]
+    registered = [e for e in events if e.event_type is JournalEventType.TOOL_MANIFEST_REGISTERED]
+    assert len(registered) == 1
+    assert registered[0].payload["source"].startswith("declared_manifest:")
+
+
+def test_declare_manifest_falls_back_to_filename_when_unparsable(tmp_path) -> None:
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    registry = ToolRegistryService(database)
+
+    manifest = registry.declare_manifest(
+        change_id, _manifest_file(tmp_path, name="broken.json", content="not json")
+    )
+
+    assert manifest.name == "broken"
+    assert manifest.version == "unknown"
+
+
+def test_declare_manifest_missing_file_raises(tmp_path) -> None:
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    registry = ToolRegistryService(database)
+
+    with pytest.raises(AppError) as excinfo:
+        registry.declare_manifest(change_id, str(tmp_path / "does-not-exist.json"))
+    assert excinfo.value.code == "TOOL_EXECUTABLE_UNREADABLE"
+
+
+def test_declare_manifest_digest_change_is_detected_as_drift(tmp_path) -> None:
+    """A re-declared manifest with edited content is the same tool with a
+
+    new digest -- exactly the drift signal check_drift already computes for
+    launcher executables, now reachable for declared manifests too.
+    """
+
+    database = _database(tmp_path)
+    change_id = uuid4()
+    _make_change(database, change_id)
+    registry = ToolRegistryService(database)
+    path = _manifest_file(tmp_path)
+
+    first = registry.declare_manifest(change_id, path)
+    registry.decide_trust(first.id, uuid4(), "APPROVE", "exact_version", None, change_id)
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write('{"name": "Weather MCP", "version": "2.1.0", "extra": "changed"}')
+    second = registry.declare_manifest(change_id, path)
+    assert second.id == first.id
+    assert second.artifact_digest != first.artifact_digest
+
+    report = registry.check_drift(first.id, change_id=change_id)
+    assert report.drifted is True
+
+
 # -- drift computation ---------------------------------------------------
 
 

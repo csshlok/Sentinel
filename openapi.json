@@ -3585,6 +3585,21 @@
         "title": "RiskLevel",
         "type": "string"
       },
+      "ToolDeclareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest_path": {
+            "maxLength": 4096,
+            "title": "Manifest Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest_path"
+        ],
+        "title": "ToolDeclareRequest",
+        "type": "object"
+      },
       "ToolManifest": {
         "additionalProperties": false,
         "description": "A top-level launched executable or explicitly declared tool/MCP\nmanifest (see EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md B.1's bounded\nscope -- this governs what top-level executable may launch, never what\na running agent's descendant process calls).",
@@ -7057,6 +7072,75 @@
           }
         },
         "summary": "List Tools For Change",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/tools/declare": {
+      "post": {
+        "operationId": "declare_tool_manifest_api_v1_changes__change_id__tools_declare_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolDeclareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolManifest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Declare Tool Manifest",
         "tags": [
           "tools"
         ]
