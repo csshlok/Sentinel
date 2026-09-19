@@ -69,11 +69,22 @@ def analyze_deviations(
     checkpoint: GitCheckpoint,
     dependencies: DependencyReport | None = None,
     environment_drift: EnvironmentDrift | None = None,
+    *,
+    committed_paths: frozenset[str] = frozenset(),
 ) -> list[DeviationFinding]:
     """Compare observed evidence with the Change Contract.
 
     Findings describe differences only. They never attribute a difference to an
     actor, process or command.
+
+    ``committed_paths`` (the caller's baseline-to-current comparison's
+    added/changed/removed paths, when a baseline is available) covers a path
+    that was edited and fully committed before ``checkpoint`` was captured --
+    ``checkpoint.summary.files`` alone only reflects working-tree/index status
+    *at capture time*, so a forbidden-path edit that was already committed by
+    then would otherwise never be checked at all. Merge-conflict detection
+    stays checkpoint-summary-only: a conflict is inherently an uncommitted,
+    in-progress state, so that source is already the right one for it.
     """
 
     contract = change.contract
@@ -83,16 +94,24 @@ def analyze_deviations(
         findings.append(DeviationFinding(
             category=category, severity=severity, subject=subject[:1024], detail=detail))
 
+    checked: set[str] = set()
+
+    def check_path(path: str) -> None:
+        checked.add(path)
+        if matches_any(path, contract.forbidden_paths):
+            add(C.FORBIDDEN_PATH, S.BLOCKING, path, "The path matches a forbidden pattern.")
+        if not matches_any(path, contract.allowed_paths):
+            add(C.OUTSIDE_ALLOWED_PATHS, S.BLOCKING, path,
+                "The path is not covered by any allowed pattern.")
+
     for entry in checkpoint.summary.files:
-        touched = [entry.path] + ([entry.old_path] if entry.old_path else [])
-        for path in touched:
-            if matches_any(path, contract.forbidden_paths):
-                add(C.FORBIDDEN_PATH, S.BLOCKING, path, "The path matches a forbidden pattern.")
-            if not matches_any(path, contract.allowed_paths):
-                add(C.OUTSIDE_ALLOWED_PATHS, S.BLOCKING, path,
-                    "The path is not covered by any allowed pattern.")
+        for path in [entry.path] + ([entry.old_path] if entry.old_path else []):
+            check_path(path)
         if entry.status.value == "CONFLICTED":
             add(C.MERGE_CONFLICT, S.BLOCKING, entry.path, "The path has an unresolved merge conflict.")
+
+    for path in sorted(committed_paths - checked):
+        check_path(path)
 
     if change.risk_level is RiskLevel.UNKNOWN:
         add(C.RISK_NOT_ASSESSED, S.WARNING, "risk", "No risk level has been assessed for this Change.")

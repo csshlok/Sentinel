@@ -45,18 +45,33 @@ class DependencyTracker:
         self._limit = file_limit
 
     def scan(
-        self, change_id: UUID, checkpoint: GitCheckpoint, repository_path: str
+        self, change_id: UUID, checkpoint: GitCheckpoint, repository_path: str,
+        *, baseline: GitCheckpoint | None = None,
     ) -> DependencyReport:
         root = GitRepositoryInspector().validate_repository(repository_path).root
         if root != checkpoint.repository_root:
             raise AppError("CHECKPOINT_REPOSITORY_MISMATCH",
                            "The checkpoint belongs to a different repository.", status_code=409)
+        if baseline is not None and root != baseline.repository_root:
+            raise AppError("CHECKPOINT_REPOSITORY_MISMATCH",
+                           "The baseline checkpoint belongs to a different repository.",
+                           status_code=409)
         if reader.head_sha(root) != checkpoint.head_sha.lower():
             raise AppError("DEPENDENCY_CHECKPOINT_STALE",
                            "The repository HEAD moved after the checkpoint; capture a new one.",
                            status_code=409)
         commit = checkpoint.head_sha.lower()
-        candidates = [p for p in reader.list_paths(root, commit)
+        # Old-side content comes from the baseline when one is given, so a
+        # dependency edit the agent already committed by the time
+        # `checkpoint` was captured is still visible as a change -- reading
+        # old content from `checkpoint`'s own HEAD (the only option without
+        # a baseline) makes any already-committed edit invisible, since it
+        # is already folded into that same commit.
+        old_commit = baseline.head_sha.lower() if baseline is not None else commit
+        candidate_paths = set(reader.list_paths(root, commit))
+        if baseline is not None and old_commit != commit:
+            candidate_paths |= set(reader.list_paths(root, old_commit))
+        candidates = [p for p in sorted(candidate_paths)
                       if parsers.is_supported(p) or parsers.unsupported_ecosystem(p)]
         unsupported: list[str] = []
         if len(candidates) > MAX_FILES:
@@ -67,7 +82,7 @@ class DependencyTracker:
         new_files: dict[str, bytes | None] = {}
         for path in candidates:
             try:
-                old_files[path] = reader.read_committed(root, commit, path, self._limit)
+                old_files[path] = reader.read_committed(root, old_commit, path, self._limit)
                 new_files[path] = reader.read_working(root, path, self._limit)
             except GitCommandError:
                 unsupported.append(f"{self._eco(path)}: {path} (unreadable or oversized)")

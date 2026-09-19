@@ -148,10 +148,31 @@ def test_three_checkpoint_comparison_flow(tmp_path):
     one = tracker.compare(base, mid)
     assert one.added_paths == ["a.txt", "c.txt"] and one.removed_paths == []
     assert not one.head_changed and not one.branch_moved
+
     two = tracker.compare(mid, last)
-    assert two.head_changed and two.removed_paths == ["a.txt", "c.txt"]
+    # mid -> last commits a.txt's edit (its uncommitted status at `mid`
+    # simply stops showing once committed) and c.txt is deleted again before
+    # ever being committed, so the real commit range never touches it.
+    # a.txt genuinely changed content, not disappeared -- reporting it as
+    # "removed" (status-only, pre-fix behavior) rather than "changed" would
+    # be exactly the audit-found bug: a committed edit misclassified because
+    # a working-tree-status snapshot alone cannot distinguish "committed" from
+    # "reverted to clean".
+    assert two.head_changed
+    assert two.removed_paths == ["c.txt"]
+    assert two.changed_paths == ["a.txt"]
+
     three = tracker.compare(base, last)
-    assert three.head_changed and three.added_paths == [] and three.changed_paths == []
+    # base -> last is a real commit range (a.txt "1" -> "3"); c.txt never
+    # existed in any commit (added and deleted purely in uncommitted working
+    # -tree stages), so it correctly does not appear at all. The
+    # status-only comparison alone would see two clean trees and wrongly
+    # report zero differences despite the real, committed a.txt edit --
+    # the exact class of defect this fix closes.
+    assert three.head_changed
+    assert three.added_paths == []
+    assert three.changed_paths == ["a.txt"]
+
     same = tracker.compare(mid, mid)
     assert not (same.added_paths or same.removed_paths or same.changed_paths)
 

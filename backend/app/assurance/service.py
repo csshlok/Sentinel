@@ -157,12 +157,13 @@ class EvidenceService:
         limitations = list(environment.limitations)
         comparison = self._git.compare(baseline, checkpoint)
         drift = self._environment.compare(base_env, environment)
-        dependencies = self._dependencies.scan(change.id, checkpoint, change.repository_path)
+        dependencies = self._dependencies.scan(
+            change.id, checkpoint, change.repository_path, baseline=baseline)
         if dependencies.unsupported_ecosystems:
             limitations.append("Some dependency sources are unsupported or unreadable.")
-        if comparison.head_changed or comparison.branch_moved:
-            limitations.append("The branch or HEAD moved since the baseline; dependency "
-                               "changes are measured from the current HEAD.")
+        if comparison.branch_moved:
+            limitations.append("The branch moved since the baseline; dependency changes "
+                               "are measured by commit content, not branch identity.")
         self._store.save_checkpoint(checkpoint)
         self._store.save_environment(environment)
         self._store.save_dependency_report(dependencies)
@@ -336,10 +337,16 @@ class EvidenceService:
         latest_env = self._store.latest_environment(change.id)
         drift = (self._environment.compare(baseline_env, latest_env)
                  if baseline_env and latest_env and baseline_env.id != latest_env.id else None)
+        baseline_checkpoint = self._store.named_checkpoint(change.id, BASELINE)
+        committed_paths: frozenset[str] = frozenset()
+        if baseline_checkpoint is not None and baseline_checkpoint.id != current.id:
+            comparison = self._git.compare(baseline_checkpoint, current)
+            committed_paths = frozenset(
+                comparison.added_paths + comparison.changed_paths + comparison.removed_paths)
         return self._assurance.evaluate(
             change, plan, self._latest_runs(runs), current_checkpoint=current,
             dependencies=self._dependencies_for(change.id, checkpoint),
-            environment_drift=drift)
+            environment_drift=drift, committed_paths=committed_paths)
 
     def assurance_facts(self, change: ChangeView) -> AssuranceFacts:
         """The four lifecycle facts, or all-``False`` with a reason when unproven."""

@@ -256,6 +256,7 @@ class AssuranceEngine:
         current_checkpoint: GitCheckpoint | None = None,
         dependencies: DependencyReport | None = None,
         environment_drift: EnvironmentDrift | None = None,
+        committed_paths: frozenset[str] = frozenset(),
     ) -> AssuranceEvaluation:
         """Decide freshness, required-check outcome and contract deviations."""
 
@@ -296,7 +297,8 @@ class AssuranceEngine:
         reasons = list(dict.fromkeys(reasons))
         fresh = not reasons
         deviations = analyze_deviations(
-            change, current_checkpoint or binding.checkpoint, dependencies, environment_drift)
+            change, current_checkpoint or binding.checkpoint, dependencies, environment_drift,
+            committed_paths=committed_paths)
         blocking = any(d.severity is DeviationSeverity.BLOCKING for d in deviations)
         gaps = list(binding.gaps) + [f"Required check '{m}' has no passing result." for m in missing]
         evidence_gaps = [g for g in gaps if g.startswith(("Required check", "Tool '"))]

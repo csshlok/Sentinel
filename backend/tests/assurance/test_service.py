@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from backend.app.assurance.engine import AssuranceEngine
+from backend.app.assurance.models import DeviationCategory
 from backend.app.assurance.service import EvidenceService
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
@@ -18,7 +19,7 @@ from backend.app.core.errors import AppError
 from backend.app.environment.tracker import EnvironmentTracker
 from backend.app.identity.repository import DelegationRepository
 from backend.app.passport.builder import PassportBuilder
-from backend.tests.support_kb import make_repo, write
+from backend.tests.support_kb import git, make_repo, write
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 FILES = {
@@ -102,6 +103,78 @@ def test_full_persisted_flow_survives_a_restart(tmp_path):
     later = h.service().assurance_facts(change)
     assert not later.assurance_fresh and not later.required_assurance_passed
     assert any("repository changed" in reason for reason in later.reasons)
+
+
+def test_committed_agent_edits_are_still_detected_as_evidence(tmp_path):
+    """Reproduces the audit finding: baseline-to-current comparison and
+
+    dependency tracking previously compared each checkpoint's own
+    working-tree status (or, for dependencies, checkpoint HEAD vs working
+    tree) rather than baseline-to-current commit content. When the agent
+    *committed* its edits before `capture_current` ran -- the ordinary way
+    a real coding agent works -- both the changed-path comparison and the
+    dependency upgrade disappeared entirely from the evidence, because by
+    capture time the working tree was clean and already matched the new
+    commit. This reproduces exactly that: a real `git commit` between
+    baseline and current, no uncommitted state left behind.
+    """
+
+    h = Harness(tmp_path, required_checks=["pytest"])
+    change = h.view()
+    service = h.service()
+
+    baseline = service.capture_baseline(change)
+    assert baseline.checkpoint.name == "baseline"
+
+    write(h.repo, "app.py", "def add(a, b):\n    return b + a\n")
+    write(h.repo, "requirements.txt", "flask==3.0.0\n")
+    git(h.repo, "add", "-A")
+    git(h.repo, "commit", "-q", "-m", "agent commit")
+
+    current = service.capture_current(h.view(revision=1))
+
+    # The committed file edits must still show up, not disappear because
+    # the working tree was clean by the time `current` was captured.
+    assert "app.py" in current.comparison.changed_paths
+    assert "requirements.txt" in current.comparison.changed_paths
+    assert current.comparison.added_paths == []
+    assert current.comparison.removed_paths == []
+
+    # The committed dependency upgrade must still be visible.
+    flask = next(c for c in current.dependencies.changes if c.package == "flask")
+    assert (flask.old_version, flask.new_version) == ("2.0.0", "3.0.0")
+
+
+def test_a_committed_forbidden_path_edit_is_still_visible_as_a_deviation(tmp_path):
+    """The same defect, but for contract-deviation analysis: a forbidden
+
+    -path edit that gets committed before `capture_current` must still be
+    caught as a deviation, not silently pass review because the working
+    tree looked clean at capture time.
+    """
+
+    h = Harness(tmp_path, required_checks=["pytest"], forbidden_paths=["secrets"])
+    change = h.view()
+    service = h.service()
+    service.capture_baseline(change)
+
+    write(h.repo, "secrets/token.txt", "sh-secret-value\n")
+    git(h.repo, "add", "-A")
+    git(h.repo, "commit", "-q", "-m", "forbidden edit")
+
+    current = service.capture_current(h.view(revision=1))
+    assert "secrets/token.txt" in current.comparison.added_paths
+
+    change_with_contract = h.view(
+        contract=ChangeContract(required_checks=["pytest"], forbidden_paths=["secrets"]),
+        revision=1,
+    )
+    plan = service.plan_assurance(change_with_contract)
+    evaluation = service.evaluate(change_with_contract, plan.id)
+    assert any(
+        deviation.category is DeviationCategory.FORBIDDEN_PATH
+        for deviation in evaluation.deviations
+    )
 
 
 def test_baseline_rules(tmp_path):

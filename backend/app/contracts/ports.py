@@ -116,8 +116,20 @@ class DependencyPort(Protocol):
         change_id: UUID,
         checkpoint: GitCheckpoint,
         repository_path: str,
+        *,
+        baseline: GitCheckpoint | None = None,
     ) -> DependencyReport:
-        """Compare supported manifests and lockfiles."""
+        """Compare supported manifests and lockfiles.
+
+        Old-side content is read from ``baseline.head_sha`` when a baseline
+        is given, else from ``checkpoint.head_sha`` (the prior, narrower
+        default). New-side content is always the working tree. Passing the
+        Change's actual baseline checkpoint is what lets this catch
+        dependency edits the agent already committed by the time
+        ``checkpoint`` was captured -- comparing only checkpoint.head_sha
+        against the working tree misses anything already folded into that
+        same commit.
+        """
 
 
 @runtime_checkable

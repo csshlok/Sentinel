@@ -30,6 +30,49 @@ def _record(entry: ChangedPath) -> list[object]:
             entry.unstaged, entry.additions, entry.deletions, entry.binary]
 
 
+def _committed_diff(
+    root: str, baseline_sha: str, current_sha: str
+) -> tuple[set[str], set[str], set[str]]:
+    """Added/removed/changed paths from a real ``git diff --name-status``
+
+    between two commits -- content that was fully committed between the two
+    checkpoints, which neither checkpoint's own working-tree-status snapshot
+    can see. Read-only; never touches the working tree or index.
+    """
+
+    result = GitRepositoryInspector._capture_git(
+        root, ["diff", "--name-status", "--no-renames",
+               f"{baseline_sha.lower()}..{current_sha.lower()}"],
+        PATCH_LIMIT,
+    )
+    if result.truncated:
+        raise AppError("GIT_COMMAND_FAILED",
+                        "The committed diff between checkpoints exceeded the evidence limit.",
+                        status_code=409)
+    added: set[str] = set()
+    removed: set[str] = set()
+    changed: set[str] = set()
+    text = result.stdout.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        status, _, path = line.partition("\t")
+        if not path:
+            continue
+        code = status[0]
+        if code == "A":
+            added.add(path)
+        elif code == "D":
+            removed.add(path)
+        else:
+            # M and T land here as "changed". --no-renames makes git report
+            # a rename as a plain delete-of-the-old-path plus add-of-the
+            # -new-path (each its own single-path line) instead of one
+            # R/C line carrying two paths, keeping this parser simple.
+            changed.add(path)
+    return added, removed, changed
+
+
 UNTRACKED_FILE_LIMIT = 8 * 1_048_576
 UNTRACKED_FILE_COUNT = 2000
 
@@ -123,13 +166,41 @@ class GitStateTracker:
                            "Checkpoints belong to different repositories.", status_code=409)
         before = {f.path: _record(f) for f in baseline.summary.files}
         after = {f.path: _record(f) for f in current.summary.files}
+        added = set(after) - set(before)
+        removed = set(before) - set(after)
+        changed = {p for p in set(before) & set(after) if before[p] != after[p]}
+
+        # The status-based comparison above only reflects each checkpoint's
+        # working-tree/index state *at the moment it was captured* -- it
+        # cannot see a change that was fully committed before `current` was
+        # captured (both checkpoints show a clean tree in that case, so
+        # `before == after` even though real commits happened). Also diff
+        # the two checkpoints' actual commits, so a fully-committed edit
+        # between baseline and current still shows up.
+        if baseline.head_sha.lower() != current.head_sha.lower():
+            committed_added, committed_removed, committed_changed = _committed_diff(
+                baseline.repository_root, baseline.head_sha, current.head_sha)
+            added |= committed_added
+            removed |= committed_removed
+            changed |= committed_changed
+            # A path landing in more than one bucket (e.g. the working-tree
+            # -status comparison called it removed while the committed diff
+            # calls it added, because it was deleted again after being
+            # committed) is reported once, as changed -- something
+            # unambiguously happened to it even if its exact classification
+            # is momentarily contradictory between the two comparisons.
+            ambiguous = (added & removed) | (added & changed) | (removed & changed)
+            added -= ambiguous
+            removed -= ambiguous
+            changed |= ambiguous
+
         return GitCheckpointComparison(
             baseline_id=baseline.id, current_id=current.id,
             branch_moved=baseline.branch != current.branch,
             head_changed=baseline.head_sha.lower() != current.head_sha.lower(),
-            added_paths=sorted(set(after) - set(before)),
-            removed_paths=sorted(set(before) - set(after)),
-            changed_paths=sorted(p for p in set(before) & set(after) if before[p] != after[p]),
+            added_paths=sorted(added),
+            removed_paths=sorted(removed),
+            changed_paths=sorted(changed),
         )
 
     def is_current(
