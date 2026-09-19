@@ -488,6 +488,39 @@ def migration_006_change_deletion_log(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_007_tool_manifest_resolved_path(connection: sqlite3.Connection) -> None:
+    """Threat model finding #9: tool identity collision via (name, version).
+
+    resolve_or_register looked up an existing manifest by
+    `WHERE name = ? AND version = ?` alone -- looser than the schema's own
+    `UNIQUE(name, version, artifact_digest)` constraint. Since `name` is
+    just `Path(executable_path).stem.lower()` (e.g. two completely
+    unrelated binaries both named `tool.exe` in different directories both
+    become name="tool"), two different executables sharing a filename stem
+    collapsed onto the same manifest row: resolving the second one silently
+    overwrote the first's artifact_digest in place, and any prior trust
+    decision on that row would (via check_drift) read as "drifted", or
+    worse, an APPROVED decision for tool A could survive as an apparently
+    -unrelated-but-same-row manifest that is actually tool B's binary.
+
+    `resolved_path` (the exact resolved executable/manifest path the
+    identity was registered from) becomes part of the lookup key, so two
+    different paths -- however similarly named -- can never collide onto
+    one row. This is additive and does not touch drift semantics at all:
+    the *same* path, name, and version still update the same row in place
+    exactly as before (which is what check_drift's digest comparison
+    depends on); only genuinely different artifacts now get their own rows.
+    """
+
+    connection.execute(
+        "ALTER TABLE tool_manifests ADD COLUMN resolved_path TEXT NOT NULL DEFAULT ''"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tool_manifests_identity "
+        "ON tool_manifests(name, version, resolved_path)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -495,6 +528,7 @@ MIGRATIONS = (
     Migration(4, "tool_registry", migration_004_tool_registry),
     Migration(5, "journal_cascade_delete_fix", migration_005_journal_cascade_delete_fix),
     Migration(6, "change_deletion_log", migration_006_change_deletion_log),
+    Migration(7, "tool_manifest_resolved_path", migration_007_tool_manifest_resolved_path),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

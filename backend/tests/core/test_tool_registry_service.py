@@ -63,6 +63,62 @@ def test_repeated_resolve_of_same_bytes_updates_last_seen_only(tmp_path) -> None
     assert len(registry.list()) == 1
 
 
+def test_two_different_binaries_sharing_a_filename_stem_do_not_collide(tmp_path) -> None:
+    """Threat model finding #9: (name, version) alone was too loose an
+
+    identity key. `name` is just the path's stem, so two completely
+    unrelated executables named `tool.exe` in different directories used
+    to collapse onto one manifest row -- resolving the second one silently
+    overwrote the first's digest, corrupting any trust decision already
+    made against it. The resolved path is now part of identity, so
+    different directories never collide even with the identical filename.
+    """
+
+    database = _database(tmp_path)
+    registry = ToolRegistryService(database)
+    (tmp_path / "dir_a").mkdir()
+    (tmp_path / "dir_b").mkdir()
+    exe_a = _executable(tmp_path / "dir_a", name="tool.exe", content=b"binary-a-bytes")
+    exe_b = _executable(tmp_path / "dir_b", name="tool.exe", content=b"binary-b-bytes")
+
+    manifest_a = registry.resolve_or_register(exe_a, source="launcher_executable")
+    manifest_b = registry.resolve_or_register(exe_b, source="launcher_executable")
+
+    assert manifest_a.id != manifest_b.id
+    assert manifest_a.artifact_digest != manifest_b.artifact_digest
+    assert len(registry.list()) == 2
+
+    # Each one is independently stable across repeated resolves of its own
+    # path -- neither overwrote the other.
+    assert registry.resolve_or_register(exe_a, source="launcher_executable").id == manifest_a.id
+    assert registry.get(manifest_a.id).artifact_digest == manifest_a.artifact_digest
+    assert registry.get(manifest_b.id).artifact_digest == manifest_b.artifact_digest
+
+
+def test_identical_bytes_at_two_paths_share_one_manifest_row(tmp_path) -> None:
+    """The one case where sharing identity is actually correct: byte
+
+    -identical content at two different paths is genuinely interchangeable,
+    so this should not create two independent manifest rows (and, per the
+    schema's own UNIQUE(name, version, artifact_digest) constraint,
+    correctly can't).
+    """
+
+    database = _database(tmp_path)
+    registry = ToolRegistryService(database)
+    (tmp_path / "dir_a").mkdir()
+    (tmp_path / "dir_b").mkdir()
+    same_bytes = b"identical-content"
+    exe_a = _executable(tmp_path / "dir_a", name="tool.exe", content=same_bytes)
+    exe_b = _executable(tmp_path / "dir_b", name="tool.exe", content=same_bytes)
+
+    manifest_a = registry.resolve_or_register(exe_a, source="launcher_executable")
+    manifest_b = registry.resolve_or_register(exe_b, source="launcher_executable")
+
+    assert manifest_a.id == manifest_b.id
+    assert len(registry.list()) == 1
+
+
 def test_resolve_of_changed_bytes_revalidates_the_signature(tmp_path) -> None:
     """A stale signature_state computed against old bytes must not survive
 

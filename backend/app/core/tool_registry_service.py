@@ -83,33 +83,67 @@ class ToolRegistryService:
         # logic.
         name = name or Path(executable_path).stem.lower() or "tool"
         version = version or "unknown"
+        # Threat model finding #9: (name, version) alone is too loose an
+        # identity key -- two unrelated binaries sharing a filename stem
+        # (name is just the path's stem) would otherwise collapse onto the
+        # same manifest row, silently overwriting each other's digest. The
+        # resolved path is part of identity too, so only the *same* path
+        # updates an existing row in place; a different path, however
+        # similarly named, gets its own row. _digest_file above already
+        # proved this path is a real, readable file, so resolve() is safe.
+        try:
+            resolved_path = str(Path(executable_path).resolve())
+        except OSError:
+            resolved_path = executable_path
         now = utc_now()
         with self.database.connection(immediate=True) as connection:
             row = connection.execute(
-                "SELECT * FROM tool_manifests WHERE name = ? AND version = ?",
-                (name, version),
+                "SELECT * FROM tool_manifests WHERE name = ? AND version = ? "
+                "AND resolved_path = ?",
+                (name, version, resolved_path),
             ).fetchone()
             if row is None:
                 tool_id = uuid4()
                 signature_state = ToolSignatureState(self._signature_checker(executable_path))
-                connection.execute(
-                    """
-                    INSERT INTO tool_manifests (
-                        id, name, version, publisher, source, artifact_digest,
-                        signature_state, capabilities_json, filesystem_scope_json,
-                        network_scope_json, credential_requirements_json,
-                        trust_state, first_seen_at, last_seen_at
-                    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(tool_id), name, version, source, digest, signature_state.value,
-                        "[]", "[]", "[]", "[]",
-                        ToolTrustState.OBSERVED.value, now.isoformat(), now.isoformat(),
-                    ),
-                )
-                row = connection.execute(
-                    "SELECT * FROM tool_manifests WHERE id = ?", (str(tool_id),)
-                ).fetchone()
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO tool_manifests (
+                            id, name, version, publisher, source, artifact_digest,
+                            signature_state, capabilities_json, filesystem_scope_json,
+                            network_scope_json, credential_requirements_json,
+                            trust_state, first_seen_at, last_seen_at, resolved_path
+                        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(tool_id), name, version, source, digest, signature_state.value,
+                            "[]", "[]", "[]", "[]",
+                            ToolTrustState.OBSERVED.value, now.isoformat(), now.isoformat(),
+                            resolved_path,
+                        ),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM tool_manifests WHERE id = ?", (str(tool_id),)
+                    ).fetchone()
+                except sqlite3.IntegrityError:
+                    # The schema's own UNIQUE(name, version, artifact_digest)
+                    # still applies: identical bytes already registered from
+                    # a *different* path collide here. That is the one case
+                    # where sharing identity is actually correct -- byte
+                    # -identical content is interchangeable regardless of
+                    # where it lives -- so fall back to the existing row
+                    # rather than raising for a state that isn't really an
+                    # error. Just bump last_seen_at; the digest is unchanged.
+                    connection.execute(
+                        "UPDATE tool_manifests SET last_seen_at = ? "
+                        "WHERE name = ? AND version = ? AND artifact_digest = ?",
+                        (now.isoformat(), name, version, digest),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM tool_manifests WHERE name = ? AND version = ? "
+                        "AND artifact_digest = ?",
+                        (name, version, digest),
+                    ).fetchone()
             else:
                 if digest != row["artifact_digest"]:
                     # The executable's bytes changed since it was last
