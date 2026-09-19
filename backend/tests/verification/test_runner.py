@@ -62,6 +62,60 @@ def test_high_output_is_bounded_and_marked_truncated() -> None:
     assert result.output_truncated is True
 
 
+def test_stdout_and_stderr_share_one_byte_budget() -> None:
+    runner = SubprocessVerificationRunner()
+    request = VerificationRequest(
+        executable="python",
+        args=[
+            "-c",
+            (
+                "import sys; "
+                "sys.stdout.buffer.write(bytes([195, 169]) * 500); "
+                "sys.stderr.buffer.write(b'x' * 500)"
+            ),
+        ],
+    )
+
+    result = runner.run(".", request, output_limit_bytes=101)
+
+    total = len(result.stdout.encode("utf-8")) + len(result.stderr.encode("utf-8"))
+    assert total <= 101
+    assert result.stdout
+    assert result.stderr
+    assert result.output_truncated is True
+
+
+def test_missing_working_directory_returns_error(tmp_path) -> None:
+    runner = SubprocessVerificationRunner()
+    request = VerificationRequest(executable="python", args=["-c", "print('no')"])
+
+    result = runner.run(
+        str(tmp_path / "does-not-exist"),
+        request,
+        output_limit_bytes=262_144,
+    )
+
+    assert result.status is VerificationStatus.ERROR
+    assert result.exit_code is None
+    assert "could not be started" in result.stderr
+
+
+def test_invalid_utf8_cannot_expand_past_output_budget() -> None:
+    runner = SubprocessVerificationRunner()
+    request = VerificationRequest(
+        executable="python",
+        args=[
+            "-c",
+            "import sys; sys.stdout.buffer.write(bytes([255]) * 100)",
+        ],
+    )
+
+    result = runner.run(".", request, output_limit_bytes=100)
+
+    assert len(result.stdout.encode("utf-8")) <= 100
+    assert result.output_truncated is True
+
+
 def test_disallowed_executable_raises_before_running() -> None:
     runner = SubprocessVerificationRunner()
     request = VerificationRequest(executable="rm", args=["-rf", "."])

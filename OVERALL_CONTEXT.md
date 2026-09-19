@@ -302,3 +302,37 @@ The required context was read before implementation: `OVERALL_CONTEXT.md`, `PROJ
 #### Handoff and remaining work
 
 Person 1 can wire the concrete adapter with `backend.app.verification.runner.SubprocessVerificationRunner()` (no constructor arguments) into `create_app(verification=...)` once ready for Gate 3 concrete wiring; `backend/app/main.py` itself was intentionally left unedited by this record. After that handoff is acknowledged, Person 3 switches to `[QA]`: integration fixtures, API integration tests, and the demo smoke test are not yet started.
+
+### `[SD]` - 2026-09-18 22:57:28 -04:00 - Adapter recovery and Gate 3 integration
+
+`[SD]` reviewed the Person 2 and Person 3 implementations against the frozen contracts and exercised both concrete adapters through real boundaries. The original 29-test suite passed, but a real create request failed because the Git adapter returned dictionaries rather than `RepositoryInfo` and `GitSummary`. Additional probes found incorrect porcelain-v2 flags, omitted rename/conflict records, double-counted staged diff statistics, untracked-file reads, unstable Git errors, character-based patch truncation, and independent stdout/stderr output budgets.
+
+With explicit user authorization to correct cross-owner work, `[SD]` completed the recovery and integration pass:
+
+- Reimplemented `GitRepositoryInspector` as a concrete `GitInspectionPort` returning frozen Pydantic contracts.
+- Added stable `AppError`-based Git codes for invalid paths, non-Git directories, repositories without commits, and Git command failures.
+- Implemented porcelain-v2 record parsing for ordinary, rename/copy, conflict, untracked, and ignored records.
+- Corrected `.` staged/unstaged semantics and create/modify/delete/conflict classification.
+- Replaced double-counted statistics with one `git diff --numstat -z HEAD --` source.
+- Mapped per-file additions, deletions, and binary state, including rename-safe NUL parsing.
+- Stopped reading untracked file contents; untracked paths are reported with unknown statistics and an explicit omission flag.
+- Separated untracked omission from tracked-patch truncation.
+- Enforced UTF-8 byte-accurate Git patch truncation.
+- Expanded deterministic classification for dependency manifests, test/spec patterns, CI/configuration directories, documentation, source, and other paths.
+- Changed verification output limiting to one shared stdout/stderr byte budget with UTF-8-safe truncation.
+- Added verification startup-error handling that returns `VerificationStatus.ERROR` without leaking the operating-system exception.
+- Wired `GitRepositoryInspector` and `SubprocessVerificationRunner` as the default FastAPI adapters.
+- Added real API integration tests using temporary committed Git repositories and real verification subprocesses.
+- Added API coverage for passing, failing, timed-out, output-truncated, disallowed, and repository-validation outcomes.
+
+Acceptance evidence at this checkpoint:
+
+- `python -m pytest`: 48 tests passed in 9.39 seconds.
+- The complete suite passed twice from separate test-process invocations.
+- `python -m compileall -q backend`: passed.
+- Both concrete classes satisfy their runtime-checkable frozen ports.
+- A live Uvicorn server on `127.0.0.1:8765` returned HTTP 200 for health and OpenAPI.
+- The live health response remained `{"status":"ok","api_version":"1"}`.
+- The old Person 1 smoke-test server process that had retained port 8765 was identified by exact PID/command line and stopped before the final live check; no test server remained listening afterward.
+
+The backend has now crossed Gate 3: concrete adapters are wired and the real create -> modify -> refresh -> verify -> ready-for-human-review path passes. UI integration can proceed against the real API. Broader product acceptance still requires the UI to remove final mock data and exercise this backend flow.

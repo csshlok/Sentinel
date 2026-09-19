@@ -19,10 +19,8 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.core.router import build_router
-from backend.app.core.unavailable_adapters import (
-    UnavailableGitInspection,
-    UnavailableVerification,
-)
+from backend.app.git.adapter import GitRepositoryInspector
+from backend.app.verification.runner import SubprocessVerificationRunner
 
 
 LOGGER = logging.getLogger(__name__)
@@ -52,8 +50,8 @@ def create_app(
     repository = ChangeRepository(database)
     service = ChangeService(
         repository=repository,
-        git_inspection=git_inspection or UnavailableGitInspection(),
-        verification=verification or UnavailableVerification(),
+        git_inspection=git_inspection or GitRepositoryInspector(),
+        verification=verification or SubprocessVerificationRunner(),
         settings=resolved_settings,
     )
 
@@ -124,4 +122,3 @@ def create_app(
 
 
 app = create_app()
-

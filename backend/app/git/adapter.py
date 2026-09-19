@@ -1,83 +1,114 @@
+"""Read-only, contract-conforming Git repository inspection."""
+
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from backend.app.git.classifier import classify_path as classify_repo_path
+from backend.app.contracts.models import (
+    ChangedPath, ChangedPathStatus, GitSummary, RepositoryInfo, utc_now,
+)
+from backend.app.git.classifier import classify_path
 from backend.app.git.errors import GitCommandError, RepositoryValidationError
 
 
-class GitRepositoryInspector:
-    """Read-only Git inspection for the prototype."""
+@dataclass(frozen=True, slots=True)
+class _DiffStat:
+    additions: int | None
+    deletions: int | None
+    binary: bool
 
-    def validate_repository(self, path: str) -> dict[str, Any]:
+
+class GitRepositoryInspector:
+    """Concrete implementation of the frozen ``GitInspectionPort``."""
+
+    def validate_repository(self, path: str) -> RepositoryInfo:
         root = self._canonical_root(path)
         try:
-            branch = self._run_git(root, ["branch", "--show-current"]).strip() or None
             head_sha = self._run_git(root, ["rev-parse", "--verify", "HEAD"]).strip()
         except GitCommandError as exc:
-            raise RepositoryValidationError(str(exc)) from exc
-
-        return {
-            "root": str(Path(root).resolve()),
-            "branch": branch,
-            "head_sha": head_sha,
-        }
-
-    def inspect(self, path: str, patch_limit_bytes: int = 1024 * 1024) -> dict[str, Any]:
-        root = self._canonical_root(path)
-        status_output = self._run_git(root, ["status", "--porcelain=v2", "-z", "--untracked-files=all"])
-        files = self._parse_status(status_output)
-
-        diff_head = self._run_git(root, ["diff", "--numstat", "HEAD"]).strip()
-        cached_head = self._run_git(root, ["diff", "--numstat", "--cached", "HEAD"]).strip()
-        additions, deletions = self._sum_numstat(cached_head + "\n" + diff_head)
-
-        for item in files:
-            if item.get("status") == "UNTRACKED":
-                file_path = Path(root) / item["path"]
-                if file_path.exists() and file_path.is_file():
-                    additions += sum(1 for _ in file_path.read_text(encoding="utf-8", errors="replace").splitlines())
-
-        tracked_patch = self._run_git(root, ["diff", "--no-ext-diff", "HEAD"]).strip() or ""
-        untracked_patch_omitted = any(item.get("status") == "UNTRACKED" for item in files)
-        patch = tracked_patch
-        if untracked_patch_omitted:
-            patch = (patch + "\n[untracked files omitted from patch; content not read]\n").strip()
-        patch_truncated = untracked_patch_omitted or len(patch.encode("utf-8")) > patch_limit_bytes
-        if patch_truncated:
-            patch = patch[:patch_limit_bytes]
-
+            raise RepositoryValidationError(
+                "REPOSITORY_HAS_NO_COMMITS",
+                "The repository must contain at least one commit.",
+            ) from exc
         branch = self._run_git(root, ["branch", "--show-current"]).strip() or None
-        head_sha = self._run_git(root, ["rev-parse", "--verify", "HEAD"]).strip()
+        return RepositoryInfo(root=root, branch=branch, head_sha=head_sha)
 
-        return {
-            "repository_root": str(Path(root).resolve()),
-            "branch": branch,
-            "head_sha": head_sha,
-            "is_clean": not files,
-            "files": files,
-            "total_additions": additions,
-            "total_deletions": deletions,
-            "patch": patch,
-            "patch_truncated": patch_truncated,
-            "untracked_patch_omitted": untracked_patch_omitted,
-            "refreshed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        }
+    def inspect(self, path: str, patch_limit_bytes: int) -> GitSummary:
+        repository = self.validate_repository(path)
+        status_output = self._run_git(
+            repository.root,
+            ["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        status_entries = self._parse_status(status_output)
+        stats = self._parse_numstat(
+            self._run_git(
+                repository.root, ["diff", "--numstat", "-z", "HEAD", "--"]
+            )
+        )
+
+        files: list[ChangedPath] = []
+        for entry in status_entries:
+            stat = stats.get(entry.path)
+            files.append(
+                entry.model_copy(
+                    update={
+                        "additions": stat.additions if stat else None,
+                        "deletions": stat.deletions if stat else None,
+                        "binary": stat.binary if stat else False,
+                    }
+                )
+            )
+
+        total_additions = sum(
+            stat.additions or 0 for stat in stats.values() if not stat.binary
+        )
+        total_deletions = sum(
+            stat.deletions or 0 for stat in stats.values() if not stat.binary
+        )
+        raw_patch = self._run_git(
+            repository.root,
+            ["diff", "--no-ext-diff", "--no-color", "HEAD", "--"],
+        )
+        patch, patch_truncated = self._bound_utf8(raw_patch, patch_limit_bytes)
+        untracked_patch_omitted = any(
+            item.status is ChangedPathStatus.UNTRACKED for item in files
+        )
+        return GitSummary(
+            repository_root=repository.root,
+            branch=repository.branch,
+            head_sha=repository.head_sha,
+            is_clean=not files,
+            files=files,
+            total_additions=total_additions,
+            total_deletions=total_deletions,
+            patch=patch,
+            patch_truncated=patch_truncated,
+            untracked_patch_omitted=untracked_patch_omitted,
+            refreshed_at=utc_now(),
+        )
 
     def _canonical_root(self, path: str) -> str:
-        repo_path = Path(path).expanduser().resolve()
-        if not repo_path.exists() or not repo_path.is_dir():
-            raise RepositoryValidationError(f"Path does not exist or is not a directory: {path}")
+        candidate = Path(path).expanduser()
+        if not candidate.exists() or not candidate.is_dir():
+            raise RepositoryValidationError(
+                "INVALID_REPOSITORY_PATH",
+                "The repository path does not exist or is not a directory.",
+            )
         try:
-            root = self._run_git(str(repo_path), ["rev-parse", "--show-toplevel"]).strip()
+            root = self._run_git(
+                str(candidate.resolve()), ["rev-parse", "--show-toplevel"]
+            ).strip()
         except GitCommandError as exc:
-            raise RepositoryValidationError(f"Not a valid Git repository: {path}") from exc
-        return root
+            raise RepositoryValidationError(
+                "NOT_A_GIT_REPOSITORY",
+                "The selected path is not inside a Git work tree.",
+            ) from exc
+        return str(Path(root).resolve())
 
-    def _run_git(self, root: str, args: list[str]) -> str:
+    @staticmethod
+    def _run_git(root: str, args: list[str]) -> str:
         try:
             completed = subprocess.run(
                 ["git", "-C", root, *args],
@@ -86,105 +117,161 @@ class GitRepositoryInspector:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                shell=False,
                 timeout=30,
             )
         except FileNotFoundError as exc:
-            raise GitCommandError("Git executable not found") from exc
+            raise GitCommandError("The Git executable could not be located.") from exc
         except subprocess.TimeoutExpired as exc:
-            raise GitCommandError(f"Git command timed out: {args}") from exc
-
+            raise GitCommandError("Git repository inspection timed out.") from exc
+        except OSError as exc:
+            raise GitCommandError("Git repository inspection could not start.") from exc
         if completed.returncode != 0:
-            raise GitCommandError(f"Git command failed: {' '.join(args)}")
+            raise GitCommandError(details={"exit_code": completed.returncode})
         return completed.stdout
 
-    def _parse_status(self, status_output: str) -> list[dict[str, Any]]:
-        if not status_output:
-            return []
-
-        files: list[dict[str, Any]] = []
-        for entry in status_output.split("\0"):
-            if not entry:
+    @staticmethod
+    def _parse_status(status_output: str) -> list[ChangedPath]:
+        records = status_output.split("\0")
+        files: list[ChangedPath] = []
+        index = 0
+        while index < len(records):
+            record = records[index]
+            index += 1
+            if not record or record.startswith("! "):
                 continue
-
-            if entry.startswith("? "):
-                path = entry[2:].replace("\\", "/")
+            if record.startswith("? "):
+                path = GitRepositoryInspector._normalize_path(record[2:])
                 files.append(
-                    {
-                        "path": path,
-                        "old_path": None,
-                        "status": "UNTRACKED",
-                        "staged": False,
-                        "unstaged": True,
-                        "additions": None,
-                        "deletions": None,
-                        "category": classify_repo_path(path),
-                        "binary": False,
-                    }
+                    ChangedPath(
+                        path=path,
+                        status=ChangedPathStatus.UNTRACKED,
+                        staged=False,
+                        unstaged=True,
+                        category=classify_path(path),
+                    )
                 )
                 continue
-
-            if not entry.startswith("1 "):
+            record_type = record[0]
+            if record_type == "1":
+                fields = record.split(" ", 8)
+                if len(fields) != 9:
+                    raise GitCommandError("Git returned an invalid status record.")
+                xy = fields[1]
+                path = GitRepositoryInspector._normalize_path(fields[8])
+                files.append(
+                    GitRepositoryInspector._changed_path(
+                        path=path,
+                        old_path=None,
+                        xy=xy,
+                        status=GitRepositoryInspector._ordinary_status(xy),
+                    )
+                )
                 continue
-
-            fields = entry.split(" ", 8)
-            if len(fields) < 9:
+            if record_type == "2":
+                fields = record.split(" ", 9)
+                if len(fields) != 10 or index >= len(records):
+                    raise GitCommandError("Git returned an invalid rename record.")
+                xy = fields[1]
+                score = fields[8]
+                path = GitRepositoryInspector._normalize_path(fields[9])
+                old_path = GitRepositoryInspector._normalize_path(records[index])
+                index += 1
+                status = (
+                    ChangedPathStatus.COPIED
+                    if score.startswith("C")
+                    else ChangedPathStatus.RENAMED
+                )
+                files.append(
+                    GitRepositoryInspector._changed_path(
+                        path=path,
+                        old_path=old_path,
+                        xy=xy,
+                        status=status,
+                    )
+                )
                 continue
-
-            xy = fields[1]
-            path = fields[8].replace("\\", "/")
-            staged = bool(xy[0] not in {"?", " ", "N"} and xy[0] != " ")
-            unstaged = bool(xy[1] not in {"?", " ", "N"} and xy[1] != " ")
-
-            if xy == "??":
-                status = "UNTRACKED"
-                staged = False
-                unstaged = True
-            elif xy[0] == "A":
-                status = "ADDED"
-            elif xy[1] == "D":
-                status = "DELETED"
-            elif xy[0] == "U" or xy[1] == "U":
-                status = "CONFLICTED"
-            else:
-                status = "MODIFIED"
-
-            files.append(
-                {
-                    "path": path,
-                    "old_path": None,
-                    "status": status,
-                    "staged": staged,
-                    "unstaged": unstaged,
-                    "additions": None,
-                    "deletions": None,
-                    "category": classify_repo_path(path),
-                    "binary": False,
-                }
-            )
+            if record_type == "u":
+                fields = record.split(" ", 10)
+                if len(fields) != 11:
+                    raise GitCommandError("Git returned an invalid conflict record.")
+                xy = fields[1]
+                path = GitRepositoryInspector._normalize_path(fields[10])
+                files.append(
+                    GitRepositoryInspector._changed_path(
+                        path=path,
+                        old_path=None,
+                        xy=xy,
+                        status=ChangedPathStatus.CONFLICTED,
+                    )
+                )
+                continue
+            raise GitCommandError("Git returned an unsupported status record.")
         return files
 
-    def _sum_numstat(self, numstat_output: str) -> tuple[int, int]:
-        total_additions = 0
-        total_deletions = 0
-        for line in numstat_output.splitlines():
-            if not line.strip():
+    @staticmethod
+    def _changed_path(
+        *, path: str, old_path: str | None, xy: str, status: ChangedPathStatus
+    ) -> ChangedPath:
+        if len(xy) != 2:
+            raise GitCommandError("Git returned an invalid status code.")
+        return ChangedPath(
+            path=path,
+            old_path=old_path,
+            status=status,
+            staged=xy[0] != ".",
+            unstaged=xy[1] != ".",
+            category=classify_path(path),
+        )
+
+    @staticmethod
+    def _ordinary_status(xy: str) -> ChangedPathStatus:
+        if "U" in xy:
+            return ChangedPathStatus.CONFLICTED
+        if "A" in xy:
+            return ChangedPathStatus.ADDED
+        if "D" in xy:
+            return ChangedPathStatus.DELETED
+        return ChangedPathStatus.MODIFIED
+
+    @staticmethod
+    def _parse_numstat(output: str) -> dict[str, _DiffStat]:
+        records = output.split("\0")
+        stats: dict[str, _DiffStat] = {}
+        index = 0
+        while index < len(records):
+            record = records[index]
+            index += 1
+            if not record:
                 continue
-            parts = line.split()
-            if len(parts) < 3:
-                continue
-            try:
-                additions = int(parts[0])
-                deletions = int(parts[1])
-            except ValueError:
-                continue
-            total_additions += additions
-            total_deletions += deletions
-        return total_additions, total_deletions
+            fields = record.split("\t", 2)
+            if len(fields) != 3:
+                raise GitCommandError("Git returned invalid diff statistics.")
+            additions_raw, deletions_raw, path_raw = fields
+            if path_raw:
+                path = GitRepositoryInspector._normalize_path(path_raw)
+            else:
+                if index + 1 >= len(records):
+                    raise GitCommandError("Git returned invalid rename statistics.")
+                index += 1  # skip old path
+                path = GitRepositoryInspector._normalize_path(records[index])
+                index += 1
+            binary = additions_raw == "-" or deletions_raw == "-"
+            stats[path] = _DiffStat(
+                additions=None if binary else int(additions_raw),
+                deletions=None if binary else int(deletions_raw),
+                binary=binary,
+            )
+        return stats
 
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        return path.replace("\\", "/")
 
-def _normalise_repository_path(path: str) -> str:
-    return str(Path(path).expanduser().resolve())
-
-
-def classify_path(path: str) -> str:
-    return classify_repo_path(path)
+    @staticmethod
+    def _bound_utf8(value: str, limit_bytes: int) -> tuple[str, bool]:
+        limit = max(0, limit_bytes)
+        encoded = value.encode("utf-8")
+        if len(encoded) <= limit:
+            return value, False
+        return encoded[:limit].decode("utf-8", errors="ignore"), True

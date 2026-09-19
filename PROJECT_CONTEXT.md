@@ -231,3 +231,50 @@ Person 1 can wire `backend.app.verification.runner.SubprocessVerificationRunner(
 - Person 1's final concrete-adapter wiring (Git and verification) into `main.py`.
 - Person 3's `[QA]` phase: integration fixtures, API integration tests, and the demo smoke test.
 - UI integration with the real API.
+
+### `[SD]` - 2026-09-18 22:57:28 -04:00 - Integration recovery complete
+
+After reviewing the Person 2 and Person 3 work, `[SD]` corrected the blocking contract and behavior defects and completed concrete backend wiring.
+
+#### Git adapter corrections
+
+- Returns `RepositoryInfo` and `GitSummary` instead of incompatible dictionaries.
+- Uses stable API errors: `INVALID_REPOSITORY_PATH`, `NOT_A_GIT_REPOSITORY`, `REPOSITORY_HAS_NO_COMMITS`, and `GIT_COMMAND_FAILED`.
+- Correctly parses ordinary, rename/copy, conflict, and untracked porcelain-v2 records.
+- Correctly interprets `.` as unchanged for staged/unstaged state.
+- Reports staged deletes and renames with the right status and previous path.
+- Uses one NUL-delimited numstat source, preventing staged-change double counting.
+- Populates per-file additions, deletions, and binary state.
+- Does not read untracked file contents.
+- Keeps `untracked_patch_omitted` separate from `patch_truncated`.
+- Truncates tracked patches by UTF-8 bytes rather than Python characters.
+- Covers dependency, test/spec, configuration/CI, documentation, source, and other classification precedence.
+
+#### Verification corrections
+
+- Stdout and stderr now share one total output budget.
+- UTF-8 truncation cannot exceed the configured byte limit.
+- Subprocess startup failures return `ERROR` with a null exit code and safe message.
+- Existing allowlist, `shell=False`, working-directory, pass/fail, and timeout behavior remains intact.
+
+#### Integration completed
+
+- `create_app()` now uses `GitRepositoryInspector` and `SubprocessVerificationRunner` by default.
+- Added real temporary-repository API tests.
+- Verified create -> external file edit -> refresh -> passing verification -> `READY_FOR_HUMAN_REVIEW`.
+- Verified a later refresh clears stale verification evidence.
+- Verified failing and timed-out commands produce `FAILED_VERIFICATION`.
+- Verified disallowed executables and invalid repositories use stable error envelopes.
+
+#### Current validation state
+
+- 48 tests pass in the full suite.
+- The full suite passed twice in separate invocations.
+- Backend compilation passes.
+- Frozen port runtime checks pass for both concrete adapters.
+- Live health and OpenAPI checks return HTTP 200 on loopback.
+- No live smoke-test server remains running.
+
+#### Updated readiness
+
+The backend is ready for UI integration. Git inspection, verification execution, persistence, review-state composition, and the real API path are integrated. Remaining release work is UI integration, removal of UI mocks, and final end-to-end demo validation through the actual user interface.

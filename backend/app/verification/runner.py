@@ -52,6 +52,17 @@ class SubprocessVerificationRunner:
                 raw_stderr=error.stderr,
                 output_limit_bytes=output_limit_bytes,
             )
+        except OSError:
+            return self._build_result(
+                request=request,
+                started_at=started_at,
+                duration_ms=self._elapsed_ms(clock_start),
+                status=VerificationStatus.ERROR,
+                exit_code=None,
+                raw_stdout=None,
+                raw_stderr=b"The verification command could not be started.",
+                output_limit_bytes=output_limit_bytes,
+            )
 
         status = (
             VerificationStatus.PASSED
@@ -85,8 +96,11 @@ class SubprocessVerificationRunner:
         raw_stderr: bytes | None,
         output_limit_bytes: int,
     ) -> VerificationResult:
-        stdout, stdout_truncated = _decode_and_bound(raw_stdout, output_limit_bytes)
-        stderr, stderr_truncated = _decode_and_bound(raw_stderr, output_limit_bytes)
+        stdout, stderr, output_truncated = _decode_and_bound_outputs(
+            raw_stdout,
+            raw_stderr,
+            output_limit_bytes,
+        )
         return VerificationResult(
             executable=request.executable,
             args=request.args,
@@ -95,15 +109,50 @@ class SubprocessVerificationRunner:
             duration_ms=duration_ms,
             stdout=stdout,
             stderr=stderr,
-            output_truncated=stdout_truncated or stderr_truncated,
+            output_truncated=output_truncated,
             started_at=started_at,
             completed_at=datetime.now(UTC),
         )
 
 
-def _decode_and_bound(raw: bytes | None, limit_bytes: int) -> tuple[str, bool]:
-    data = raw or b""
-    truncated = len(data) > limit_bytes
-    if truncated:
-        data = data[:limit_bytes]
-    return data.decode("utf-8", errors="replace"), truncated
+def _decode_and_bound_outputs(
+    raw_stdout: bytes | None,
+    raw_stderr: bytes | None,
+    limit_bytes: int,
+) -> tuple[str, str, bool]:
+    """Bound stdout and stderr to one shared, UTF-8-safe byte budget."""
+
+    stdout_data = raw_stdout or b""
+    stderr_data = raw_stderr or b""
+    limit = max(0, limit_bytes)
+    truncated = len(stdout_data) + len(stderr_data) > limit
+
+    if not truncated:
+        stdout = stdout_data.decode("utf-8", errors="ignore")
+        stderr = stderr_data.decode("utf-8", errors="ignore")
+        decoding_was_lossy = (
+            stdout.encode("utf-8") != stdout_data
+            or stderr.encode("utf-8") != stderr_data
+        )
+        return (
+            stdout,
+            stderr,
+            decoding_was_lossy,
+        )
+
+    if stdout_data and stderr_data:
+        stdout_budget = min(len(stdout_data), limit // 2)
+        stderr_budget = min(len(stderr_data), limit - stdout_budget)
+        remaining = limit - stdout_budget - stderr_budget
+        if remaining:
+            stdout_extra = min(len(stdout_data) - stdout_budget, remaining)
+            stdout_budget += stdout_extra
+            remaining -= stdout_extra
+            stderr_budget += min(len(stderr_data) - stderr_budget, remaining)
+    else:
+        stdout_budget = min(len(stdout_data), limit)
+        stderr_budget = min(len(stderr_data), limit - stdout_budget)
+
+    stdout = stdout_data[:stdout_budget].decode("utf-8", errors="ignore")
+    stderr = stderr_data[:stderr_budget].decode("utf-8", errors="ignore")
+    return stdout, stderr, True
