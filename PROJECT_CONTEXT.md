@@ -2,106 +2,132 @@
 
 ## Relationship to overall context
 
-This document defines the active two-day implementation slice. Read `OVERALL_CONTEXT.md` first for stable product principles, vocabulary, the CML working standard, and decision authority. This document may narrow that direction but must not silently contradict it.
+This document defines the active implementation of `Change_Assurance_Runtime_Project_Proposal (2).pdf`. Read `OVERALL_CONTEXT.md` first for stable product principles, vocabulary, the CML working standard, and decision authority. The PDF proposal is the feature baseline; this document records the four approved cuts and their necessary consequences.
 
 ## Goal
 
-Build a two-day, repository-scoped prototype that helps a developer review an AI-assisted code change before accepting it. The prototype is a local Git review dashboard, not an execution security runtime.
+Build the retained Change Assurance Runtime described by the proposal, without a two-day deadline. The product is a local-first control plane that connects Change intent, identity and authority, agent execution summaries, Git/environment/dependency evidence, assurance, GitHub outcomes, constrained recovery, and a final Change Passport.
 
-## The demo promise
+## Product promise
 
-A developer can select a local Git repository, enter the intended change, let a coding agent or developer work outside the app, and then use the app to:
+A developer can define a bounded Change, delegate scoped authority to an agent, launch or attach to its top-level invocation, collect real Git/environment/dependency evidence, run evidence-selected assurance, follow the resulting pull request and CI, and export a Change Passport. Supported Git/provider recovery is previewed, explicitly approved, and verified. Missing or unsupported evidence remains visible.
 
-1. See the current Git status and diff.
-2. Understand which files changed and the size/type of the change.
-3. Run one configured test or build command and see its final result.
-4. Review intent, source changes, and verification evidence in one UI.
-5. Decide whether the change is ready for human review.
+## Reference end-to-end flow
 
-## Intended live demo
-
-1. Open a sample Git repository in the app.
-2. Create a Change with a short intent statement.
-3. Use Codex, another agent, or a manual edit outside the app to modify the repository.
-4. Refresh the Change Review to load Git status and diff.
-5. Run the configured verification command.
-6. Show the summarized files, diff, test/build result, and review readiness.
+1. Connect a local repository and create a Change Contract.
+2. Select an actor/agent and review its scoped, expiring authority.
+3. Capture baseline Git and environment passports, then launch or attach to the agent.
+4. Capture the resulting Git checkpoint, environment drift, and dependency changes.
+5. Review contract deviations and the assurance plan; run required checks.
+6. Authorize the broker to create or refresh a GitHub pull request and follow required CI for the exact commit.
+7. Export a Change Passport containing evidence, decisions, outcomes, residual gaps, and recovery status.
+8. When requested, preview and approve a supported Git/provider recovery and verify the result.
 
 ## Required scope
 
-- Select and validate an existing local Git repository.
-- Create a lightweight Change record with an ID, title/intent, repository path, and timestamps.
-- Read Git branch, HEAD, working-tree status, diff statistics, and patch content.
-- Classify changed paths using simple rules such as source, test, dependency, configuration, and documentation.
-- Run one user-configured test or build command as a one-shot subprocess.
-- Store only the final verification command, exit code, duration, and output needed by the UI.
-- Provide a UI with Change List, New Change, Change Review, Diff, and Verification Result views.
-- Clearly show missing evidence and unsupported capabilities.
+- Persistent Change lifecycle, Change Contract, guarded transitions, and evidence freshness.
+- Human/agent/service identities, delegations, risk/policy decisions, and local API authentication.
+- GitHub credential broker using OS credential storage and short-lived internal capability grants.
+- Top-level Agent Launcher/attach adapters with aggregate, bounded execution results.
+- Git checkpoints, comparisons, status/diff evidence, and branch/commit continuity.
+- Redacted environment passports and drift comparison.
+- Python/Node dependency manifest and lockfile analysis.
+- Assurance discovery, selection, bounded execution, contract deviation, and evidence coverage.
+- GitHub PR/CI outcomes tied to exact commit SHAs.
+- Constrained Git commit/provider recovery with preview, approval, conflict checks, and verification.
+- Versioned Change Passport, web UI, CLI, capabilities reporting, and explicit unsupported states.
 
-## Cut from this prototype
+## Approved cuts
 
-The following subsystems are intentionally removed from the two-day build:
+The following proposal subsystems are intentionally removed from the product:
 
 - Event/effect journal and causal timeline.
 - Process supervisor, descendant-process attribution, and process cleanup.
-- Filesystem observation, before-images, snapshots, file-effect attribution, and recovery/undo.
+- Filesystem observation, before-images, snapshots, file-effect attribution, and local-file recovery/undo.
 - Tool registry, MCP inventory, tool manifests, signatures, and trust decisions.
 
-## Other non-goals
+## Necessary consequences and non-goals
 
-- Credential brokering, secret storage, or GitHub authorization.
-- OS sandboxing or Windows Job Object enforcement.
-- Host-machine environment provenance or recovery.
-- Package-install attribution or external API effect tracking.
-- CI, pull-request, deployment, or cloud integration.
-- Replay of commands, tools, agents, or filesystem state.
-- Cross-platform behavioral guarantees.
+- No causal event/effect timeline, trace replay, or replay engine because the event journal is absent.
+- No descendant-process ownership, orphan cleanup, process-tree policy, or Windows Job Object enforcement because the process supervisor is absent.
+- No uncommitted-file restoration, resource versions, write attribution, or environment rollback because filesystem/process observation is absent.
+- No tool manifests, signatures, inventory, trust decisions, or capability-drift tracking because the tool registry is absent.
+- No attribution of an environment/dependency change to a particular process; only checkpoint comparison is claimed.
+- No automatic recovery. Retained recovery is limited to known Git commits and supported provider objects and always requires approval.
+- Initial host collectors target Windows; other platforms require tested adapters before support is claimed.
 
 ## Product language
 
 Preferred terms:
 
-- "Git-based Change Review prototype"
-- "working-tree changes"
-- "verification result"
-- "ready for human review"
+- "Change Assurance Runtime"
+- "Change Contract"
+- "Git checkpoint"
+- "environment passport"
+- "assurance result"
+- "scoped authority"
+- "Change Passport"
+- "supported Git/provider recovery"
 
 Do not claim:
 
-- Complete observation or attribution.
-- Safe execution or sandboxing.
-- Replay, rollback, or recovery.
+- Complete observation, causal attribution, or sandboxing.
+- Descendant-process control.
+- Replay or local-file/environment rollback.
 - Process-tree visibility.
 - Tool or credential trust enforcement.
-- Production readiness.
+- General recovery beyond the explicitly supported Git/provider actions.
 
-## Suggested architecture
+## Active architecture
 
 ```text
-Web UI
-  -> Local API/service
-       -> Lightweight Change store
-       -> Read-only Git inspection adapter
-       -> One-shot verification command runner
+Web UI / CLI
+  -> Authenticated local API
+       -> Change lifecycle, contracts, identity, policy
+       -> Credential broker and GitHub outcomes
+       -> Top-level Agent Launcher
+       -> Git, environment, and dependency trackers
+       -> Assurance engine
+       -> Constrained recovery engine
+       -> Change Passport builder
+       -> SQLite state/evidence store
 ```
 
-The coding agent does not run inside or through this prototype. It modifies the selected repository independently; the app reviews the resulting Git working tree.
+The Agent Launcher may start or attach to a top-level invocation, but it does not observe or control a descendant process tree. Git is the source of code-change evidence; it is not filesystem-effect attribution.
 
 ## Core data concepts
 
-- **Change**: ID, title, intent, repository path, created time, and last refresh time.
-- **Git summary**: branch, HEAD, changed paths, status, additions/deletions, and patch.
-- **Path classification**: source, test, dependency, configuration, documentation, or other.
-- **Verification result**: command, start/end time, exit code, duration, result status, and bounded output.
-- **Review state**: ready, failed verification, or missing evidence. This is a UI summary, not a correctness guarantee.
+- **Change / Change Contract**: intent, repository, boundaries, expected outcomes, checks, authority, lifecycle.
+- **Actor / Delegation**: authenticated identity and its scoped, expiring authority.
+- **Agent run**: top-level invocation plus aggregate bounded result, never a process graph.
+- **Git checkpoint**: branch, HEAD, status/diff, changed-path evidence, and capture time.
+- **Environment passport / dependency change**: redacted comparable state and manifest/lockfile differences.
+- **Assurance plan/result**: selected checks, rationale, result, freshness, and coverage gaps.
+- **Outcome**: PR/CI/artifact/deployment evidence when a real provider adapter exists.
+- **Recovery plan/action**: approved, supported Git/provider compensation and verified result.
+- **Change Passport**: exportable evidence chain and limitations for one Change.
 
 ## Definition of done
 
-The project is demo-ready when a user can create a Change for a sample repository, modify that repository outside the app, refresh and inspect its Git diff, run one verification command, and view a clear review summary. No demo path or UI text may imply event journaling, process supervision, filesystem tracking, tool trust, or recovery.
+The product meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end using real data, migrations preserve existing data, authority and credentials are enforced, evidence freshness gates lifecycle state, the UI/CLI expose every relevant failure or unsupported condition, and recovery stays inside its documented Git/provider boundary.
 
-The final demo must use real backend responses and a real Git repository. Mock data, hardcoded health/readiness labels, and placeholder success values are allowed during isolated UI development only and must be removed before acceptance.
+No code, schema, route, or copy may imply an event journal, process supervision, filesystem tracking/undo, tool registry/trust, or replay. Mock data is allowed only in isolated frontend tests and must not enter the release path.
 
 ## Current implementation status
+
+### `[SD]` - 2026-09-18 23:13:27 -04:00 - Proposal scope restored and work repartitioned
+
+The PDF proposal is now the authoritative implementation baseline without the former two-day constraint. The active plan retains lifecycle/contracts, identity and delegation, credential brokering, the top-level Agent Launcher, Git/environment/dependency evidence, assurance, GitHub PR/CI outcomes, constrained recovery, Passport, UI, and CLI.
+
+The only approved subsystem cuts are the event journal, process supervisor, filesystem tracker, and tool registry. Replay, descendant attribution, local-file/environment rollback, and tool trust are also unavailable because they require those removed primitives. These are technical consequences, not additional discretionary product cuts.
+
+Work is assigned to three permanent owners:
+
+- `[SD]`: platform, shared contracts, lifecycle, identity/policy, credential broker, recovery, Passport, and integration.
+- `[KB]`: Git evidence, Agent Launcher, environment/dependency tracking, and assurance.
+- `[AC]`: frontend, provider/outcome adapters, CLI, integration/E2E QA.
+
+The existing 48-test Git review backend remains the migration baseline rather than being discarded. Its current Change, Git inspection, verification, and error behavior must be preserved or explicitly migrated while the wider proposal architecture is added.
 
 ### `[SD]` - 2026-09-18 22:22:49 -04:00 - Person 1
 

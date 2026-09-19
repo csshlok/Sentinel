@@ -1,749 +1,380 @@
-# Three-Person Backend Implementation Plan
-
-## 1. Outcome
-
-Deliver the complete backend for the two-day Git-based Change Review prototype. The backend must let the UI:
-
-1. Create and list lightweight Change records.
-2. Validate a local Git repository.
-3. inspect its current branch, HEAD, working-tree status, diff statistics, and patch.
-4. Classify changed paths.
-5. Run one approved verification command.
-6. Return a review state based on Git changes and the latest verification result.
-
-This plan intentionally excludes the event journal, process supervision, filesystem tracking/snapshots, recovery, replay, and tool registry described in the original proposal.
-
-## 2. Delivery constraints
-
-- Three backend contributors.
-- Two calendar days.
-- Windows is the demo platform.
-- All contributors use one shared repository and must not edit overlapping files.
-- The backend is local-only and binds to `127.0.0.1`.
-- The coding agent runs outside this backend.
-- Git is the only source of change information.
-- The backend reports review evidence; it never claims correctness or safety.
-- Implementation, integration, error handling, and acceptance must satisfy the CML working standard in `OVERALL_CONTEXT.md`.
-
-## 3. Technology decision
-
-Use Python 3.12+ with:
-
-- FastAPI for the local HTTP API.
-- Pydantic v2 for request/response contracts.
-- The Python standard-library `sqlite3` module for persistence.
-- The Python standard-library `subprocess` module for Git and verification commands.
-- Pytest for unit and integration tests.
-- Uvicorn for local development serving.
-
-This stack avoids a native database dependency, works well on Windows, and keeps the UI/backend boundary as ordinary JSON over HTTP.
-
-## 4. Repository layout and exclusive ownership
-
-```text
-backend/
-  app/
-    main.py                         # [CORE]
-    core/                           # [CORE]
-      config.py
-      errors.py
-      database.py
-      change_repository.py
-      change_service.py
-      review_service.py
-      router.py
-    contracts/                      # [CORE], frozen after Gate 1
-      models.py
-      ports.py
-    git/                            # [GIT]
-      adapter.py
-      parser.py
-      classifier.py
-      errors.py
-    verification/                   # [VERIFY]
-      runner.py
-      validation.py
-      errors.py
-  tests/
-    core/                           # [CORE]
-    git/                            # [GIT]
-    verification/                  # [VERIFY]
-    integration/                   # [QA] after module handoffs
-  fixtures/                         # [QA]
-pyproject.toml                      # [INTEGRATION]
-.gitignore                          # [INTEGRATION]
-```
-
-No contributor edits another contributor's path. Changes to `backend/app/contracts/` after Gate 1 are made only by `[CORE]` following a written contract-change request.
-
-## 5. The three assignments
-
-### Person 1 - `[CORE]` API, persistence, and integration lead
-
-Owns:
-
-- FastAPI application creation and lifecycle.
-- Shared Pydantic contracts and service protocols.
-- SQLite schema and migrations/bootstrap.
-- Change CRUD service.
-- Review-state composition.
-- HTTP routes, error envelope, and OpenAPI output.
-- Final adapter wiring after formal handoff.
-
-Does not own:
-
-- Git command construction or parsing.
-- Path classification rules.
-- Verification subprocess implementation.
-- Git or verification module tests.
-
-### Person 2 - `[GIT]` repository inspection lead
-
-Owns:
-
-- Repository validation.
-- Safe, argument-array Git subprocess calls with `shell=False`.
-- Branch and HEAD inspection.
-- Porcelain status parsing.
-- Diff statistics and bounded patch retrieval.
-- Changed-path classification.
-- Git-specific errors and tests.
-
-Does not own:
-
-- HTTP routes.
-- SQLite.
-- Verification command execution.
-- Shared contract definitions.
-
-### Person 3 - `[VERIFY]` verification and quality lead
-
-Owns initially:
-
-- Verification-command validation.
-- Approved executable configuration.
-- One-shot subprocess execution.
-- Timeouts, duration, exit status, and bounded output.
-- Verification-specific errors and tests.
-
-After the verification module is handed off, this person switches to `[QA]` and owns:
-
-- End-to-end fixtures.
-- API integration tests.
-- Demo smoke test.
-- Final acceptance checklist execution.
-
-This tag switch must be announced. `[VERIFY]` work must be committed or handed off before `[QA]` work begins.
-
-## 6. Contract-first design
-
-All three contributors spend the first 45 minutes agreeing on the following contracts. Person 1 records them in `backend/app/contracts/`. After Gate 1, Persons 2 and 3 implement against those contracts without editing them.
-
-### 6.1 Change model
-
-```text
-Change
-  id: UUID string
-  title: string, 1-120 characters
-  intent: string, 1-2000 characters
-  repository_path: canonical absolute path
-  created_at: UTC timestamp
-  updated_at: UTC timestamp
-  last_refreshed_at: UTC timestamp or null
-  git_summary: GitSummary or null
-  verification: VerificationResult or null
-  review_state: NO_CHANGES | MISSING_EVIDENCE | FAILED_VERIFICATION | READY_FOR_HUMAN_REVIEW
-```
-
-There is no event collection. Each refresh overwrites the latest Git summary, and each verification run overwrites the latest verification result.
-
-### 6.2 Git contracts
-
-```text
-RepositoryInfo
-  root: canonical absolute path
-  branch: string or null
-  head_sha: 40-character SHA
-
-ChangedPath
-  path: repository-relative POSIX-style path
-  old_path: string or null
-  status: ADDED | MODIFIED | DELETED | RENAMED | COPIED | UNTRACKED | CONFLICTED
-  staged: boolean
-  unstaged: boolean
-  additions: integer or null
-  deletions: integer or null
-  category: SOURCE | TEST | DEPENDENCY | CONFIG | DOCUMENTATION | OTHER
-  binary: boolean
-
-GitSummary
-  repository_root: string
-  branch: string or null
-  head_sha: string
-  is_clean: boolean
-  files: ChangedPath[]
-  total_additions: integer
-  total_deletions: integer
-  patch: string
-  patch_truncated: boolean
-  untracked_patch_omitted: boolean
-  refreshed_at: UTC timestamp
-```
-
-`GitInspectionPort` exposes:
-
-```text
-validate_repository(path) -> RepositoryInfo
-inspect(path, patch_limit_bytes) -> GitSummary
-```
-
-### 6.3 Verification contracts
-
-The API accepts an executable and argument list, not a shell command string:
-
-```text
-VerificationRequest
-  executable: string
-  args: string[]
-  timeout_seconds: integer, 1-300
-
-VerificationResult
-  executable: string
-  args: string[]
-  status: PASSED | FAILED | TIMED_OUT | ERROR
-  exit_code: integer or null
-  duration_ms: integer
-  stdout: string
-  stderr: string
-  output_truncated: boolean
-  started_at: UTC timestamp
-  completed_at: UTC timestamp
-```
-
-`VerificationPort` exposes:
-
-```text
-run(repository_path, request, output_limit_bytes) -> VerificationResult
-```
-
-### 6.4 Error envelope
-
-Every non-2xx API response uses:
-
-```json
-{
-  "error": {
-    "code": "STABLE_MACHINE_CODE",
-    "message": "Human-readable explanation",
-    "details": {}
-  }
-}
-```
-
-Expected codes include:
-
-- `CHANGE_NOT_FOUND`
-- `INVALID_REPOSITORY_PATH`
-- `NOT_A_GIT_REPOSITORY`
-- `REPOSITORY_HAS_NO_COMMITS`
-- `GIT_COMMAND_FAILED`
-- `VERIFICATION_EXECUTABLE_NOT_ALLOWED`
-- `VERIFICATION_EXECUTABLE_NOT_FOUND`
-- `VERIFICATION_TIMED_OUT`
-- `VALIDATION_ERROR`
-- `INTERNAL_ERROR`
-
-## 7. API surface
-
-### Health
-
-- `GET /api/v1/health`
-  - Returns service status and API version.
-
-### Repository validation
-
-- `POST /api/v1/repositories/validate`
-  - Input: `{ "path": "C:\\work\\repo" }`
-  - Validates that the path exists, resolves to a Git work tree, and has a commit.
-  - Returns `RepositoryInfo`.
-
-### Changes
-
-- `POST /api/v1/changes`
-  - Input: title, intent, repository path.
-  - Validates and canonicalizes the repository before insertion.
-  - Returns `201` and the Change.
-
-- `GET /api/v1/changes`
-  - Returns newest-first Change summaries.
-
-- `GET /api/v1/changes/{change_id}`
-  - Returns the complete current Change view.
-
-- `DELETE /api/v1/changes/{change_id}`
-  - Optional only after required endpoints pass. Deletes metadata, not repository content.
-
-### Git refresh
-
-- `POST /api/v1/changes/{change_id}/refresh`
-  - Inspects the current working tree.
-  - Replaces the stored latest Git summary.
-  - Recomputes review state.
-  - Returns the complete Change view.
-
-### Verification
-
-- `POST /api/v1/changes/{change_id}/verify`
-  - Input: `VerificationRequest`.
-  - Runs in the canonical repository root.
-  - Replaces the stored latest verification result.
-  - Recomputes review state.
-  - Returns the complete Change view.
-
-No timeline, replay, recovery, process, tool, or filesystem-effect endpoints are permitted.
-
-## 8. Persistence design
-
-Use one SQLite database stored under a configurable local data directory. Enable foreign keys and a busy timeout. WAL mode is optional for this single-process prototype.
-
-### `changes` table
-
-```text
-id                    TEXT PRIMARY KEY
-title                 TEXT NOT NULL
-intent                TEXT NOT NULL
-repository_path       TEXT NOT NULL
-created_at            TEXT NOT NULL
-updated_at            TEXT NOT NULL
-last_refreshed_at     TEXT NULL
-git_summary_json      TEXT NULL
-verification_json     TEXT NULL
-```
-
-Rules:
-
-- Store UTC timestamps in ISO 8601 form.
-- Store only the latest Git summary and verification result.
-- Validate deserialized JSON with Pydantic before returning it.
-- Use parameterized SQL exclusively.
-- Open database transactions inside the repository layer.
-- Never modify the selected Git repository from persistence code.
-
-## 9. Detailed work breakdown
-
-### Person 1 - `[CORE]`
-
-#### C1. Bootstrap contracts and application shell
-
-- Create package layout and `__init__.py` files inside owned paths.
-- Define all enums and Pydantic models.
-- Define `GitInspectionPort` and `VerificationPort` protocols.
-- Create FastAPI app factory.
-- Add health endpoint.
-- Add centralized exception mapping and validation error handling.
-
-Acceptance:
-
-- App imports without concrete Git/verification implementations.
-- OpenAPI generation succeeds.
-- Contract serialization tests pass.
-
-#### C2. Persistence
-
-- Implement database initialization.
-- Create the `changes` table idempotently.
-- Implement create, list, get, update-latest-Git, update-latest-verification, and delete metadata methods.
-- Test restart persistence using a temporary database.
-
-Acceptance:
-
-- CRUD tests pass.
-- Unknown ID maps to `CHANGE_NOT_FOUND`.
-- JSON and timestamps round-trip correctly.
-
-#### C3. Change and review services
-
-- Validate title and intent through Pydantic.
-- Ask `GitInspectionPort` to validate/canonicalize a repository on Change creation.
-- Implement review-state precedence:
-  1. No Git summary or clean Git summary -> `NO_CHANGES`.
-  2. Changes exist and no verification result -> `MISSING_EVIDENCE`.
-  3. Latest verification is not `PASSED` -> `FAILED_VERIFICATION`.
-  4. Changes exist and verification passed -> `READY_FOR_HUMAN_REVIEW`.
-- Make clear that readiness means evidence is present, not that the code is correct.
-
-Acceptance:
-
-- Every state has a unit test.
-- Refresh and verify overwrite the prior latest result.
-
-#### C4. HTTP routes
-
-- Implement required endpoints.
-- Keep route handlers thin.
-- Enforce response models.
-- Add bounded pagination parameters to list Changes if time permits; otherwise cap results at 100.
-- Configure CORS only for the agreed local UI origin.
-
-Acceptance:
-
-- Route tests cover success, validation failure, and missing Change.
-- No stack trace or local path is returned in unexpected-error messages.
-
-#### C5. Final wiring
-
-- After `[GIT]` and `[VERIFY]` handoffs, instantiate concrete adapters in `main.py`.
-- Do not change adapter implementations during wiring.
-- If a contract mismatch exists, return it to the owning person rather than patching across ownership boundaries.
-
-### Person 2 - `[GIT]`
-
-#### G1. Git subprocess boundary
-
-- Implement one private command function using an argument array and `shell=False`.
-- Always use `git -C <canonical-root> ...`.
-- Set a short timeout for inspection commands.
-- Decode output as UTF-8 with replacement for invalid bytes.
-- Translate failures to stable Git-domain errors.
-
-Acceptance:
-
-- Paths containing spaces work.
-- Arguments cannot be interpreted as shell syntax.
-- Missing Git executable and nonzero exits are distinguishable.
-
-#### G2. Repository validation
-
-- Reject nonexistent and non-directory paths.
-- Resolve the canonical repository top level with `git rev-parse --show-toplevel`.
-- Require `git rev-parse --verify HEAD` for the prototype.
-- Return branch using `git branch --show-current`; allow `null` for detached HEAD.
-
-Acceptance:
-
-- Normal repo, nested directory, detached HEAD, non-repo, and no-commit repo are tested.
-
-#### G3. Status parsing
-
-- Use `git status --porcelain=v2 -z --untracked-files=all`.
-- Parse ordinary, renamed/copied, unmerged, and untracked records.
-- Normalize returned paths to repository-relative `/` separators.
-- Preserve staged and unstaged flags separately.
-
-Acceptance:
-
-- Tests cover modified, added, deleted, staged, unstaged, renamed, untracked, and conflicted states.
-
-#### G4. Diff statistics and patch
-
-- Use Git output relative to `HEAD` so staged and unstaged tracked changes appear together.
-- Obtain machine-readable statistics using `--numstat`.
-- Mark binary counts as `null`.
-- Return a no-color, no-external-diff patch.
-- Enforce a default 1 MiB patch limit and return `patch_truncated=true` when exceeded.
-- Report untracked paths in status, but set `untracked_patch_omitted=true`; do not read their contents directly in this MVP.
-
-Acceptance:
-
-- Combined staged/unstaged changes are represented once per path.
-- Binary files do not crash parsing.
-- Large patches are deterministically truncated.
-
-#### G5. Classification
-
-Apply deterministic precedence:
-
-1. Dependency: lockfiles and package manifests.
-2. Test: test/spec directories and common test filename patterns.
-3. Configuration: common config names/extensions and CI configuration directories.
-4. Documentation: Markdown, docs directories, and common documentation files.
-5. Source: recognized source-code extensions.
-6. Other.
-
-Keep classification pure and table-driven.
-
-Acceptance:
-
-- Every class and precedence collision has a unit test.
-
-### Person 3 - `[VERIFY]`, then `[QA]`
-
-#### V1. Command validation
-
-- Accept separate `executable` and `args`; reject shell command strings.
-- Configure an allowlist for the demo, initially: `python`, `python3`, `pytest`, `uv`, `node`, `npm`, `npm.cmd`, `pnpm`, `pnpm.cmd`, `yarn`, `yarn.cmd`, `cargo`, `go`, and `dotnet`.
-- Reject path separators in the executable field unless an explicit absolute-executable feature is approved later.
-- Clamp timeouts to 1-300 seconds.
-- Limit argument count and individual argument length.
-
-Acceptance:
-
-- Shell metacharacters in an argument remain a literal argument.
-- Disallowed and missing executables return different errors.
-
-#### V2. One-shot execution
-
-- Resolve the executable with `shutil.which`.
-- Run with `cwd` set to the canonical repository root.
-- Use `shell=False`.
-- Capture stdout and stderr separately.
-- Record monotonic duration and UTC start/completion times.
-- Return pass for exit code 0 and fail for any other exit code.
-
-Acceptance:
-
-- Passing and failing commands return correct statuses.
-- The child receives the repository as its working directory.
-
-#### V3. Timeout and output bounds
-
-- Enforce the requested timeout on the direct child process.
-- Return `TIMED_OUT` with a null exit code when appropriate.
-- Bound stored output to 256 KiB total and mark truncation.
-- Do not claim or attempt descendant-process supervision or orphan cleanup.
-
-Acceptance:
-
-- Timeout test completes predictably.
-- High-output command cannot create an unbounded API response or database value.
-
-#### Q1. Integration fixtures
-
-After the `[VERIFY]` handoff, switch to `[QA]`:
-
-- Create temporary Git repositories programmatically.
-- Configure local fixture-only Git identity.
-- Commit a clean baseline.
-- Provide fixture operations for modify, stage, delete, rename, and add untracked files.
-- Do not rely on the developer's global Git configuration.
-
-#### Q2. API integration tests
-
-- Health.
-- Validate repository.
-- Create/list/get Change.
-- Refresh after a source edit.
-- Verify with a passing command.
-- Verify with a failing command.
-- Review-state transitions.
-- Invalid path, non-repo, missing Change, disallowed executable, timeout, and output truncation.
-
-#### Q3. Demo smoke test
-
-Automate the exact backend demo:
-
-1. Create fixture repo and baseline commit.
-2. Create Change through the API.
-3. Modify source and test files outside the API.
-4. Refresh.
-5. Assert Git summary and classifications.
-6. Run passing verification.
-7. Assert `READY_FOR_HUMAN_REVIEW`.
-
-## 10. Necessary collaboration and integration gates
-
-These are the only planned points where work intertwines.
-
-### Gate 0 - Bootstrap window (first 30 minutes)
-
-Participants: all three.
-
-- Agree on Python version, commands, UI origin, and allowed verification executables.
-- Person 1 temporarily uses `[INTEGRATION]` to create only root dependency/configuration files.
-- Persons 2 and 3 do not edit until bootstrap files are committed.
-
-Exit criteria:
-
-- Environment installs successfully.
-- Empty app and test commands run.
-- Ownership paths exist.
-
-### Gate 1 - Contract freeze (by minute 75)
-
-Participants: all three; Person 1 is the only editor.
-
-- Walk through every contract in Section 6.
-- Confirm names, nullability, enums, output limits, and error codes.
-- Person 1 commits the shared contracts and ports.
-- Persons 2 and 3 acknowledge them in writing.
-
-Exit criteria:
-
-- Contracts serialize.
-- Ports import.
-- No unresolved naming or behavior question remains.
-
-After this gate, all three work in parallel.
-
-### Gate 2 - Adapter handoff (end of Day 1)
-
-Participants: all three; each owner edits only their files.
-
-`[GIT]` supplies:
-
-- Concrete class name and constructor.
-- Passing Git tests.
-- Example `GitSummary` output.
-- Known limitations.
-
-`[VERIFY]` supplies:
-
-- Concrete class name and constructor.
-- Passing verification tests.
-- Example pass/fail/timeout output.
-- Known limitations.
-
-`[CORE]` supplies:
-
-- Working persistence and routes using fakes.
-- Passing core tests.
-- Expected dependency-construction signature.
-
-Exit criteria:
-
-- Each module passes independently.
-- No one begins cross-module fixes during the handoff meeting.
-- Contract mismatches become explicit owner-tagged tasks.
-
-### Gate 3 - Concrete wiring (start of Day 2)
-
-Participants: Person 1 integrates; Persons 2 and 3 remain available but do not edit core files.
-
-- Person 1 replaces fake ports with concrete adapters.
-- Run a single create -> refresh -> verify flow.
-- Any adapter defect is returned to its owner with exact reproduction steps.
-- Only the owner edits the defective module.
-
-Exit criteria:
-
-- The live server completes the happy path.
-- OpenAPI matches the frozen response models.
-- Person 3 can begin `[QA]` integration tests.
-
-### Gate 4 - Acceptance and release candidate (final four hours)
-
-Participants: all three.
-
-- Person 3 runs the integration suite and demo smoke test.
-- Person 2 fixes only Git failures.
-- Person 1 fixes only API/storage/composition failures.
-- Person 3 fixes only verification/test-harness failures.
-- Person 1 performs the final `[INTEGRATION]` configuration change, if needed, after all owners hand off.
-
-Exit criteria:
-
-- Required tests pass twice from a clean process start.
-- The demo smoke test passes.
-- No endpoint or UI-facing text claims a cut capability.
-- Known limitations are documented.
-
-## 11. Two-day schedule
-
-### Day 1
-
-| Time block | Person 1 - CORE | Person 2 - GIT | Person 3 - VERIFY |
+# Change Assurance Runtime - Three-Person Implementation Plan
+
+## 1. Authority and outcome
+
+This plan implements `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. Only these four subsystems are removed:
+
+1. Event/effect journal.
+2. Process supervisor.
+3. Filesystem tracker.
+4. Tool registry.
+
+The result is a local-first Change Assurance control plane that binds intent, actors, authority, Git state, environment and dependency evidence, assurance results, provider outcomes, and a final Change Passport. It must not claim observation, attribution, replay, or recovery that the four removed primitives would have supplied.
+
+## 2. Scope consequences
+
+| Removed subsystem | Removed capability | What remains |
+| --- | --- | --- |
+| Event journal | Causal event stream, trace timeline, tamper-evident event chain, effect replay | Durable current state, immutable result records, timestamps, and final Passport evidence |
+| Process supervisor | Descendant-process ownership, orphan cleanup, process-tree policy, child-effect attribution | A top-level Agent Launcher that starts or attaches to one invocation and stores a bounded aggregate execution summary |
+| Filesystem tracker | Write interception, before-images, resource versions, uncommitted-file undo, conflict-aware local restoration | Read-only Git state/checkpoints and explicitly approved Git-native recovery on a dedicated Change branch |
+| Tool registry | Tool manifests, MCP/tool inventory, signatures, trust decisions, capability-drift checks | Agent adapter metadata and ordinary dependency provenance only |
+
+These cuts also mean:
+
+- The proposal's replay engine and replay UI are not implementable and are removed.
+- Environment drift may be compared between checkpoints, but cannot be causally attributed to a process.
+- Local uncommitted file recovery and environment rollback are unsupported.
+- Recovery is limited to reversible Git commits and supported provider operations.
+- There will be no `/events`, `/effects`, `/replay`, `/tools`, or filesystem-snapshot APIs or tables.
+
+## 3. Retained product capabilities
+
+- Persistent Change lifecycle and enforceable Change Contract.
+- Actor identity, agent identity, delegations, and scoped authority.
+- Local GitHub credential broker that keeps durable credentials out of agent processes.
+- Policy and risk evaluation before privileged operations.
+- Agent-neutral launch/attach adapters with bounded aggregate results.
+- Git repository validation, checkpoints, status, diff, and branch continuity.
+- Environment passports and checkpoint-to-checkpoint drift comparison.
+- Dependency manifest/lockfile discovery and dependency-change analysis.
+- Assurance discovery, selection, execution, evidence coverage, and contract-deviation checks.
+- GitHub pull-request and CI outcome tracking.
+- Constrained Git/provider recovery with dry-run, approval, and post-action verification.
+- A Change Passport containing intent, authority, evidence, assurance, outcomes, limitations, and recovery status.
+- A real web UI and CLI backed by the same versioned API.
+
+### 3.1 Proposal coverage matrix
+
+| Proposal area | Decision | Owner | Implementation interpretation |
 | --- | --- | --- | --- |
-| 0:00-0:30 | Gate 0 bootstrap | Gate 0 decisions | Gate 0 decisions |
-| 0:30-1:15 | Write/freeze contracts | Review contracts | Review contracts |
-| 1:15-3:30 | Database and Change repository | Git command boundary and repo validation | Command validation and basic runner |
-| 3:30-5:30 | Change/review services | Status parser and tests | Timeout/output bounds and tests |
-| 5:30-7:00 | Routes using fake adapters | Diff/statistics and classification | Finish module tests and handoff notes |
-| 7:00-8:00 | Gate 2 handoff | Gate 2 handoff | Gate 2 handoff |
+| Change object, contract, lifecycle | Keep | `[SD]` | Durable root, guarded state, freshness and idempotency |
+| Actor/agent identity and delegation | Keep | `[SD]` | Scoped, expiring, revocable authority |
+| Credential broker | Keep | `[SD]` | OS-backed secrets and brokered GitHub operations |
+| Process supervisor | Cut | None | Replaced only by a top-level launcher; no process tree |
+| Filesystem tracker | Cut | None | Git checkpoints remain, without filesystem attribution or snapshots |
+| Event/effect journal | Cut | None | Ordinary entity/result persistence remains, without a causal stream |
+| Environment tracker | Keep | `[KB]` | Redacted passports and drift comparison |
+| Dependency tracking | Keep | `[KB]` | Manifest/lockfile comparison without causal attribution |
+| Tool registry/supply-chain trust | Cut | None | No tool inventory, signatures, or trust decisions |
+| Assurance engine | Keep | `[KB]` | Discovery, selection, bounded checks, and evidence coverage |
+| Recovery engine | Keep with reduced boundary | `[SD]` | Git commit and provider compensation only |
+| Replay engine | Remove as dependency | None | Cannot be implemented without the event journal/process/filesystem evidence |
+| Git/PR/CI continuity | Keep | `[KB]` + `[AC]` | Git evidence by `[KB]`; provider outcomes by `[AC]` |
+| Change Passport | Keep | `[SD]` | Aggregated retained evidence plus limitations |
+| UI and CLI | Keep | `[AC]` | Complete real-data workflow and unsupported states |
 
-### Day 2
-
-| Time block | Person 1 - CORE/INTEGRATION | Person 2 - GIT | Person 3 - VERIFY/QA |
-| --- | --- | --- | --- |
-| 0:00-1:30 | Gate 3 concrete wiring | Fix owner-scoped adapter issues | Handoff VERIFY, create QA fixtures |
-| 1:30-3:30 | Error handling and API hardening | Windows/path/binary edge cases | API integration tests |
-| 3:30-5:00 | UI contract support and OpenAPI check | Support integration defects | Demo smoke test and state-transition tests |
-| 5:00-7:00 | Gate 4 owner-scoped fixes | Gate 4 owner-scoped fixes | Gate 4 test/verify cycle |
-| 7:00-8:00 | Release candidate and run instructions | Final Git sign-off | Final acceptance report |
-
-If time slips, drop the optional DELETE endpoint and pagination first. Do not cut validation, output limits, state-transition tests, or the end-to-end demo path.
-
-## 12. Testing strategy
-
-The CML-quality rule is that final acceptance exercises real state through real boundaries. Unit fakes are allowed inside module tests, but the release candidate may not rely on fake Git results, fake verification results, hardcoded readiness, or in-memory-only persistence.
-
-### Required unit coverage
-
-- Contract validation and JSON round trips.
-- Review-state precedence.
-- SQLite create/list/get/update/restart behavior.
-- Git status parsing for all supported states.
-- Diff parsing, binary handling, and truncation.
-- Classification rules and precedence.
-- Verification pass/fail/timeout/error/truncation.
-
-### Required integration coverage
-
-- API with a real temporary SQLite database.
-- API with a real temporary Git repository.
-- API with a real safe verification executable.
-- Full Change creation, refresh, verification, and review-state flow.
-
-### Manual Windows checks
-
-- Repository path containing spaces.
-- Repository path containing non-ASCII characters.
-- `npm.cmd` or another Windows command shim.
-- Detached HEAD display.
-- Server restart retains Change data.
-- UI origin can call the API; an unapproved browser origin cannot read responses.
-
-## 13. Safety and correctness boundaries
-
-- Bind only to loopback.
-- Restrict CORS to the configured UI origin.
-- Never use `shell=True`.
-- Never concatenate repository paths into command strings.
-- Never run Git hooks as part of inspection commands.
-- Never modify, reset, clean, checkout, add, or commit the selected repository.
-- Cap Git patch output and verification output.
-- Cap command duration.
-- Redact unexpected internal exceptions in HTTP responses.
-- Do not describe a passed test command as proof of correctness.
-- Document that timeout applies to the direct child only; descendant-process control is out of scope.
-
-## 14. Definition of backend complete
-
-The backend is complete when all of the following are true:
-
-- A fresh setup command installs and starts the local API.
-- Health and OpenAPI endpoints load.
-- A valid committed Git repository can be registered as a Change.
-- Changes survive a backend restart.
-- Refresh reports tracked and untracked working-tree paths, classifications, statistics, and a bounded tracked-file patch.
-- Passing, failing, timed-out, missing, and disallowed verification commands return stable results.
-- Review state follows the documented precedence.
-- The complete demo smoke test passes.
-- Required unit and integration tests pass.
-- The API contains no endpoints for cut subsystems.
-- The backend never writes to the selected repository except through the explicitly requested verification command's own behavior.
-
-## 15. Handoff templates
-
-### Module handoff
+## 4. Architecture
 
 ```text
-[TAG] HANDOFF to [CORE]
-Status: ready
-Changed files: <exact list>
-Concrete implementation: <import path and class>
-Contract implemented: <port name>
-Verification: <command and result>
-Known limitations: <list>
+Web UI / CLI
+      |
+      v
+Local authenticated API
+      |
+      +-- Change Service + Contract + State Machine
+      +-- Identity / Delegation / Policy
+      +-- Credential Broker ------> GitHub API
+      +-- Agent Launcher ---------> top-level invocation only
+      +-- Git State Tracker ------> local Git repository
+      +-- Environment Tracker ----> host/repository facts
+      +-- Dependency Tracker -----> manifests and lockfiles
+      +-- Assurance Engine -------> bounded checks
+      +-- Outcome Tracker --------> PR and CI state
+      +-- Recovery Engine --------> approved Git/provider compensations
+      +-- Passport Builder
+      |
+      v
+SQLite evidence and state store
 ```
 
-### Contract-change request
+No component is renamed to conceal a removed subsystem. `ExecutionSummary` is one aggregate record per invocation, not an event journal, and the Agent Launcher is not a process supervisor.
+
+## 5. Technology baseline
+
+- Python 3.12+, FastAPI, Pydantic v2, SQLite, and explicit schema migrations.
+- React, TypeScript, and Vite for the web UI.
+- A typed API client pinned to the OpenAPI contract.
+- Typer for the local CLI.
+- Subprocess argument arrays, `shell=False`, bounded output, and bounded runtime.
+- Windows Credential Manager behind a narrow credential-store port; tests use an in-memory fake.
+- GitHub REST APIs behind a provider port. Durable secrets never enter Change records, logs, result payloads, or agent environments.
+
+## 6. Domain model and persistence
+
+All durable entities have stable IDs, UTC timestamps, schema versions, and explicit relationships.
+
+| Entity | Minimum responsibility |
+| --- | --- |
+| `Change` | Intent, repository identity, owner, lifecycle state, risk, timestamps |
+| `ChangeContract` | Allowed/forbidden paths, expected outcomes, required checks, authority ceiling |
+| `Actor` | Human, agent, or service identity and provenance |
+| `Delegation` | Grantor, grantee, scopes, boundary, expiry, revocation |
+| `AgentRun` | Adapter, top-level invocation, start/end, exit status, bounded summary; no process graph |
+| `GitCheckpoint` | Branch, HEAD, status digest, changed paths, bounded diff, capture time |
+| `EnvironmentPassport` | OS/runtime/toolchain/package-manager facts and redacted configuration fingerprints |
+| `DependencyChange` | Ecosystem, package, old/new version, confidence, risk notes |
+| `AssurancePlan` | Selected checks, rationale, required checks, coverage gaps |
+| `AssuranceRun` | Check identity, result, exit code, duration, bounded output, evidence references |
+| `CredentialGrant` | Provider, scopes, expiry, Change binding, revocation; never a provider secret |
+| `ProviderOperation` | GitHub operation, authorization, idempotency key, final result |
+| `Outcome` | PR, CI, artifact, or deployment reference and observed status |
+| `RecoveryPlan` | Compensations, preconditions, unsupported effects, conflicts, approval |
+| `RecoveryAction` | One approved compensation and verified result |
+| `ChangePassport` | Versioned export of retained evidence and limitations |
+
+Forbidden persistence concepts: `Event`, `Effect`, `ProcessTree`, `ResourceVersion`, `BeforeImage`, `FilesystemSnapshot`, `ToolRecord`, and replay traces.
+
+Migrations extend the existing SQLite database in place. Existing Change, Git summary, and verification records must be migrated or exposed through compatibility adapters; user data must not be reset.
+
+## 7. Lifecycle and transition guards
 
 ```text
-[TAG] CONTRACT CHANGE REQUEST to [CORE]
-Current contract: <field/method>
-Problem: <reproduction and reason>
-Smallest proposed change: <exact change>
-Affected tests/consumers: <list>
+DRAFT -> ACTIVE -> LOCALLY_VERIFIED -> REVIEW_READY -> PR_OPEN
+      -> CI_VERIFIED -> ARTIFACT_BUILT -> DEPLOYED -> OBSERVING -> STABLE
 ```
 
-Person 1 either accepts and edits the contract or rejects the request with a workaround. Persons 2 and 3 never edit shared contracts directly.
+Exceptional states are `BLOCKED`, `FAILED`, and `CANCELLED`. Recovery separately uses `PLANNED -> APPROVED -> EXECUTING -> RECOVERED | PARTIAL | RECOVERY_FAILED`; it does not rewrite history.
+
+Required guards:
+
+- `ACTIVE`: valid repository, contract, actor, and authority context.
+- `LOCALLY_VERIFIED`: all required local checks have fresh passing results for the current Git checkpoint.
+- `REVIEW_READY`: contract deviations are resolved or accepted and evidence gaps are visible.
+- `PR_OPEN`: the provider operation was authorized and the PR identity recorded.
+- `CI_VERIFIED`: required checks pass for the recorded commit SHA.
+- Later states require real adapter evidence; unsupported stages are skipped, not fabricated.
+- `STABLE`: configured observation criteria are met with no unresolved recovery action.
+
+Transitions use optimistic concurrency and idempotency. A new Git checkpoint invalidates stale assurance and downstream readiness.
+
+## 8. Versioned API
+
+- `/api/v1/changes`: create, list, retrieve, update contract, transition, cancel.
+- `/api/v1/changes/{id}/runs`: launch, attach metadata, stop top-level invocation if supported, retrieve aggregate result.
+- `/api/v1/changes/{id}/git`: validate, checkpoint, status, diff, compare.
+- `/api/v1/changes/{id}/environment`: capture and compare drift.
+- `/api/v1/changes/{id}/dependencies`: scan and retrieve changes/risk.
+- `/api/v1/changes/{id}/assurance`: discover, plan, run, retrieve.
+- `/api/v1/actors` and `/api/v1/delegations`: identity and scoped grants.
+- `/api/v1/providers/github`: connection, grants, PR actions, CI refresh, revoke.
+- `/api/v1/changes/{id}/outcomes`: provider outcome summaries.
+- `/api/v1/changes/{id}/recovery`: preview, approve, execute, verify.
+- `/api/v1/changes/{id}/passport`: build, retrieve, export.
+- `/api/v1/capabilities`: supported, unavailable, and configured capabilities.
+
+Every mutation accepts an idempotency key. Errors retain the safe `{ "error": { "code", "message", "details" } }` envelope. Secrets, raw environment values, and credential locations never appear in responses.
+
+## 9. Person 1 - `[SD]` platform, authority, and recovery
+
+Exclusive paths: `backend/app/contracts/`, `core/`, `identity/`, `policy/`, `credentials/`, `recovery/`, `passport/`, `backend/app/main.py`, `backend/migrations/`, and matching unit-test directories.
+
+1. **P1.1 Migration and compatibility foundation**
+   - Ordered migrations and schema-version tracking.
+   - Preserve current data/API behavior during migration.
+   - Repository/unit-of-work boundaries and optimistic concurrency.
+2. **P1.2 Contracts and state machine**
+   - Freeze entities, ports, requests, responses, and errors.
+   - Implement guarded transitions, freshness, capabilities, and idempotency.
+3. **P1.3 Local API identity**
+   - Loopback by default, per-install/session bearer credential, and origin/CSRF defenses.
+4. **P1.4 Actors, delegation, policy, and risk**
+   - Scoped, expiring, revocable delegation.
+   - Path, operation, provider, and risk policy with stable denial reasons.
+5. **P1.5 GitHub credential broker**
+   - Durable provider credentials only in Windows Credential Manager.
+   - Short-lived internal capability grants bound to actor, Change, scopes, and expiry.
+   - Proxy allowed GitHub calls and redact every secret boundary.
+6. **P1.6 Recovery engine**
+   - Dry-run and approved revert of commits on a dedicated Change branch.
+   - Test in a temporary worktree, report conflicts, create a revert commit, verify new SHA.
+   - Provider compensation for Change-created draft PRs/branches when policy permits.
+   - Explicitly mark local uncommitted files, environment changes, and unknown effects unsupported.
+7. **P1.7 Passport and composition**
+   - Build the Passport from all ports and own application wiring, release migrations, and capability reporting.
+
+## 10. Person 2 - `[KB]` evidence, execution, and assurance
+
+Exclusive paths: `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, and matching unit-test directories.
+
+1. **P2.1 Git State Tracker**
+   - Extend inspection into named checkpoints and comparisons.
+   - Record branch/HEAD/status/diff without normal repository mutation.
+   - Detect staleness, branch movement, conflicts, and detached HEAD.
+2. **P2.2 Agent Launcher**
+   - Codex, Claude, and generic adapters over one launch port.
+   - Validate command, cwd, environment allowlist, timeout, and output bounds.
+   - Store top-level aggregate results only and expose lack of descendant control.
+   - Attach mode records supplied metadata without pretending to observe execution.
+3. **P2.3 Environment Tracker**
+   - Capture redacted Windows/OS, runtime, compiler, package-manager, selected environment-key fingerprints, and repository facts.
+   - Deterministically compare drift; never persist secret values.
+4. **P2.4 Dependency Tracker**
+   - Parse supported Python/Node manifests and lockfiles.
+   - Identify direct changes, lockfile mismatch, risk, and unsupported ecosystems.
+   - Never claim which process caused a change.
+5. **P2.5 Assurance engine**
+   - Discover pytest, Jest/Vitest, lint, type-check, build, and security/dependency checks.
+   - Select checks from contract, path classification, and repository configuration.
+   - Execute bounded checks, store structured results, invalidate stale results, expose coverage gaps.
+6. **P2.6 Deviation and coverage analysis**
+   - Compare paths, dependencies, and environment drift with the contract.
+   - Produce deterministic findings consumed by lifecycle and UI.
+
+## 11. Person 3 - `[AC]` experience, outcomes, and quality
+
+Exclusive paths: `frontend/`, `backend/app/providers/`, `outcomes/`, `cli/`, `backend/tests/integration/`, `backend/tests/e2e/`, and `scripts/`.
+
+1. **P3.1 Frontend foundation**
+   - React/TypeScript app, typed client, routing, auth bootstrap, error boundary, accessible design system.
+   - Loading, empty, stale, unsupported, denied, failure, and success states.
+2. **P3.2 Onboarding and contract UX**
+   - Repository, actor, intent, paths, outcomes, required checks, and authority review.
+3. **P3.3 Active Change workspace**
+   - Lifecycle, run summary, Git checkpoint, deviations, environment drift, dependencies, assurance, gaps.
+   - No timeline and no process/file attribution language.
+4. **P3.4 GitHub and outcomes**
+   - GitHub operations only through Person 1's broker/port.
+   - PR and required CI state tied to commit SHA.
+   - Artifact/deployment only when real adapters exist; otherwise unsupported.
+5. **P3.5 Recovery and Passport UX**
+   - Dry-run actions, conflicts, unsupported effects, authority, confirmation, result, export.
+6. **P3.6 CLI**
+   - Equivalent create/status/checkpoint/assure/outcome/recovery/passport flows through the API; no policy bypass.
+7. **P3.7 Integration and E2E QA**
+   - Temporary repositories, fake GitHub contract server, browser tests, accessibility, failure injection, release smoke tests.
+
+## 12. Parallel execution and intersection gates
+
+### Gate 0 - Scope and contracts
+
+Owner `[SD]`; reviewers `[KB]` and `[AC]`. Freeze cuts, capability matrix, ports, IDs, errors, and OpenAPI names. No consumer implementation begins until all three acknowledge the handoff.
+
+Exit: contract tests compile, forbidden entities/endpoints are absent, and current tests pass.
+
+### Gate 1 - Independent foundations
+
+- `[SD]`: migrations, lifecycle, local auth, identity, policy.
+- `[KB]`: Git checkpoints, launcher, environment/dependencies, assurance discovery.
+- `[AC]`: frontend shell with contract fixtures, provider fake, E2E harness.
+
+No shared source edits. Feedback is a contract-change request to `[SD]`.
+
+Exit: each module passes unit/contract tests and has a formal handoff.
+
+### Gate 2 - Evidence composition
+
+Single integration window owned by `[SD]`: `[KB]` hands off ports, `[SD]` wires lifecycle/freshness/risk/Passport, then `[AC]` updates the typed client after OpenAPI refreezes.
+
+Exit: create -> activate -> checkpoint -> environment/dependencies -> assurance -> review-ready passes through the API.
+
+### Gate 3 - Authority and provider integration
+
+- `[SD]` provides broker/policy ports and an in-memory provider double.
+- `[AC]` implements GitHub operations only through those ports.
+- `[KB]` supplies evidence/risk inputs and never handles secrets.
+
+Exit: scoped operations succeed; expired, revoked, wrong-Change, and over-scoped grants fail; credentials never reach agent environment, logs, SQLite, or responses.
+
+### Gate 4 - UI vertical slices
+
+`[AC]` integrates frozen APIs. Backend defects return to the owning tag; `[AC]` does not patch backend-owned files.
+
+Exit: browser tests cover onboarding, evidence, assurance, provider outcomes, denied/unsupported states, and Passport export with real responses.
+
+### Gate 5 - Recovery integration
+
+- `[SD]`: recovery plan/execution and temporary-worktree safety.
+- `[KB]`: pre/post Git checkpoints and assurance verification.
+- `[AC]`: confirmation UX, provider compensation adapter, E2E scenarios.
+
+Exit: committed Change-branch recovery creates a verified revert; conflicts cause no target mutation; unsupported effects are visible.
+
+### Gate 6 - Release candidate
+
+`[SD]` freezes integration. `[AC]` runs the full release matrix; owners fix only their modules. Context and acceptance evidence are updated after results are known.
+
+Exit: all section 17 criteria pass from a clean clone and an upgraded existing database.
+
+## 13. Shared ports
+
+Person 1 owns signatures; concrete owners are:
+
+- `GitStatePort`, `AgentLauncherPort`, `EnvironmentPort`, `DependencyPort`, `AssurancePort` -> `[KB]`.
+- `CredentialStorePort`, `CredentialBrokerPort`, `PolicyPort`, `RecoveryPort`, `PassportPort` -> `[SD]`.
+- `ProviderPort`, `OutcomePort` -> `[AC]`.
+
+Ports exchange immutable Pydantic models, not dictionaries. Side effects require authority context and an idempotency key. Changes require owner review and a versioned handoff.
+
+## 14. Recovery semantics
+
+Supported:
+
+- Preview/revert known commits on a dedicated Change branch.
+- Conflict detection in a temporary worktree before target mutation.
+- New revert commits; never reset/rewrite shared history.
+- Authorized compensation of Change-created provider objects.
+- Post-recovery Git capture and required assurance checks.
+
+Unsupported:
+
+- Restoring uncommitted/ignored files or filesystem metadata.
+- Reversing arbitrary shell, package-manager, service, process, or host effects.
+- Recovering effects not represented by known commits/provider objects.
+- Recovery without explicit human approval.
+
+Every preview lists actions, unsupported effects, assumptions, conflicts, and evidence freshness. Failed or partial recovery remains visible in the Passport.
+
+## 15. Security and privacy
+
+- Loopback-only by default; non-loopback requires an explicit secure deployment mode.
+- Authenticate non-health routes and authorize mutations.
+- Store credentials only through the credential-store port; redact secrets before logging.
+- Give subprocesses an allowlisted environment without broker credentials.
+- Canonicalize repository paths and prevent constrained-path escape.
+- Use argument arrays and `shell=False`; enforce executable/timeout policy.
+- Bound patch, output, and database payload sizes.
+- Never label a Change safe merely because checks passed.
+
+## 16. Verification plan
+
+- Migration tests against the current schema and populated fixtures.
+- State, concurrency, idempotency, freshness, policy, and delegation tests.
+- Git fixtures for staged/unstaged/untracked/rename/conflict/detached/branch movement and spaces.
+- Launcher validation/timeout/output/startup-error tests plus explicit descendant-control limitation.
+- Environment redaction/drift and dependency parser fixtures.
+- Assurance discovery/selection/staleness/gap/timeout tests.
+- Broker tests for revocation, expiry, binding, scope denial, and secret non-disclosure.
+- GitHub adapter contract tests against a local fake, including rate limits and partial failure.
+- Disposable-repository recovery tests for isolation, approval, conflict safety, idempotency, and verification.
+- API tests for all envelopes and forbidden endpoint absence.
+- Browser E2E, accessibility, keyboard, responsive, restart-persistence, clean-clone, and upgrade smoke tests.
+
+## 17. Definition of done
+
+1. A user creates a Change Contract, selects an actor/agent, and sees authority before activation.
+2. The app launches or attaches to a top-level run without claiming descendant supervision.
+3. Git, environment, and dependency checkpoints are real, persisted, comparable, and visibly fresh/stale.
+4. Assurance is evidence-selected, bounded, and gates lifecycle transitions.
+5. GitHub credentials remain brokered and never enter agent environment or application data.
+6. PR and CI results are tied to the correct commit SHA.
+7. The Passport exports real intent, actors, authority, checkpoints, deviations, assurance, outcomes, limitations, and recovery status.
+8. Supported recovery requires preview/approval, is conflict-safe, and is verified.
+9. UI and CLI show real missing, stale, unsupported, denied, failed, and partial states.
+10. Event journal, process supervisor, filesystem tracker, tool registry, and replay are absent from code, storage, API, and claims.
+11. Existing data upgrades successfully and the complete release matrix passes.
+
+## 18. Handoff format
+
+```text
+[TAG] HANDOFF to [TAG]
+Work item: P1.2 | P2.4 | P3.3
+Status: ready | blocked
+Changed paths: <exact list>
+Contract/version: <port, endpoint, schema, OpenAPI hash>
+Behavior and limitations: <facts>
+Verification: <commands and results>
+Consumer action: <next action>
+```
+
+No handoff may claim a capability that depends on one of the four removed subsystems.

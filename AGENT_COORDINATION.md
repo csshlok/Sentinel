@@ -1,114 +1,141 @@
-# Multi-Agent Coordination Rules
+# Three-Person Coordination Rules
 
 ## Purpose
 
-All contributors work in one shared working tree. These rules prevent concurrent agents from editing the same code, documents, or generated artifacts.
+Three contributors share one working tree. These rules give every path one owner, make intersections explicit, and prevent simultaneous code or prose edits.
 
-## Required context read order
+## Required read order
 
-Before claiming work, every agent must read:
+Before claiming work, read completely:
 
 1. `OVERALL_CONTEXT.md`.
 2. `PROJECT_CONTEXT.md`.
-3. The implementation plan governing its task.
-4. This coordination document.
+3. `BACKEND_IMPLEMENTATION_PLAN.md`.
+4. `AGENT_COORDINATION.md`.
+5. The contracts and tests consumed by the assignment.
 
-The agent's claim must state that these documents were read. If they conflict, the agent stops before editing and reports the exact conflict.
+The PDF proposal is product authority; the context documents record the approved cuts and implementation interpretation. Report conflicts before editing.
 
-## Required task tag format
+## Permanent people and tags
 
-Every task, status update, commit, and handoff must begin with one owner tag:
+| Person | Tag | Role | Exclusive paths |
+| --- | --- | --- | --- |
+| Person 1 | `[SD]` | Platform, contracts, lifecycle, identity, policy, credential broker, recovery, Passport, integration | `backend/app/contracts/`, `core/`, `identity/`, `policy/`, `credentials/`, `recovery/`, `passport/`, `backend/app/main.py`, `backend/migrations/`, matching unit tests |
+| Person 2 | `[KB]` | Git evidence, agent launcher, environment/dependency tracking, assurance | `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, matching unit tests |
+| Person 3 | `[AC]` | Frontend, GitHub/provider outcomes, CLI, integration/E2E QA | `frontend/`, `backend/app/providers/`, `outcomes/`, `cli/`, `backend/tests/integration/`, `backend/tests/e2e/`, `scripts/` |
 
-```text
-[TAG] short description
-```
+No additional implementation tag creates a fourth owner. `[INTEGRATION]` is a temporary activity led by `[SD]`, not a separate person or permission to edit arbitrary files.
 
-Use one primary tag per task. A task may name a dependency tag, but two tags must not jointly own the same files.
+## Root files and documentation
 
-## Ownership tags
+Root configuration, dependency manifests, lockfiles, OpenAPI snapshots, and Markdown context are single-editor resources owned by `[SD]` during declared integration windows.
 
-| Tag | Owns | Planned paths |
-| --- | --- | --- |
-| `[CORE]` | backend app, lightweight Change model, persistence, shared contracts, API routes | `backend/app/main.py`, `backend/app/core/`, `backend/app/contracts/`, `backend/tests/core/` |
-| `[GIT]` | read-only Git inspection and path classification | `backend/app/git/`, `backend/tests/git/` |
-| `[VERIFY]` | one-shot verification command validation and execution | `backend/app/verification/`, `backend/tests/verification/` |
-| `[UI]` | screens, components, styles, client data hooks | `src/ui/`, `src/components/`, `src/styles/` |
-| `[QA]` | backend integration fixtures, end-to-end tests, demo validation | `backend/tests/integration/`, `backend/fixtures/`, `scripts/` |
-| `[DOCS]` | Markdown documentation, demo script, architecture notes | `*.md`, `docs/` |
-| `[INTEGRATION]` | dependency upgrades, configuration, final wiring, merge-conflict resolution | root config files only, after notifying affected owners |
+- `[KB]` and `[AC]` submit requested dependency/configuration/doc wording in a handoff.
+- `[SD]` applies the accepted change after checking for active claims.
+- Implementation-history entries use the actual contributor tag and timestamp even when `[SD]` transcribes them.
+- No contributor reformats or rewrites another owner's prose or paths incidentally.
 
-If the final project structure differs, the first `[CORE]` agent must update this table before other work begins.
+## Claim before edit
 
-## Exclusivity rule
-
-An agent may edit only files under its assigned tag's paths. No agent may change another tag's owned file, including a one-line import, copy change, formatting pass, or comment, unless the current owner explicitly hands it off in writing.
-
-Root-level files (`package.json`, lockfiles, build configuration, `.gitignore`) are owned by `[INTEGRATION]`. Other agents request required dependency/configuration changes; they do not make them.
-
-## Claim-before-edit protocol
-
-Before reading deeply, editing, or generating files, an agent must post a claim in the shared task channel or issue tracker:
+Post this before changing files:
 
 ```text
 [TAG] CLAIM
-Goal: <one concrete outcome>
-Files: <exact files or directory>
-Interfaces consumed: <API/type names, if any>
-Interfaces provided: <API/type names, if any>
-Context read: OVERALL_CONTEXT.md, PROJECT_CONTEXT.md, <implementation plan>, AGENT_COORDINATION.md
+Work item: P1.2 | P2.4 | P3.3
+Goal: <one concrete result>
+Files: <exact paths or one owned directory>
+Interfaces consumed: <names and versions>
+Interfaces provided: <names and versions>
+Context read: all four required documents
+Expected handoff: <recipient and gate>
 ```
 
-Do not begin work until no active claim overlaps the requested files. A directory claim blocks all files beneath it unless it explicitly lists exceptions.
+A directory claim includes its descendants. Do not start if a claim overlaps or if an uncommitted change exists in the target path without a documented owner.
 
-## Interface-first handoffs
+## Exclusive-edit rule
 
-Cross-tag work happens through a written handoff, never simultaneous edits.
+- Edit only paths assigned to your permanent tag.
+- A one-line import, generated client, formatting pass, test fixture, or copy change is still an edit and follows ownership.
+- Never use a broad formatter over another owner's path.
+- Never repair another owner's defect directly. Return a reproducible failing test or exact evidence to that owner.
+- The only exception is a declared `[SD]` integration window after every affected owner hands off and stops editing the shared target.
+
+## Contracts and intersections
+
+`[SD]` owns shared contracts and signatures. `[KB]` and `[AC]` consume them and own their concrete implementations.
+
+Required intersection order:
+
+1. `[SD]` proposes/finalizes contract and contract tests.
+2. Both consumers acknowledge the version or request a change in writing.
+3. Concrete work proceeds independently.
+4. Provider emits a handoff with tests and limitations.
+5. `[SD]` wires backend composition in a declared integration window.
+6. `[AC]` updates the typed client only after OpenAPI is re-frozen.
+
+An owner must not change a consumed contract silently. Use:
+
+```text
+[TAG] CONTRACT CHANGE REQUEST to [SD]
+Contract/version: <name>
+Reason: <specific blocked behavior>
+Proposed compatible change: <shape>
+Affected consumers/tests: <list>
+```
+
+## Handoffs
 
 ```text
 [TAG] HANDOFF to [TAG]
+Work item: <plan ID>
 Status: ready | blocked
-Changed files: <exact list>
-Contract: <types, endpoint, response payload, or behavior>
-Verification: <command and result>
+Changed paths: <exact list>
+Contract/version: <name/hash>
+Behavior and limitations: <facts>
+Verification: <commands and results>
+Consumer action: <next step>
 ```
 
-The receiving agent must acknowledge the handoff before relying on it. If a contract must change, its owning tag changes it and emits a new handoff.
+The receiver acknowledges before integration. A handoff transfers an interface, not permanent path ownership.
 
-## Text and documentation ownership
+## Integration locks
 
-Only `[DOCS]` edits prose files. Code owners may provide proposed wording in their handoff, but must not directly edit README files, context documents, demo scripts, or other agent-owned text.
+At Gates 2, 3, 5, and 6 in the plan, `[SD]` posts an integration lock naming exact paths and participating handoffs. Owners stop edits to those paths until `[SD]` posts the result. Integration commits contain only wiring, migrations, root configuration, and conflict resolution; defects return to their permanent owner.
 
-UI display copy belongs to `[UI]`; product claims must remain consistent with `PROJECT_CONTEXT.md`. `[DOCS]` reviews public-facing claims before the demo.
+## Scope guardrails
 
-`OVERALL_CONTEXT.md` contains stable product context. `PROJECT_CONTEXT.md` contains the active slice. `[DOCS]` must keep those layers separate and may not copy temporary implementation details into overall context.
+The product implements the PDF proposal except for:
+
+- Event/effect journal.
+- Process supervisor.
+- Filesystem tracker.
+- Tool registry.
+
+Stop and report a scope conflict if work introduces those systems, a replay engine, process-tree attribution, local-file snapshots/undo, or tool-trust records. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, and constrained Git/provider recovery remain in scope.
 
 ## Git hygiene
 
-- Check `git status --short` before editing and before committing.
-- Never discard, reset, stash, reformat, or move another agent's changes.
-- Keep commits scoped to one owner tag: `[UI] Add change review summary`.
-- Do not amend or rebase another agent's commit.
-- Do not edit lockfiles directly; route them through `[INTEGRATION]`.
-- Resolve a conflict only if all involved owners have handed it to `[INTEGRATION]`.
+- Run `git status --short` before editing, before pulling, and before committing.
+- Preserve all unrelated changes; never reset, discard, stash, move, or reformat another person's work.
+- Commit one coherent work item with the permanent tag: `[KB] Add environment passport comparison`.
+- Do not amend, rebase, or force-push another person's commits.
+- Pull/rebase only when the shared working tree is clean and no integration lock is active.
+- Lockfiles are generated in an `[SD]` integration window, never hand-edited.
+- Record test commands and results in the handoff and context log.
 
-## Stop conditions
+## Failure and stop conditions
 
-Stop and report rather than guessing when:
+Stop before editing when:
 
-- A needed file has an active claim by another tag.
-- A required contract is undefined or conflicts with an existing handoff.
-- Work needs a root configuration or dependency change.
-- The requested feature expands beyond the prototype scope in `PROJECT_CONTEXT.md`.
+- A claim or integration lock overlaps the target.
+- The required contract is absent, ambiguous, or incompatible.
+- The task requires another owner's path.
+- A migration could lose existing user data.
+- A credential could enter logs, SQLite, API payloads, or an agent environment.
+- Product behavior would imply a removed capability.
 
-In particular, stop if a task introduces an event journal, process supervision, filesystem tracking/snapshots, recovery, or a tool registry. Those systems have been explicitly cut.
+When stopped, provide the exact path, interface, error, and owner needed. Do not broaden your claim to work around the block.
 
-## Recommended execution order
+## Completion standard
 
-1. `[INTEGRATION]` creates root configuration and the backend package skeleton during a declared bootstrap window.
-2. `[CORE]` freezes contracts; `[GIT]` and `[VERIFY]` acknowledge them before implementation.
-3. `[CORE]`, `[GIT]`, and `[VERIFY]` work in parallel in their exclusive paths.
-4. `[CORE]` wires handed-off adapters; adapter owners fix defects only in their own paths.
-5. The `[VERIFY]` owner switches to `[QA]` after handing off verification and runs integration/demo tests.
-6. `[UI]` integrates only after the API handoff; `[DOCS]` finalizes product claims and the demo script.
-
-The detailed backend ownership, contracts, handoff gates, and schedule are defined in `BACKEND_IMPLEMENTATION_PLAN.md`.
+An item is ready for handoff only when implementation, unit tests, failure behavior, security boundaries, user-visible status, and documentation wording agree. Passing tests alone do not authorize claims of process attribution, complete observation, safety, replay, or full local recovery.

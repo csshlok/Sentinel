@@ -4,7 +4,7 @@
 
 This is the stable, product-level context for the repository. It explains why the product exists, the long-term system boundary, the language we use, and the engineering principles that should survive individual implementation phases.
 
-`PROJECT_CONTEXT.md` is the operational context for the current two-day prototype. It may narrow this document, but it must not silently contradict it. `BACKEND_IMPLEMENTATION_PLAN.md` describes the current backend execution plan. `AGENT_COORDINATION.md` governs ownership and collaboration.
+`PROJECT_CONTEXT.md` is the operational context for the active proposal implementation. It records the approved subsystem cuts and may refine this document without silently contradicting it. `BACKEND_IMPLEMENTATION_PLAN.md` contains the full three-person execution plan. `AGENT_COORDINATION.md` governs exclusive ownership and collaboration.
 
 ## Context hierarchy
 
@@ -22,38 +22,34 @@ When documents disagree, stop and report the conflict. Do not choose whichever d
 
 AI coding tools can make useful changes quickly, but developers still need a trustworthy way to connect intended work with actual repository changes and verification evidence. The broader Change Assurance vision is to make software changes attributable, bounded, observable, verifiable, and recoverable where technically possible.
 
-The long-term root object is a **Change**: a persistent record connecting intent, actors, effects, evidence, authority, and outcomes.
+The root object is a **Change**: a persistent record connecting intent, actors, scoped authority, observable evidence, decisions, and outcomes.
 
-## Long-term product direction
+## Product direction
 
-The complete Change Assurance Runtime may eventually include:
+The repository now targets the retained Change Assurance Runtime from the project proposal:
 
-- Change lifecycle and evidence records.
-- Native process and file-effect observation.
-- Conflict-aware local recovery.
-- Environment provenance.
-- Scoped agent identity and credential brokering.
-- Tool provenance and trust decisions.
-- Trace replay and debugging.
-- Git, pull-request, CI, artifact, and deployment continuity.
+- Change lifecycle, contracts, and evidence freshness.
+- Scoped actor/agent identity, delegation, policy, and credential brokering.
+- Top-level agent launch/attach with bounded aggregate results.
+- Git, environment, and dependency checkpoints.
+- Evidence-selected assurance and contract-deviation analysis.
+- Pull-request, CI, artifact, and deployment continuity where real adapters exist.
+- Approved Git/provider compensation and a final Change Passport.
 
-These are future architectural directions, not claims about the current prototype.
+Event journaling, process supervision, filesystem tracking, and the tool registry are deliberately excluded. Capabilities that require those primitives are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed.
 
-## Current product slice
+## Current product scope
 
-The current build is intentionally narrower: a local Git-based Change Review prototype. It records intent, reads the selected repository's current Git working tree, runs one approved verification command, and presents evidence for human review.
-
-The following systems are explicitly cut from the current implementation:
+The current build implements the proposal without a time-box, except for these four approved cuts:
 
 - Event/effect journal.
 - Process supervision and descendant attribution.
-- Filesystem tracking, snapshots, recovery, and undo.
+- Filesystem tracking, snapshots, local-file recovery, and undo.
 - Tool registry and tool trust.
-- Credential broker.
-- Environment provenance.
-- Replay.
 
-The current coding agent operates outside the app. Git is the sole source of code-change information.
+Replay is also unavailable because it depends on the removed event journal. Descendant attribution and cleanup depend on the removed process supervisor. Uncommitted local recovery depends on filesystem tracking. Tool trust depends on the tool registry. These consequences must remain visible in APIs, UI copy, Passport limitations, and recovery previews.
+
+The already implemented Git review backend is the migration foundation, not the final scope. New work adds the retained lifecycle, authority, evidence, assurance, outcomes, recovery, UI, and CLI capabilities around it.
 
 ## Product invariants
 
@@ -67,11 +63,11 @@ Reading a Git diff is not filesystem attribution. Running a command is not proce
 
 ### Local-first behavior
 
-The prototype operates against a repository chosen by the user and exposes a loopback-only API. Core review functionality must not require a cloud account, hosted database, or external provider.
+The runtime operates against a user-selected repository and exposes a loopback-only authenticated API by default. Local lifecycle/evidence/assurance remains useful without a hosted database or provider account; GitHub features require an explicit provider connection.
 
 ### Selected repositories are user data
 
-Inspection code must be read-only. The backend must not reset, clean, checkout, stage, commit, or otherwise mutate the selected repository. The only exception is behavior caused by a verification command the user explicitly requests; that boundary must be documented rather than hidden.
+Evidence collectors are read-only. The backend must not reset, clean, checkout, stage, commit, or otherwise mutate a selected repository during observation. The only runtime-owned mutation is a separately previewed and explicitly approved recovery action on a dedicated Change branch, performed conflict-first in a temporary worktree and recorded as a new commit. User-requested agent/assurance commands may independently modify the repository; that risk must be visible.
 
 ### Contracts are authoritative
 
@@ -81,16 +77,16 @@ Shared request, response, and error contracts are versioned coordination points.
 
 Unsupported capability is shown as unsupported. Missing evidence is shown as missing. Errors are not converted into optimistic statuses. The system must not imply assurance it did not establish.
 
-### Deterministic review logic
+### Deterministic decision logic
 
-Given the same Change metadata, Git state, and verification result, the backend must return the same classifications and review state. Classification and state rules belong in pure, tested functions wherever possible.
+Given the same Change Contract, authority, checkpoints, assurance, and outcomes, the backend returns the same classifications, findings, and permitted lifecycle transitions. Policy, freshness, classification, and transition rules belong in pure tested functions wherever possible.
 
 ## CML working standard
 
 This project must use the same context discipline and implementation standard expected from CML:
 
 - Stable overall context is separated from the current implementation slice.
-- Scope cuts and non-goals are explicit and enforced in code review.
+- Scope cuts and their dependent limitations are explicit and enforced in code review.
 - User-visible states are backed by real application data, not placeholder success values.
 - Interfaces are defined before parallel implementation.
 - Each subsystem has one owner and an explicit handoff contract.
@@ -100,37 +96,38 @@ This project must use the same context discipline and implementation standard ex
 - Product copy reflects actual capability and avoids aspirational claims.
 - A feature is complete only when implementation, tests, error handling, and user-visible state agree.
 
-The available local CML export contains application UI and an audit, but not the canonical CML project-context or overall-context documents. If those canonical documents are added to the workspace, `[DOCS]` must compare their structure and update this context system without weakening the project-specific scope decisions above.
+The available local CML export contains application UI and an audit, but not the canonical CML project-context or overall-context documents. If those canonical documents are added to the workspace, `[SD]` must compare their structure and update this context system after `[KB]` and `[AC]` review, without weakening the project-specific scope decisions above.
 
 ## Core vocabulary
 
-- **Change**: the user's intent and the review evidence attached to one repository task.
-- **Working-tree change**: a path reported by Git relative to the current HEAD.
-- **Verification**: one explicitly requested test or build command and its final result.
-- **Evidence**: Git or verification data returned by the backend.
-- **Review state**: a deterministic summary of available evidence, not a correctness score.
-- **Ready for human review**: changes exist and the latest verification passed; a human still decides whether to accept them.
+- **Change**: the durable root joining intent, actors, authority, evidence, decisions, and outcomes.
+- **Change Contract**: expected paths/outcomes/checks and maximum delegated authority.
+- **Actor / Delegation**: identity and a scoped, expiring, revocable grant.
+- **Git checkpoint**: repository state captured at a named lifecycle boundary.
+- **Environment passport**: redacted, comparable host/toolchain/repository facts.
+- **Assurance**: selected checks and evidence coverage; never proof of correctness.
+- **Outcome**: provider-observed PR, CI, artifact, or deployment state.
+- **Recovery**: supported Git/provider compensation after preview and approval; not general rollback.
+- **Change Passport**: versioned export of retained evidence, decisions, gaps, outcomes, and recovery status.
 
-## Current architecture boundary
+## Architecture boundary
 
 ```text
-External coding agent or developer
-              |
-              v
-       Local Git repository
-              ^
-              | read-only Git inspection
-              |
-Web UI -> Local API -> Change store
-                    -> Git adapter
-                    -> One-shot verification runner
+Web UI / CLI -> Authenticated local API -> Change lifecycle and policy
+                                      -> Identity and credential broker -> GitHub
+                                      -> Top-level Agent Launcher
+                                      -> Git/environment/dependency evidence
+                                      -> Assurance engine
+                                      -> Outcome tracker
+                                      -> Constrained recovery
+                                      -> Change Passport
 ```
 
-No current component sits between the coding agent and the operating system.
+The Agent Launcher invokes or references only the top-level agent. No component supervises the descendant process tree, intercepts filesystem operations, or records a causal event stream.
 
 ## Quality bar
 
-Backend work is acceptable only when:
+Product work is acceptable only when:
 
 - Inputs are validated at the boundary.
 - Errors have stable codes and safe messages.
@@ -139,19 +136,19 @@ Backend work is acceptable only when:
 - Output and execution time are bounded.
 - Persistence survives restart.
 - Tests cover success, empty, failure, timeout, and malformed-input states.
-- The end-to-end demo uses a real temporary Git repository and real API calls.
-- No final demo screen depends on mock data.
+- End-to-end acceptance uses a real temporary Git repository, real API calls, and contract-faithful provider fakes where external mutation is unsafe.
+- No release screen depends on mock data.
 - Documentation matches actual behavior.
 
 ## Decision authority
 
-- This file owns stable product principles and long-term vocabulary.
+- This file owns stable product principles and vocabulary.
 - `PROJECT_CONTEXT.md` owns the active release scope.
 - An implementation plan owns task sequencing but cannot expand scope.
 - API contracts own integration behavior once frozen.
 - Tests own demonstrated acceptance behavior.
 
-Changing a stable product invariant requires an explicit decision recorded by `[DOCS]` and acknowledged by `[CORE]`, `[UI]`, and `[QA]`. Scope may be reduced in `PROJECT_CONTEXT.md`; expanding it requires revising the plan and ownership map before implementation.
+Changing a stable product invariant requires an explicit decision recorded by `[SD]` and acknowledged by `[KB]` and `[AC]`. Scope changes require synchronized revisions to `PROJECT_CONTEXT.md`, the implementation plan, and the ownership map before implementation.
 
 ## Completion principle
 
@@ -160,6 +157,14 @@ The product is not complete because a happy-path screen renders. It is complete 
 ## Implementation record
 
 Implementation records describe completed work without changing the stable product principles above.
+
+### `[SD]` - 2026-09-18 23:13:27 -04:00 - Proposal implementation scope reset
+
+The proposal is now the active product baseline and the two-day prototype limit has been removed. The retained architecture includes Change lifecycle/contracts, identity and scoped authority, credential brokering, a top-level Agent Launcher, Git/environment/dependency evidence, assurance, GitHub outcomes, constrained Git/provider recovery, Passport, UI, and CLI.
+
+Only the event journal, process supervisor, filesystem tracker, and tool registry are cut. Replay, descendant attribution, local-file/environment rollback, and tool trust are explicitly unsupported because the removed primitives are prerequisites. The detailed work is divided across `[SD]`, `[KB]`, and `[AC]` with exclusive paths and gated integration in `BACKEND_IMPLEMENTATION_PLAN.md` and `AGENT_COORDINATION.md`.
+
+Earlier records below describe the completed Git review foundation at the time it was built. They remain historical evidence and do not define the new final product scope.
 
 ### `[SD]` - 2026-09-18 22:22:49 -04:00 - Person 1 CORE foundation
 
