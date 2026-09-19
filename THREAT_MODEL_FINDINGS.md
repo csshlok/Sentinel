@@ -27,15 +27,17 @@ Legend: 🔴 Open | ✅ Fixed | ➖ Closed (accepted design, not a bug)
 | 7 | Risk-based approval gate is dead code | **AC** (engine) / **SD** (call sites) | 🔴 Open — needs both |
 | 8 | Case-sensitive forbidden-path matching | **AC** | ✅ Fixed |
 | 9 | Tool identity collision, `(name, version)` key | **SD** | 🔴 Open |
-| 10 | TOCTOU between trust-check hash and execution | **KB** | 🔴 Open — deferred |
-| 11 | Naive substring-only secret redaction in captured output | **KB** | 🔴 Open — deferred |
+| 10 | TOCTOU between trust-check hash and execution | **KB** | ✅ Fixed (by AC, in KB's path) |
+| 11 | Naive substring-only secret redaction in captured output | **KB** | ✅ Fixed (by AC, in KB's path) |
 | 12 | API bearer token file has no restrictive permissions | **SD** | 🔴 Open |
 | 13 | Recovery execution not bound to fresh HEAD | **AC**(engine)/**SD**(fixed it) | ✅ Fixed by SD |
 | 14 | `approval_token` not a real credential | **AC** | ➖ Closed, by design |
 | 15 | Legacy `/verify` had no authorization, leaked daemon env | **SD** | ✅ Fixed by SD |
 | 16 | Mutation + journal write not atomic (identity/credential/recovery) | **SD** | ✅ Fixed by SD (partial — KB emission points explicitly still open) |
 
-**Net: 5 of 16 closed. 11 open** — 7 SD, 2 KB, 1 shared AC/SD, 1 AC-portion of the shared item.
+**Net: 7 of 16 closed. 9 open** — 7 SD, 1 shared AC/SD, 1 AC-portion of the shared item. KB's two
+items are closed but landed by AC directly in KB's path at the operator's explicit direction —
+see the boundary note below, same as SD's #13.
 
 ---
 
@@ -91,11 +93,11 @@ Do not patch these outside SD's paths. Handing off as findings per the coordinat
 
 ## AC — my exclusive paths (`identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, `tui/`)
 
-### 2. GitHub PAT exposed via CLI argv — ✅ Fixed
-- `cli/main.py`, `github_connect` — no longer a positional argument. Reads `CHANGE_ASSURANCE_GITHUB_TOKEN` env var, else a hidden (`hide_input=True`) prompt. Tests added: `test_github_connect_takes_no_positional_token`, `test_github_connect_reads_token_from_env_var`. Not yet committed — pending your approval.
+### 2. GitHub PAT exposed via CLI argv — ✅ Fixed (`33edf5f`)
+- `cli/main.py`, `github_connect` — no longer a positional argument. Reads `CHANGE_ASSURANCE_GITHUB_TOKEN` env var, else a hidden (`hide_input=True`) prompt. Tests added: `test_github_connect_takes_no_positional_token`, `test_github_connect_reads_token_from_env_var`.
 
-### 8. Case-sensitive forbidden-path matching — ✅ Fixed
-- `policy/engine.py::_path_is_forbidden` — both sides of the comparison now `.casefold()`'d, matching NTFS's case-insensitivity. Test added: `test_forbidden_path_prefix_denies_regardless_of_case`. Not yet committed — pending your approval.
+### 8. Case-sensitive forbidden-path matching — ✅ Fixed (`a3cfd7f`)
+- `policy/engine.py::_path_is_forbidden` — both sides of the comparison now `.casefold()`'d, matching NTFS's case-insensitivity. Test added: `test_forbidden_path_prefix_denies_regardless_of_case`.
 
 ### 14. `approval_token` not a real credential — ➖ Closed
 - `recovery/git_recovery.py` — confirmed by SD as intentional design ("Approval is a strict precondition — empty token raises", per `OVERALL_CONTEXT.md`). Not a bug.
@@ -105,19 +107,23 @@ Do not patch these outside SD's paths. Handing off as findings per the coordinat
 
 ---
 
-## KB — deferred, to fix together next (`git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`)
+## KB — fixed by AC at the operator's direction (`git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`)
 
-Not touched. Per your instruction, holding these for a joint session rather than either of us patching KB's paths solo.
+Originally deferred; the operator then explicitly directed fixing both now rather than waiting.
+Landed directly in KB's exclusive path — flagged here for KB's review, same as SD's #13.
 
-### 10. TOCTOU between trust-check hash and execution — MEDIUM
-- **Location:** `execution/launcher.py:140` (`_check_tool_trust`) vs. `:168` (`launch`'s own separate `resolve_argv`)
-- **Problem:** The trust check hashes the executable once; `launch()` independently re-resolves the same path and spawns it moments later. A file swap in between means the hash checked isn't guaranteed to be the bytes executed.
-- **Fix:** Hash and execute from the same resolved path/handle, or re-verify immediately before spawn with no intervening work.
+### 10. TOCTOU between trust-check hash and execution — ✅ Fixed
+- **Location:** `execution/launcher.py`, `AgentLauncher.launch` / `_check_tool_trust`
+- **Problem was:** the trust check hashed the executable via its own `resolve_argv` call; `launch()` independently re-resolved the same name and spawned it moments later. A file swap in between meant the hash checked wasn't guaranteed to be the bytes executed.
+- **Fix:** `launch()` now resolves the executable exactly once and passes the resolved `argv` into `_check_tool_trust`, which no longer resolves at all. A resolution failure is carried as a stored `AppError` and re-raised at the original point so the existing error-handling/`AgentRun` creation path is unchanged.
+- **Test:** `test_launch_resolves_the_executable_exactly_once` (spies on `resolve_argv`, asserts exactly one call per launch).
+- **Residual, honestly noted:** this closes the double-resolution window entirely but does not eliminate the inherent gap between reading a file's bytes to hash it and the OS actually executing that path (no fd-based exec is used) — a swap landing inside `resolve_or_register`'s own read isn't addressed by this fix, matching the module's own "deliberately narrow, best-effort" scope.
 
-### 11. Naive substring-only secret redaction in captured output — MEDIUM
-- **Location:** `execution/launcher.py:388-425` (`_environment`, `_text`)
-- **Problem:** Redaction is an exact string `.replace(secret, REDACTION)`. Any transformation (base64, reversal, line-splitting) by a compromised agent before printing defeats it — exactly the PDF's own threat #1 ("agent process receives long-lived secret and exfiltrates it").
-- **Fix:** Best-effort mitigation should be documented as such; consider entropy/pattern-based output scanning as defense in depth.
+### 11. Naive substring-only secret redaction in captured output — ✅ Fixed
+- **Location:** `execution/launcher.py::AgentLauncher._text`
+- **Problem was:** redaction was an exact string `.replace(secret, REDACTION)`. Any transformation (base64, hex, reversal) by a compromised agent before printing defeated it — exactly the PDF's own threat #1 ("agent process receives long-lived secret and exfiltrates it").
+- **Fix:** `_text` now also redacts each secret's standard-base64, urlsafe-base64, and hex encodings. Docstring now states explicitly this is a mitigation, not a guarantee — arbitrary transformation (line-splitting, custom encoding, compression) still defeats it, and callers must not treat captured output as safe merely because it passed through here.
+- **Test:** `test_encoded_secret_is_still_redacted` (a forwarded credential printed as base64/urlsafe-base64/hex, all three redacted).
 
 ---
 
@@ -130,13 +136,19 @@ Not touched. Per your instruction, holding these for a joint session rather than
 
 ## Process/boundary note
 
-SD's `673bb7e` directly edited `recovery/git_recovery.py`, which is AC's exclusive path per
-`AGENT_COORDINATION.md`, without a declared integration lock. The fix itself is correct and
-well-tested, so nothing needs to be undone — but for P1 security fixes that land fast, worth
-agreeing explicitly whether cross-owner hotfixes are allowed with a follow-up notification, or
-whether they should always come back as a handoff even under time pressure. Recommend the
-former (allow, but always leave a commit-message trail like this one already does) rather than
-blocking urgent security fixes on protocol — just flagging so it's a decision, not a drift.
+Two cross-owner edits happened in this review, both worth a decision rather than letting the
+pattern just accumulate silently:
+
+- SD's `673bb7e` directly edited `recovery/git_recovery.py`, AC's exclusive path, without a
+  declared integration lock.
+- AC's fixes for #10/#11 directly edited `execution/launcher.py`, KB's exclusive path, at the
+  operator's explicit direction rather than through a claim/handoff.
+
+Both fixes are correct and tested, so nothing needs to be undone. Recommend formalizing that
+P1 security fixes may cross owner boundaries without waiting for a claim, provided the commit
+message says so explicitly (as both of these already do) and the actual owner reviews it after
+the fact — rather than either blocking urgent fixes on protocol, or letting cross-owner edits
+become an unremarked habit.
 
 ---
 
