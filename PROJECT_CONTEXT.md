@@ -116,6 +116,16 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[SD]` - 2026-09-18 23:27:01 -04:00 - Parallel execution packets and test depth defined
+
+The plan now gives `[KB]` and `[AC]` complete independent execution tracks through stream-level completion before `[SD]` begins integration. Each contributor must read the entire proposal PDF, use the page-specific study guide, and submit a comprehension statement covering owned proposal capabilities, preserved principles, cut-dependent limitations, ports, risks, and document conflicts.
+
+`[KB]` has detailed work packets KB-0 through KB-6 for evidence architecture, Git checkpoints, the Agent Launcher, environment passports, dependencies, assurance/deviation analysis, and stream hardening. `[AC]` has AC-0 through AC-8 for authority architecture, identity/delegation, policy/broker, GitHub outcomes, constrained recovery, Passport, scriptable CLI, terminal UI, and stream hardening.
+
+Both streams develop concurrently against frozen contracts and conforming fakes. They do not edit shared composition, migrations, or each other's concrete modules. Integration starts only after both stream-complete handoffs pass `[SD]` review.
+
+Testing requirements now define unit, port-contract, real-boundary, adversarial/failure, security/privacy, owner-local flow, and limited manual layers. New owner packages target at least 90% statement and 85% branch coverage, while security/policy/lifecycle/idempotency/recovery decisions require complete decision-table coverage. Every handoff must report exact commands, counts, coverage, real boundaries, manual checks, limitations, and known findings.
+
 ### `[SD]` - 2026-09-18 23:24:10 -04:00 - Interactive terminal UI added
 
 The browser web UI remains deferred, but the CLI is now explicitly user-facing and includes an interactive terminal UI owned by `[AC]`. It will use Typer for commands, Rich for coloured visual output, and Textual for keyboard-driven screens and components.

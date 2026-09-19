@@ -8,13 +8,14 @@ Three contributors share one working tree. These rules give every path one owner
 
 Before claiming work, read completely:
 
-1. `OVERALL_CONTEXT.md`.
-2. `PROJECT_CONTEXT.md`.
-3. `BACKEND_IMPLEMENTATION_PLAN.md`.
-4. `AGENT_COORDINATION.md`.
-5. The contracts and tests consumed by the assignment.
+1. `Change_Assurance_Runtime_Project_Proposal (2).pdf`.
+2. `OVERALL_CONTEXT.md`.
+3. `PROJECT_CONTEXT.md`.
+4. `BACKEND_IMPLEMENTATION_PLAN.md`.
+5. `AGENT_COORDINATION.md`.
+6. The contracts and tests consumed by the assignment.
 
-The PDF proposal is product authority; the context documents record the approved cuts and implementation interpretation. Report conflicts before editing.
+The PDF proposal is product-design authority; the context documents and plan record the approved cuts and implementation interpretation. Reading a summary is not a substitute for reading the proposal. Before the first claim, `[KB]` and `[AC]` submit the comprehension statement required by plan section 12.3 and wait for `[SD]` acknowledgement. Report conflicts before editing.
 
 ## Permanent people and tags
 
@@ -48,7 +49,8 @@ Goal: <one concrete result>
 Files: <exact paths or one owned directory>
 Interfaces consumed: <names and versions>
 Interfaces provided: <names and versions>
-Context read: all four required documents
+Context read: proposal PDF plus all four repository context/coordination documents
+Proposal comprehension acknowledged by `[SD]`: <reference>
 Expected handoff: <recipient and gate>
 ```
 

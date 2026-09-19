@@ -160,6 +160,12 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[SD]` - 2026-09-18 23:27:01 -04:00 - Contributor execution and verification standard
+
+`[KB]` and `[AC]` now have detailed, parallel, end-to-end work packets that finish their respective streams against frozen ports and conforming fakes before `[SD]` integrates them. Direct comprehension of the full proposal PDF is mandatory; each contributor must connect its work to proposal principles and pages while honoring the four approved cuts and their dependent limitations.
+
+Testing is required at unit, port-contract, real-boundary, adversarial, security/privacy, owner-local flow, and terminal/manual layers as appropriate. Handoffs include exact commands, pass counts, coverage, real-versus-fake boundaries, manual evidence, limitations, security review, and integration instructions. `[SD]` independently reviews both complete streams, returns defects to their owners, and only then performs migrations, composition, full-system verification, and release acceptance.
+
 ### `[SD]` - 2026-09-18 23:24:10 -04:00 - Terminal UI clarified as active scope
 
 Only the browser web UI is deferred. `[AC]` owns both scriptable CLI commands and a polished interactive terminal UI using Typer, Rich, and Textual. The terminal experience must provide visual hierarchy, semantic colours, panels, tables, progress, guided forms, recovery confirmation, and Passport export while sourcing all decisions from the API.

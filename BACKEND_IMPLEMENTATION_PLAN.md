@@ -99,6 +99,7 @@ No component is renamed to conceal a removed subsystem. `ExecutionSummary` is on
 - Typer for scriptable CLI commands and command routing.
 - Rich for colour, tables, panels, progress, syntax/diff rendering, prompts, and consistent status semantics.
 - Textual for the keyboard-driven interactive terminal application and reusable terminal components.
+- Pytest plus coverage/branch reporting for unit, contract, acceptance, and integration evidence.
 - Colour is never the only status signal. `NO_COLOR`, `--no-color`, non-TTY/plain output, and machine-readable JSON output are supported.
 - Subprocess argument arrays, `shell=False`, bounded output, and bounded runtime.
 - Windows Credential Manager behind a narrow credential-store port; tests use an in-memory fake.
@@ -257,7 +258,290 @@ Exclusive paths: `backend/app/identity/`, `policy/`, `credentials/`, `providers/
    - Support keyboard-only navigation, small terminals, resize behavior, scrollable long output, plain/non-TTY mode, `NO_COLOR`, and JSON output.
    - Keep business rules in the API; the terminal UI renders server state and never invents readiness or authorization.
 
-## 12. Parallel execution and intersection gates
+## 12. Mandatory contributor onboarding and proposal comprehension
+
+`[KB]` and `[AC]` must understand the proposal directly before coding. Reading only this plan or another agent's summary is insufficient.
+
+### 12.1 Required source order
+
+Each contributor reads, in order:
+
+1. `Change_Assurance_Runtime_Project_Proposal (2).pdf` in full.
+2. `OVERALL_CONTEXT.md`.
+3. `PROJECT_CONTEXT.md`.
+4. This implementation plan.
+5. `AGENT_COORDINATION.md`.
+6. Existing contracts, migrations, implementation, and tests in the contributor's owned paths and consumed boundaries.
+
+Use this page guide while reading the PDF, but do not substitute it for a full read:
+
+| Proposal pages | Required understanding |
+| --- | --- |
+| 2-4 | Product thesis, five pillars, root Change object, observation over narration, least authority, typed reversibility |
+| 6 | Original component responsibilities and boundaries |
+| 9-11 | Lifecycle, end-to-end user flow, assurance summary, and recovery semantics |
+| 14 | Why replay depends on journal/process/resource evidence and is therefore removed here |
+| 18 | Local authenticated API intent and original route families |
+| 21-24 | Recommended implementation language, phased build, detailed milestones, MVP, and demo expectations |
+| 26-28 | Threat model, feasibility risks, non-goals, and competitive boundary |
+| 29-30 | Engineering backlog and acceptance criteria to reinterpret after the four approved cuts |
+| 33-34 | External technical foundations and growth direction |
+
+### 12.2 Scope interpretation rule
+
+The PDF is the product-design authority. This plan is the implementation authority for the approved variation. Contributors must preserve the proposal's intent wherever possible, but must not implement or imply the event journal, process supervisor, filesystem tracker, tool registry, or dependent replay capability. When a PDF requirement depends on a cut primitive, the implementation must expose an honest unsupported/limited state described in sections 2, 3.1, and 14.
+
+### 12.3 Required comprehension statement
+
+Before the first claim, each contributor sends `[SD]` a concise comprehension statement containing:
+
+- The proposal capabilities owned by their stream.
+- The proposal principles their design must preserve.
+- The four cuts and the limitations those cuts impose on their stream.
+- The ports/models they consume and provide.
+- The top five failure/security risks in their stream.
+- Any apparent conflict between the PDF, context documents, current code, and this plan.
+
+Do not start implementation until `[SD]` acknowledges the statement and resolves any conflict. This is a comprehension gate, not permission to alter another owner's files.
+
+## 13. Detailed parallel next steps before integration
+
+`[KB]` and `[AC]` execute the following tracks concurrently. They work only against frozen contracts and owner-local fakes. They must not import each other's concrete classes, edit `main.py`, modify migrations, or perform final application wiring. `[SD]` answers contract questions and maintains the shared baseline but does not integrate partial work.
+
+### 13.1 Common start for both contributors
+
+1. Pull the clean integration baseline and run `python -m pytest` before editing.
+2. Confirm the worktree is clean and post the claim from `AGENT_COORDINATION.md`.
+3. Complete the proposal comprehension statement.
+4. Inventory existing implementation in the owned paths. Reuse correct current behavior; do not rewrite working modules without a documented reason.
+5. List every frozen port/model/error consumed and every new concrete class provided.
+6. Build an owner-local test matrix before implementation: happy path, boundary, malformed input, timeout, partial failure, restart/persistence where relevant, and unsupported state.
+7. Work in small work-item commits using the permanent tag. Every commit must keep that owner's tests green.
+8. If a frozen contract blocks correct implementation, stop that item and submit a contract-change request. Continue unrelated owned work rather than inventing a private contract.
+
+### 13.2 `[KB]` execution track
+
+#### KB-0 - Evidence architecture and compatibility audit
+
+- Map proposal environment/assurance/Git responsibilities to `GitStatePort`, `AgentLauncherPort`, `EnvironmentPort`, `DependencyPort`, and `AssurancePort`.
+- Audit the existing Git inspector and verification runner for reusable behavior and migration needs.
+- Define owner-local repository/service boundaries and test fakes without changing shared contracts.
+- Produce fixtures for repositories with spaces, staged/unstaged/untracked/renamed/conflicted files, detached HEAD, multiple ecosystems, missing tools, and malformed manifests.
+
+Exit: design note in the handoff draft, fixture inventory, proposed concrete classes, and green baseline tests.
+
+#### KB-1 - Git checkpoints and comparison
+
+- Persistable output must include canonical repository identity, branch/detached state, HEAD, worktree/index state, changed paths, bounded diff evidence, digest, capture time, and limitations.
+- Implement checkpoint comparison, branch movement detection, evidence freshness inputs, merge-conflict representation, and safe handling of repositories without commits.
+- Keep ordinary inspection read-only and preserve existing byte-accurate output bounds/error envelopes.
+
+Testing extent:
+
+- Unit-test every porcelain record type and classification branch.
+- Use real disposable Git repositories for staged, unstaged, untracked, rename/copy, delete, binary, conflict, detached, no-commit, Unicode, and spaced-path cases.
+- Test truncation by UTF-8 byte count, Git startup/failure errors, deterministic digesting, and repeated identical captures.
+- Prove inspection does not mutate HEAD, index, worktree, configuration, or remotes.
+
+Exit: `GitStatePort` contract suite passes and an owner-local comparison flow works across at least three successive checkpoints.
+
+#### KB-2 - Top-level Agent Launcher
+
+- Implement generic, Codex, and Claude adapters over one port with explicit executable discovery and adapter metadata.
+- Enforce canonical working directory, executable/argument policy, environment allowlist, timeout, shared output budget, cancellation of the direct child when supported, and safe startup-error results.
+- Implement attach mode as declared metadata only. Mark descendant control/attribution unavailable in every relevant result.
+
+Testing extent:
+
+- Cover allowed/disallowed/missing executables, argument limits, cwd propagation, environment stripping, pass/fail/timeout/startup error, cancellation, output interleaving/truncation, and paths with spaces.
+- Verify broker credentials and known test secrets never enter the child environment or captured output.
+- Use short real helper processes for boundary tests; do not rely only on mocks.
+- Prove no result claims process-tree ownership or cleanup.
+
+Exit: all three adapters satisfy the same contract tests, with unsupported descendant behavior explicit.
+
+#### KB-3 - Environment Passport
+
+- Implement deterministic collectors for Windows/OS identity, supported runtimes, compiler/toolchain, package managers, selected configuration keys, and repository configuration.
+- Store normalized values or redacted fingerprints according to sensitivity; never raw secrets.
+- Compare passports and classify added, removed, changed, expected, unexpected, unknown, and unsupported facts without causal attribution.
+
+Testing extent:
+
+- Unit-test normalization, stable ordering, fingerprinting, redaction, missing commands, localized/invalid output, and collector partial failure.
+- Use controlled fake collectors plus a Windows smoke test for available real collectors.
+- Seed canary secret values and assert they are absent from models, SQLite-ready serialization, exceptions, and logs.
+- Prove identical inputs produce identical passports/diffs.
+
+Exit: baseline/current comparison returns deterministic drift and an explicit completeness/limitations summary.
+
+#### KB-4 - Dependency Tracker
+
+- Support the frozen Python and Node manifest/lockfile set; report unsupported formats rather than guessing.
+- Normalize package identity and versions, compare baseline/current state, distinguish direct declarations from lockfile-resolved evidence, and flag manifest/lock mismatch.
+- Surface risk inputs without claiming vulnerability certainty or process attribution unless a real evidence source supports it.
+
+Testing extent:
+
+- Fixture-test every supported manifest and lockfile, including empty, malformed, duplicate, missing-lock, reordered, workspace, local/path, URL, and version-range cases.
+- Test add/remove/upgrade/downgrade and deterministic ordering.
+- Fuzz or property-test parsers with bounded malformed input where practical; parsers must fail safely and never execute repository content.
+
+Exit: dependency comparisons are deterministic, bounded, and reference their source files/evidence quality.
+
+#### KB-5 - Assurance engine and deviation analysis
+
+- Discover configured checks without executing arbitrary discovered text blindly.
+- Select required checks using Change Contract, changed-path/dependency/environment evidence, and repository configuration.
+- Execute through the bounded runner, retain structured results, calculate evidence coverage, and invalidate results when the Git checkpoint or relevant contract changes.
+- Compare actual paths/dependencies/environment drift against allowed/forbidden/expected contract terms.
+
+Testing extent:
+
+- Cover discovery for pytest, Jest/Vitest, lint, type-check, build, and supported security/dependency checks.
+- Test selection precedence, duplicate elimination, missing required tools/checks, pass/fail/timeout/error, stale invalidation, partial execution, and missing coverage.
+- Test every contract-deviation category and prove findings are deterministic.
+- Use real minimal Python and Node fixtures for at least one passing and failing flow per supported runner family.
+
+Exit: owner-local fake Change input produces a complete assurance plan, results, coverage gaps, deviation findings, and freshness decision.
+
+#### KB-6 - Stream hardening and handoff
+
+- Run all `[KB]` unit/contract/real-fixture tests together from a clean process.
+- Run the repository-wide baseline suite and distinguish pre-existing failures from introduced failures.
+- Review the diff for accidental mutation, secret/path leakage, nondeterminism, unbounded data, and claims that exceed evidence.
+- Prepare the complete handoff package in section 20; do not wire the application.
+
+Stream-complete exit: every `[KB]` port has a production implementation, owner-local fake, contract tests, real-boundary tests, stable errors, documented limitations, and no unresolved blocker.
+
+### 13.3 `[AC]` execution track
+
+#### AC-0 - Authority/outcome architecture and compatibility audit
+
+- Map proposal identity/broker/outcome/recovery/Passport responsibilities to the frozen ports and current Change lifecycle.
+- Define threat boundaries: local caller, actor, agent, credential store, provider, repository, terminal, logs, and database.
+- Create owner-local in-memory credential store, fake GitHub server/adapter, policy fixtures, and API client fake for CLI/TUI development.
+
+Exit: threat/data-flow note in the handoff draft, fake inventory, concrete class list, and green baseline tests.
+
+#### AC-1 - Local authentication, actors, and delegations
+
+- Implement local application principal/session validation plus human, agent, and service actor records.
+- Implement grants bound to grantor, grantee, Change/repository, scopes, issued/expiry times, revocation, and optional use limits.
+- Default deny missing, ambiguous, expired, revoked, wrong-Change, wrong-repository, and over-scoped authority.
+
+Testing extent:
+
+- Table-test every grant state and scope combination, boundary timestamps, replayed requests, concurrent revoke/use, and malformed identities.
+- Verify safe errors reveal no secret or unnecessary local path.
+- Test persistence/reload semantics through owner-local repositories/fakes without editing shared migrations.
+
+Exit: policy inputs can unambiguously answer who may do what, for which Change/repository, until when.
+
+#### AC-2 - Policy, risk, and credential broker
+
+- Implement deterministic path, operation, provider, lifecycle, and risk rules with explainable decisions.
+- Wrap Windows Credential Manager behind `CredentialStorePort`; keep a fully conforming in-memory fake.
+- Issue short-lived internal grants and proxy only allowlisted GitHub operations. Never place durable provider credentials in the agent environment or ordinary data models.
+
+Testing extent:
+
+- Exercise allow/deny precedence, default deny, risk escalation, expiry/revocation, wrong binding, scope narrowing, idempotency, rate-limit/error mapping, and credential-store failure.
+- Seed canary secrets and scan logs, exceptions, serialized models, test databases, CLI/plain/JSON/TUI output, and child environments.
+- Run an opt-in Windows Credential Manager smoke test that creates and removes only a uniquely named test credential.
+
+Exit: broker contract tests prove scoped operations and secret non-disclosure across every exposed boundary.
+
+#### AC-3 - GitHub provider and outcomes
+
+- Implement repository/branch discovery, draft PR creation/refresh, required-check/CI refresh, and normalized outcome records through brokered operations only.
+- Bind outcomes to repository, branch, PR identity, head SHA, observation time, and evidence quality.
+- Handle pagination, retryable/non-retryable failure, rate limits, stale SHA, partial responses, and idempotent retries.
+
+Testing extent:
+
+- Use a local fake HTTP provider or transport; automated tests must not require internet or a real credential.
+- Contract-test request paths, headers/redaction, pagination, schema variation, 401/403/404/409/422/429/5xx, timeouts, retries, and duplicate idempotency keys.
+- Prove CI for SHA A cannot verify SHA B and stale observations cannot advance lifecycle state.
+
+Exit: fake-provider flow creates/refreshes a draft PR and normalizes CI evidence without exposing credentials.
+
+#### AC-4 - Constrained recovery
+
+- Plan only known Change-created commits/provider objects. List unsupported local/environment/unknown effects explicitly.
+- Require fresh evidence, eligible dedicated branch, authority, preview, approval token, and idempotency key.
+- Trial Git recovery in a temporary worktree; on success create a new revert commit, never reset/rewrite history. Verify final SHA/checkpoint inputs.
+- Implement provider compensation only for objects provably created by the Change and permitted by policy.
+
+Testing extent:
+
+- Use disposable repositories for clean revert, multi-commit revert, conflict, already-reverted, branch moved, dirty target, missing object, repeated request, cancellation, and post-check failure.
+- Assert preview has no target mutation and any preflight conflict leaves the target repository unchanged.
+- Test provider compensation partial failure and resulting `PARTIAL`/`RECOVERY_FAILED` states.
+- Prove unsupported effects remain visible and automatic approval is impossible.
+
+Exit: owner-local recovery flow is dry-run-first, approval-bound, conflict-safe, idempotent, and evidence-producing.
+
+#### AC-5 - Change Passport
+
+- Build the versioned Passport only from frozen models/evidence references: intent, actors, delegation, checkpoints, environment/dependencies, assurance, outcomes, limitations, and recovery.
+- Represent missing, stale, unsupported, denied, failed, and partial evidence explicitly.
+- Provide deterministic JSON export and human terminal rendering without embedding secrets or unbounded raw output.
+
+Testing extent:
+
+- Golden-test canonical serialization and schema versioning.
+- Cover complete, incomplete, stale, failed, partially recovered, unsupported, and legacy-migrated Changes.
+- Verify stable ordering/digests and canary-secret absence.
+
+Exit: the same inputs produce byte-stable canonical JSON and semantically equivalent terminal output.
+
+#### AC-6 - Scriptable CLI
+
+- Implement commands through the local API client only; do not import persistence/services to bypass authentication, policy, or lifecycle guards.
+- Define stable exit codes and stdout/stderr rules. JSON mode writes one documented machine-readable object and no decoration.
+- Cover create/list/show/status/checkpoint/assure/outcome/recovery/passport and connection/capability diagnostics.
+
+Testing extent:
+
+- Use an API transport fake for exhaustive command/exit-code/error tests and a real local API for critical smoke flows.
+- Test piping, redirected non-TTY output, Unicode, narrow width, `NO_COLOR`, `--no-color`, JSON schema, interrupted requests, and unreachable daemon.
+
+Exit: every command has help, examples, stable exit behavior, plain output, JSON output, and no policy bypass.
+
+#### AC-7 - Interactive terminal UI
+
+- Implement Change list/detail, lifecycle stepper, evidence cards, Git/dependency tables, assurance progress/results, PR/CI panels, contract/delegation forms, recovery preview/confirmation, and Passport export.
+- Centralize semantic theme tokens and status-to-colour/symbol/text mapping. Do not use colour as the only signal.
+- Render backend loading, empty, stale, unsupported, denied, failed, partial, and success states without fabricated data.
+- Keep long-running actions cancellable at the UI request level and show their actual final backend state.
+
+Testing extent:
+
+- Component/snapshot-test every state at representative 80x24, 120x30, and resized/narrow layouts.
+- Interaction-test keyboard-only navigation, focus order, forms, validation, confirmation/cancel, scrolling, refresh, disconnect/reconnect, and long output.
+- Test colour, no-colour, monochrome, and low-capability terminal behavior.
+- Manually smoke-test in Windows Terminal and the VS Code integrated terminal; record terminal sizes and results.
+
+Exit: a user can complete the retained flow from Change creation through Passport/recovery without using raw API calls, and every visual status is backed by API state.
+
+#### AC-8 - Stream hardening and handoff
+
+- Run all `[AC]` unit/contract/provider/Git/CLI/TUI tests from a clean process.
+- Run the repository-wide baseline suite and inspect for secret leakage, authority bypass, unsafe repository mutation, unstable output, and hidden partial failures.
+- Prepare the complete handoff package in section 20; do not wire `main.py` or edit shared migrations.
+
+Stream-complete exit: every `[AC]` port and terminal surface has a production implementation, conforming fake, required tests, documented limitations, and no unresolved blocker.
+
+### 13.4 Allowed communication while parallel work is active
+
+- Ask `[SD]` contract and scope questions; do not negotiate private interfaces between `[KB]` and `[AC]`.
+- Exchange only frozen models/port versions, never concrete imports or shared-file edits.
+- If one stream needs evidence not present in a contract, submit a contract-change request to `[SD]` and continue unrelated work.
+- Do not begin end-to-end composition, migrations, or application wiring. Those belong to `[SD]` after both complete handoffs.
+- Each owner may use fakes for the other stream, but must label them as test-only and demonstrate contract conformance.
+
+## 14. Parallel execution and intersection gates
 
 ### Gate 0 - Scope and contracts
 
@@ -273,23 +557,47 @@ Exit: contract tests compile, forbidden entities/endpoints are absent, and curre
 
 No shared source edits. Feedback is a contract-change request to `[SD]`.
 
-Exit: each module passes unit/contract tests and has a formal handoff.
+Exit: each stream has green owner tests and an internal progress record. This is not an integration handoff; both owners continue through their complete tracks.
 
 ### Gate 2 - Independent code review
 
-`[KB]` and `[AC]` submit separate handoffs. `[SD]` reviews diffs, runs owner tests, adds black-box/adversarial acceptance tests, and returns findings to the owner. Owners correct their own modules and resubmit. No rejected code is integrated.
+Only after KB-6 and AC-8 are complete, `[KB]` and `[AC]` submit separate stream-complete handoffs. `[SD]` reviews diffs, runs owner tests, adds black-box/adversarial acceptance tests, and returns findings to the owner. Owners correct their own modules and resubmit. No rejected or partial stream is integrated.
 
 Exit: both streams have an `[SD]` acceptance record with no unresolved blocking or high-severity findings.
 
+#### `[SD]` post-handoff verification sequence
+
+For each stream separately, `[SD]` performs:
+
+1. **Intake integrity**: clean tree, expected commits, owned paths only, no generated/secret/local-machine artifacts, complete handoff evidence.
+2. **Proposal and scope trace**: map behavior back to the proposal and approved cuts; identify missing retained behavior or safety-theater claims.
+3. **Static review**: contracts, trust boundaries, subprocess/HTTP/Git/SQLite usage, error handling, bounds, determinism, redaction, and maintainability.
+4. **Reproduction**: run the exact submitted commands and compare counts/coverage to the handoff.
+5. **Independent probes**: add acceptance/adversarial cases the owner did not author, especially boundary crossings and plausible misuse.
+6. **Finding decision**: record severity, file/symbol, reproduction, impact, expected correction, and regression-test requirement.
+7. **Disposition**: `ACCEPT`, `ACCEPT WITH NON-BLOCKING FINDINGS`, or `REJECT`. High/blocking findings require owner correction and a full affected-suite resubmission.
+
+Acceptance means the stream is eligible for integration; it does not mean the composed product works yet.
+
 ### Gate 3 - Backend composition
 
-In a declared lock, `[SD]` wires accepted `[KB]` and `[AC]` ports into lifecycle, freshness, risk, Passport, migrations, and the API. `[KB]` and `[AC]` stop edits to integration targets and fix only defects returned to their paths.
+In a declared lock, `[SD]` performs integration in this order:
+
+1. Re-run the unchanged baseline suite.
+2. Apply shared migrations to empty, current, and populated legacy databases.
+3. Wire accepted `[KB]` ports, then run their contract and `[SD]` acceptance tests.
+4. Wire accepted `[AC]` ports, then run their contract and `[SD]` acceptance tests.
+5. Compose freshness, risk, policy, Passport, recovery, and lifecycle transition rules.
+6. Freeze OpenAPI and exercise the real CLI/TUI against the composed local API.
+7. Run failure injection for unavailable dependencies, interrupted operations, stale evidence, partial provider results, and recovery conflicts.
+
+`[KB]` and `[AC]` stop edits to integration targets and fix only defects returned to their paths.
 
 Exit: create -> authorize -> activate -> checkpoint -> environment/dependencies -> assurance -> review-ready passes through the real API.
 
 ### Gate 4 - Authority and provider verification
 
-`[AC]` completes broker/provider/outcome integration. `[KB]` supplies evidence/risk inputs but never handles secrets. `[SD]` independently probes cross-Change access, over-scoping, expiry, revocation, idempotency, redaction, and provider partial failures.
+Using the already completed `[AC]` implementation and `[KB]` evidence/risk inputs, `[SD]` independently probes cross-Change access, over-scoping, expiry, revocation, idempotency, redaction, stale SHAs, and provider partial failures. `[KB]` never handles secrets.
 
 Exit: scoped operations succeed; invalid grants fail; credentials never reach agent environment, logs, SQLite, or responses.
 
@@ -305,9 +613,9 @@ Exit: committed Change-branch recovery creates a verified revert; conflicts caus
 
 `[SD]` freezes integration and runs the full backend release matrix. Owners fix only their modules and resubmit for verification. Context and acceptance evidence are updated after results are known.
 
-Exit: all section 17 criteria pass from a clean clone and an upgraded existing database.
+Exit: all section 19 criteria pass from a clean clone and an upgraded existing database.
 
-## 13. Shared ports
+## 15. Shared ports
 
 Person 1 owns signatures; concrete owners are:
 
@@ -316,7 +624,7 @@ Person 1 owns signatures; concrete owners are:
 
 Ports exchange immutable Pydantic models, not dictionaries. Side effects require authority context and an idempotency key. Changes require owner review and a versioned handoff.
 
-## 14. Recovery semantics
+## 16. Recovery semantics
 
 Supported:
 
@@ -335,7 +643,7 @@ Unsupported:
 
 Every preview lists actions, unsupported effects, assumptions, conflicts, and evidence freshness. Failed or partial recovery remains visible in the Passport.
 
-## 15. Security and privacy
+## 17. Security and privacy
 
 - Loopback-only by default; non-loopback requires an explicit secure deployment mode.
 - Authenticate non-health routes and authorize mutations.
@@ -346,16 +654,36 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 - Bound patch, output, and database payload sizes.
 - Never label a Change safe merely because checks passed.
 
-## 16. Verification plan
+## 18. Verification depth and evidence requirements
 
-- Migration tests against the current schema and populated fixtures.
+### 18.1 Required test layers for each owner
+
+1. **Unit tests**: every pure rule, parser branch, normalization, redaction rule, state classification, and error mapping. These run without network, user credentials, or shared machine state.
+2. **Port contract tests**: every method's success result, documented domain errors, validation boundary, idempotency behavior, and serialization round trip. The same suite must run against owner-local fakes and production implementations where feasible.
+3. **Real-boundary tests**: disposable Git repositories, short subprocesses, temporary databases, local fake HTTP providers, and terminal pilots/snapshots. Mocks alone are insufficient for subprocess, Git, persistence, HTTP serialization, recovery, or TUI behavior.
+4. **Failure/adversarial tests**: malformed/truncated input, timeout, cancellation, concurrency, stale evidence, partial response, restart, missing dependency, permission failure, oversized output, Unicode/path aliases, and repeated requests.
+5. **Security/privacy tests**: default deny, authority boundary, path containment, command policy, secret canaries, log/exception/model/database/output scanning, and proof that credentials do not enter child environments.
+6. **Owner-local flow tests**: complete the stream using conforming fakes for the other owner. These prove internal composition, not final product integration.
+7. **Manual checks**: only where OS credential UI or terminal rendering cannot be adequately proven automatically. Manual evidence supplements automated tests and never replaces a testable assertion.
+
+### 18.2 Coverage expectations
+
+- All new or materially changed behavior must have a regression test. No untested branch may authorize a mutation, advance lifecycle, handle a secret, classify recovery safety, or report assurance success.
+- Security-, policy-, lifecycle-, idempotency-, and recovery-decision branches require complete decision-table coverage.
+- New owner packages target at least 90% statement and 85% branch coverage, measured on their own paths. A numeric target does not excuse missing behavioral cases.
+- Exclusions are limited to defensive unreachable branches or platform guards and must be listed with a reason in the handoff.
+- Tests must be deterministic: freeze/inject clocks, randomness, IDs, and provider responses. No ordinary automated test may require internet access, a real GitHub credential, or an existing user repository.
+
+### 18.3 Mandatory cross-cutting suite
+
+- Migration tests against empty, current, and populated legacy schemas.
 - State, concurrency, idempotency, freshness, policy, and delegation tests.
-- Git fixtures for staged/unstaged/untracked/rename/conflict/detached/branch movement and spaces.
+- Git fixtures for staged/unstaged/untracked/rename/conflict/detached/branch movement and paths with spaces.
 - Launcher validation/timeout/output/startup-error tests plus explicit descendant-control limitation.
 - Environment redaction/drift and dependency parser fixtures.
 - Assurance discovery/selection/staleness/gap/timeout tests.
 - Broker tests for revocation, expiry, binding, scope denial, and secret non-disclosure.
-- GitHub adapter contract tests against a local fake, including rate limits and partial failure.
+- GitHub adapter tests against a local fake, including pagination, rate limits, stale SHA, and partial failure.
 - Disposable-repository recovery tests for isolation, approval, conflict safety, idempotency, and verification.
 - API tests for all envelopes and forbidden endpoint absence.
 - CLI/API end-to-end, restart-persistence, clean-clone, and upgrade smoke tests.
@@ -363,7 +691,20 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 - Textual component/snapshot and interaction tests for keyboard navigation, forms, loading, empty, stale, denied, failed, partial, and unsupported states.
 - Browser UI and browser accessibility testing are deferred; terminal accessibility remains required.
 
-## 17. Definition of done
+### 18.4 Evidence submitted with each work item
+
+Every work-item commit or handoff states:
+
+- Exact automated commands and pass/fail counts.
+- Coverage command and owner-path statement/branch results.
+- Real boundaries exercised versus fakes used.
+- Manual checks with environment/terminal details and observed result.
+- Known skipped/xfail cases and why they are not masking a defect.
+- Residual limitations, unsupported cases, and any test gap requiring `[SD]` attention.
+
+“Tests pass” without commands, counts, and boundary details is not sufficient evidence.
+
+## 19. Definition of done
 
 1. A user creates a Change Contract, selects an actor/agent, and sees authority before activation.
 2. The app launches or attaches to a top-level run without claiming descendant supervision.
@@ -379,17 +720,23 @@ Every preview lists actions, unsupported effects, assumptions, conflicts, and ev
 12. The terminal UI passes keyboard, resize, no-colour, plain-output, and critical-flow interaction tests.
 13. Browser web UI implementation remains deferred and does not block backend acceptance.
 
-## 18. Handoff format
+## 20. Handoff format
 
 ```text
 [TAG] HANDOFF to [TAG]
-Work item: P1.2 | P2.4 | P3.3
+Work items: KB-0..KB-6 | AC-0..AC-8
 Status: ready | blocked
+Proposal mapping: <pages/sections implemented and approved-cut consequences>
 Changed paths: <exact list>
+Commits: <ordered hashes and subjects>
 Contract/version: <port, endpoint, schema, OpenAPI hash>
-Behavior and limitations: <facts>
-Verification: <commands and results>
-Consumer action: <next action>
+Provided implementations: <concrete classes/entry points>
+Behavior and limitations: <supported, unsupported, assumptions>
+Security/privacy review: <authority, secret, path, subprocess/provider/recovery boundaries>
+Verification: <commands, counts, coverage, real boundaries, manual checks>
+Known findings: <none or severity/list>
+Integration instructions: <constructors, configuration, migration/data needs, ordering>
+Consumer action: `[SD]` independent review; no direct integration by owner
 ```
 
-No handoff may claim a capability that depends on one of the four removed subsystems.
+Attach or reference the test matrix and owner-local flow result. The working tree must be clean, and the submitted commits must contain only the owner's paths. No handoff may claim a capability that depends on one of the four removed subsystems.
