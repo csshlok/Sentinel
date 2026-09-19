@@ -47,6 +47,23 @@ def test_create_pull_request_sends_bearer_token_and_returns_outcome() -> None:
     assert transport.calls[0]["headers"]["Authorization"] == f"Bearer {CANARY_TOKEN}"
 
 
+def test_close_pull_request_sends_a_patch_and_returns_closed_outcome() -> None:
+    transport = FakeHttpTransport([json_response(200, _pr_payload(draft=False))])
+    provider = _provider(transport)
+
+    outcome = provider.close_pull_request(
+        token=CANARY_TOKEN, repository="acme/repo", number=42,
+    )
+
+    assert outcome.number == 42
+    assert outcome.state.value == "CLOSED"
+    assert transport.calls[0]["method"] == "PATCH"
+    assert transport.calls[0]["url"].endswith("/repos/acme/repo/pulls/42")
+    assert transport.calls[0]["headers"]["Authorization"] == f"Bearer {CANARY_TOKEN}"
+    import json as _json
+    assert _json.loads(transport.calls[0]["body"]) == {"state": "closed"}
+
+
 def test_duplicate_idempotency_key_does_not_issue_a_second_request() -> None:
     transport = FakeHttpTransport([json_response(201, _pr_payload())])
     provider = _provider(transport)

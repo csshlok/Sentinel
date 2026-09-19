@@ -281,6 +281,26 @@ def github_pr(
     )
 
 
+@github_app.command("pr-close")
+def github_pr_close(
+    change_id: UUID,
+    actor_id: UUID,
+    grant_id: UUID,
+    idempotency_key: str,
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Close the pull request this Change created (compensating recovery action)."""
+    _run(
+        lambda: ApiClient(api_url).close_pull_request(
+            change_id, actor_id=actor_id, grant_id=grant_id, idempotency_key=idempotency_key,
+        ),
+        as_json=json_,
+        no_color=no_color,
+    )
+
+
 @outcome_app.command("refresh")
 def outcome_refresh(
     change_id: UUID,

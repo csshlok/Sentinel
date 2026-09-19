@@ -51,6 +51,7 @@ from backend.app.contracts.models import (
     ProviderConnectRequest,
     ProviderOperation,
     PullRequestActionRequest,
+    PullRequestCloseActionRequest,
     RecoveryExecuteRequest,
     RecoveryPlan,
     ReplayTimeline,
@@ -319,6 +320,21 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
             base_branch=request.base_branch,
             head_branch=request.head_branch,
             title=request.title,
+            idempotency_key=request.idempotency_key,
+        )
+
+    @router.post(
+        "/changes/{change_id}/providers/github/pulls/close",
+        response_model=ProviderOperation,
+        tags=["providers"],
+    )
+    def close_pull_request(
+        change_id: UUID, request: PullRequestCloseActionRequest
+    ) -> ProviderOperation:
+        return runtime.provider_operations.close_pull_request(
+            change_id,
+            actor_id=request.actor_id,
+            grant_id=request.grant_id,
             idempotency_key=request.idempotency_key,
         )
 

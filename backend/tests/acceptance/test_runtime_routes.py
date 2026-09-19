@@ -624,6 +624,104 @@ def test_credential_grants_are_usable_and_revocable_across_a_real_app_restart(tm
         assert revoked.json()["revoked_at"] is not None
 
 
+def test_close_pull_request_compensates_the_changes_own_created_pr(tmp_path) -> None:
+    """Real end-to-end provider compensation: create a PR through the API,
+
+    then close it through the new compensation route, and confirm the
+    close call targets the exact PR the Change itself created (not a
+    caller-supplied number) and is idempotency-key-replay-safe like every
+    other provider mutation.
+    """
+
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    transport = FakeHttpTransport([
+        json_response(201, {
+            "number": 7, "html_url": "https://github.com/acme/widgets/pull/7",
+            "draft": True, "head": {"sha": current_sha},
+        }),
+        json_response(200, {
+            "number": 7, "html_url": "https://github.com/acme/widgets/pull/7",
+            "draft": False, "head": {"sha": current_sha, "ref": "feature"},
+        }),
+    ])
+    app, client = _build_client(tmp_path, repo_path, current_sha, transport)
+
+    with client:
+        change_id = client.post("/api/v1/changes", json={
+            "title": "Compensation flow", "intent": "Exercise provider compensation",
+            "repository_path": repo_path,
+        }).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
+        ).json()["id"]
+        client.post("/api/v1/delegations", json={
+            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["github.pr.create", "github.pr.close"], "ttl_seconds": 3600,
+        })
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.create", "github.pr.close"],
+                  "ttl_seconds": 900},
+        ).json()["id"]
+
+        created = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls",
+            json={"actor_id": actor_id, "grant_id": grant_id, "base_branch": "main",
+                  "head_branch": "feature", "title": "Test PR",
+                  "idempotency_key": "pr-create-1"},
+        )
+        assert created.status_code == 200 and created.json()["status"] == "SUCCEEDED"
+
+        closed = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls/close",
+            json={"actor_id": actor_id, "grant_id": grant_id,
+                  "idempotency_key": "pr-close-1"},
+        )
+        assert closed.status_code == 200, closed.text
+        assert closed.json()["status"] == "SUCCEEDED"
+        assert closed.json()["safe_metadata"]["number"] == 7
+        assert closed.json()["safe_metadata"]["state"] == "CLOSED"
+
+        replay = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls/close",
+            json={"actor_id": actor_id, "grant_id": grant_id,
+                  "idempotency_key": "pr-close-1"},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["id"] == closed.json()["id"]
+
+
+def test_close_pull_request_without_a_created_pr_is_refused(tmp_path) -> None:
+    repo_path, _baseline_sha, current_sha = _init_repo(tmp_path)
+    app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
+
+    with client:
+        change_id = client.post("/api/v1/changes", json={
+            "title": "No PR yet", "intent": "Refuse compensation with nothing to compensate",
+            "repository_path": repo_path,
+        }).json()["id"]
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Agent"}
+        ).json()["id"]
+        client.post("/api/v1/delegations", json={
+            "grantor_id": str(uuid4()), "grantee_id": actor_id, "change_id": change_id,
+            "scopes": ["github.pr.close"], "ttl_seconds": 3600,
+        })
+        client.post("/api/v1/providers/github/connect", json={"token": "token"})
+        grant_id = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/grants",
+            json={"actor_id": actor_id, "scopes": ["github.pr.close"], "ttl_seconds": 900},
+        ).json()["id"]
+
+        refused = client.post(
+            f"/api/v1/changes/{change_id}/providers/github/pulls/close",
+            json={"actor_id": actor_id, "grant_id": grant_id, "idempotency_key": "k"},
+        )
+        assert refused.status_code == 409
+        assert refused.json()["error"]["code"] == "NO_PULL_REQUEST_TO_COMPENSATE"
+
+
 def _init_repo_without_github_remote(tmp_path) -> str:
     repo = tmp_path / "repo-no-remote"
     repo.mkdir()

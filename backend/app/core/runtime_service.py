@@ -48,6 +48,7 @@ from backend.app.core.errors import (
     idempotency_conflict,
     passport_not_found,
     policy_denied,
+    no_pull_request_to_compensate,
     provider_repository_unresolved,
     recovery_plan_not_found,
 )
@@ -360,6 +361,61 @@ class ProviderOperationService:
             self._journal.append(
                 change_id, event_type, actor_id=actor_id,
                 subject_type="provider_operation", subject_id=stored.id,
+                payload={"operation": stored.request.operation, "status": stored.status.value},
+            )
+        return stored
+
+    def close_pull_request(
+        self,
+        change_id: UUID,
+        *,
+        actor_id: UUID,
+        grant_id: UUID,
+        idempotency_key: str,
+    ) -> ProviderOperation:
+        """Compensating action for a Change-created PR (plan section 16:
+
+        "Authorized compensation of Change-created provider objects").
+        Never takes a caller-supplied PR number: it always targets the PR
+        this Change's own succeeded github.pr.create operation produced,
+        so compensation cannot be pointed at an object the Change did not
+        create. A Change with no such PR raises rather than silently
+        no-op-ing, so a caller cannot mistake "nothing to close" for
+        "closed".
+        """
+
+        existing = self.operations.get_by_idempotency_key(change_id, idempotency_key)
+        if existing is not None:
+            if self._journal is not None:
+                self._journal.append(
+                    change_id, JournalEventType.PROVIDER_PULL_REQUEST_CLOSED,
+                    actor_id=actor_id, subject_type="provider_operation", subject_id=existing.id,
+                    payload={"operation": existing.request.operation, "replayed": True},
+                )
+            return existing
+
+        change = self.change_service.get(change_id)
+        grant = self.credentials.require_grant(grant_id, actor_id=actor_id, change_id=change_id)
+        created_pr = self.operations.get_succeeded_operation(change_id, "github.pr.create")
+        if created_pr is None:
+            raise no_pull_request_to_compensate(str(change_id))
+        parameters = {
+            "repository": created_pr.request.parameters["repository"],
+            "number": created_pr.safe_metadata.get("number"),
+        }
+        _enforce_policy(self.policy, actor_id, change, "github.pr.close", parameters,
+                        journal=self._journal)
+
+        request = ProviderOperationRequest(
+            provider="github", operation="github.pr.close", change_id=change_id,
+            actor_id=actor_id, idempotency_key=idempotency_key, parameters=parameters,
+        )
+        result = self.provider.execute(request, grant)
+        stored, _created = self.operations.create(result)
+        if self._journal is not None:
+            self._journal.append(
+                change_id, JournalEventType.PROVIDER_PULL_REQUEST_CLOSED,
+                actor_id=actor_id, subject_type="provider_operation", subject_id=stored.id,
                 payload={"operation": stored.request.operation, "status": stored.status.value},
             )
         return stored

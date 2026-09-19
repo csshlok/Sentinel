@@ -152,6 +152,28 @@ class ProviderOperationRepository:
             ).fetchone()
         return ProviderOperation.model_validate_json(row["payload_json"]) if row else None
 
+    def get_succeeded_operation(
+        self, change_id: UUID, operation: str
+    ) -> ProviderOperation | None:
+        """The most recent SUCCEEDED operation of this kind for the Change,
+
+        or None. Used to find the PR this Change itself created, so a
+        compensation call always targets an object the Change actually
+        produced -- never an arbitrary caller-supplied PR number.
+        """
+
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT payload_json, started_at FROM provider_operations "
+                "WHERE change_id = ? AND status = ? ORDER BY started_at DESC",
+                (str(change_id), ProviderOperationStatus.SUCCEEDED.value),
+            ).fetchall()
+        for row in rows:
+            candidate = ProviderOperation.model_validate_json(row["payload_json"])
+            if candidate.request.operation == operation:
+                return candidate
+        return None
+
     def has_succeeded_operation(self, change_id: UUID, operation: str) -> bool:
         with self.database.connection() as connection:
             rows = connection.execute(

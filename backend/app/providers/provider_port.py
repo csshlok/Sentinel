@@ -39,6 +39,8 @@ class GitHubProviderAdapter:
 
         if request.operation == "github.pr.create":
             return self._create_pull_request(request, token, started_at)
+        if request.operation == "github.pr.close":
+            return self._close_pull_request(request, token, started_at)
 
         return self._result(
             request,
@@ -87,6 +89,32 @@ class GitHubProviderAdapter:
                 "head_sha": outcome.head_sha,
                 "state": outcome.state.value,
             },
+        )
+
+    def _close_pull_request(
+        self, request: ProviderOperationRequest, token: str, started_at: datetime
+    ) -> ProviderOperation:
+        try:
+            outcome = self.github.close_pull_request(
+                token=token,
+                repository=request.parameters["repository"],
+                number=request.parameters["number"],
+            )
+        except AppError as error:
+            return self._result(
+                request, ProviderOperationStatus.FAILED, started_at,
+                safe_metadata={"error_code": error.code},
+            )
+        except KeyError as error:
+            return self._result(
+                request, ProviderOperationStatus.FAILED, started_at,
+                safe_metadata={"error_code": "PROVIDER_VALIDATION_FAILED",
+                               "missing_parameter": str(error)},
+            )
+        return self._result(
+            request, ProviderOperationStatus.SUCCEEDED, started_at,
+            provider_reference=outcome.url,
+            safe_metadata={"number": outcome.number, "state": outcome.state.value},
         )
 
     @staticmethod

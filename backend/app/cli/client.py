@@ -252,6 +252,18 @@ class ApiClient:
             },
         )
 
+    def close_pull_request(
+        self, change_id: UUID, *, actor_id: UUID, grant_id: UUID, idempotency_key: str,
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/providers/github/pulls/close",
+            json_body={
+                "actor_id": str(actor_id), "grant_id": str(grant_id),
+                "idempotency_key": idempotency_key,
+            },
+        )
+
     # -- outcomes --
     def refresh_outcomes(
         self, change_id: UUID, *, grant_id: UUID, required_check_names: list[str] | None = None

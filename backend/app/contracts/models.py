@@ -711,6 +711,7 @@ class JournalEventType(StrEnum):
     ASSURANCE_CHECK_COMPLETED = "assurance.check.completed"
     PROVIDER_PULL_REQUEST_CREATED = "provider.pull_request.created"
     PROVIDER_PULL_REQUEST_REFRESHED = "provider.pull_request.refreshed"
+    PROVIDER_PULL_REQUEST_CLOSED = "provider.pull_request.closed"
     PROVIDER_CI_REFRESHED = "provider.ci_refreshed"
     OUTCOME_RECORDED = "outcome.recorded"
     RECOVERY_PLAN_CREATED = "recovery.plan.created"
@@ -920,6 +921,12 @@ class PullRequestActionRequest(ContractModel):
     base_branch: ShortText
     head_branch: ShortText
     title: ShortText
+    idempotency_key: ShortText
+
+
+class PullRequestCloseActionRequest(ContractModel):
+    actor_id: UUID
+    grant_id: UUID
     idempotency_key: ShortText
 
 

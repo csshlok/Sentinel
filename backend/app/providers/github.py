@@ -109,6 +109,30 @@ class GitHubProvider:
         self._pr_cache[idempotency_key] = outcome
         return outcome
 
+    def close_pull_request(
+        self, *, token: str, repository: str, number: int
+    ) -> PullRequestOutcome:
+        """Compensating action for a Change-created PR: close it, never delete
+
+        or force-push the branch. Idempotent at the GitHub API level -- PATCHing
+        an already-closed PR to "closed" again just returns its current state.
+        """
+
+        body = json.dumps({"state": "closed"}).encode("utf-8")
+        response = self._request(
+            "PATCH", f"/repos/{repository}/pulls/{number}", token=token, body=body
+        )
+        payload = json.loads(response.body)
+        return PullRequestOutcome(
+            repository=repository,
+            branch=payload.get("head", {}).get("ref", ""),
+            number=payload["number"],
+            url=payload["html_url"],
+            head_sha=payload["head"]["sha"],
+            state=PullRequestState.CLOSED,
+            observed_at=self._clock(),
+        )
+
     def list_check_runs_for_sha(
         self, *, token: str, repository: str, head_sha: str
     ) -> list[CheckRunOutcome]:

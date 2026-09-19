@@ -93,6 +93,15 @@ def provider_repository_unresolved(repository_path: str) -> AppError:
     )
 
 
+def no_pull_request_to_compensate(change_id: str) -> AppError:
+    return AppError(
+        "NO_PULL_REQUEST_TO_COMPENSATE",
+        "This Change has no succeeded pull-request-creation operation to compensate.",
+        status_code=409,
+        details={"change_id": change_id},
+    )
+
+
 def grant_binding_invalid(grant_id: str) -> AppError:
     return AppError(
         "CREDENTIAL_GRANT_BINDING_INVALID",

@@ -2898,6 +2898,7 @@
           "assurance.check.completed",
           "provider.pull_request.created",
           "provider.pull_request.refreshed",
+          "provider.pull_request.closed",
           "provider.ci_refreshed",
           "outcome.recorded",
           "recovery.plan.created",
@@ -3252,6 +3253,34 @@
           "idempotency_key"
         ],
         "title": "PullRequestActionRequest",
+        "type": "object"
+      },
+      "PullRequestCloseActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "grant_id": {
+            "format": "uuid",
+            "title": "Grant Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "grant_id",
+          "idempotency_key"
+        ],
+        "title": "PullRequestCloseActionRequest",
         "type": "object"
       },
       "RecoveryAction": {
@@ -6561,6 +6590,75 @@
           }
         },
         "summary": "Create Pull Request",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/providers/github/pulls/close": {
+      "post": {
+        "operationId": "close_pull_request_api_v1_changes__change_id__providers_github_pulls_close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequestCloseActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOperation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close Pull Request",
         "tags": [
           "providers"
         ]
