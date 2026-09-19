@@ -22,6 +22,7 @@ from backend.app.contracts.models import (
     CredentialGrant,
     Outcome,
     ProviderOperation,
+    ProviderOperationStatus,
     RecoveryPlan,
 )
 from backend.app.core.database import Database
@@ -145,6 +146,18 @@ class ProviderOperationRepository:
                 (str(change_id), idempotency_key),
             ).fetchone()
         return ProviderOperation.model_validate_json(row["payload_json"]) if row else None
+
+    def has_succeeded_operation(self, change_id: UUID, operation: str) -> bool:
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM provider_operations WHERE change_id = ? AND status = ?",
+                (str(change_id), ProviderOperationStatus.SUCCEEDED.value),
+            ).fetchall()
+        return any(
+            ProviderOperation.model_validate_json(row["payload_json"]).request.operation
+            == operation
+            for row in rows
+        )
 
 
 class OutcomeRepository:

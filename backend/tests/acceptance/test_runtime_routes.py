@@ -413,3 +413,89 @@ def test_grant_bound_to_different_change_is_rejected(tmp_path) -> None:
         )
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "CREDENTIAL_GRANT_BINDING_INVALID"
+
+
+def test_change_lifecycle_transitions_use_real_evidence(tmp_path) -> None:
+    """`RuntimeLifecycleFacts` end to end: authority gates `ACTIVE`, and a
+    real recovery plan/execution gates the `RECOVERY_PENDING -> RECOVERING
+    -> RECOVERED_VERIFIED` branch — through the real API, not a fake port."""
+
+    repo_path, baseline_sha, current_sha = _init_repo(tmp_path)
+    app, client = _build_client(tmp_path, repo_path, current_sha, FakeHttpTransport([]))
+
+    with client:
+        created = client.post(
+            "/api/v1/changes",
+            json={
+                "title": "Lifecycle evidence",
+                "intent": "Exercise RuntimeLifecycleFacts through the real API",
+                "repository_path": repo_path,
+            },
+        )
+        change_id = created.json()["id"]
+        assert created.json()["lifecycle_state"] == "DRAFT"
+
+        # No delegation yet: ACTIVE is blocked on real, not fabricated, authority.
+        blocked = client.post(
+            f"/api/v1/changes/{change_id}/transition",
+            json={"target_state": "ACTIVE", "expected_revision": 1},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "TRANSITION_GUARD_FAILED"
+        assert blocked.json()["error"]["details"]["missing_requirements"] == [
+            "authority_valid"
+        ]
+
+        actor_id = client.post(
+            "/api/v1/actors", json={"kind": "AGENT", "display_name": "Lifecycle Agent"}
+        ).json()["id"]
+        client.post(
+            "/api/v1/delegations",
+            json={
+                "grantor_id": str(uuid4()),
+                "grantee_id": actor_id,
+                "change_id": change_id,
+                "scopes": ["recovery.execute"],
+                "ttl_seconds": 3600,
+            },
+        )
+
+        activated = client.post(
+            f"/api/v1/changes/{change_id}/transition",
+            json={"target_state": "ACTIVE", "expected_revision": 1},
+        )
+        assert activated.status_code == 200
+        assert activated.json()["lifecycle_state"] == "ACTIVE"
+        revision = activated.json()["revision"]
+
+        pending = client.post(
+            f"/api/v1/changes/{change_id}/transition",
+            json={"target_state": "RECOVERY_PENDING", "expected_revision": revision},
+        )
+        assert pending.status_code == 200
+        revision = pending.json()["revision"]
+
+        # Recovering needs a real approved-and-recovered plan; seeded the
+        # same way `[KB]`'s GitStateTracker will once it exists.
+        _seed_checkpoint(app.state.database, change_id, repo_path, baseline_sha)
+        plan_id = client.post(f"/api/v1/changes/{change_id}/recovery/preview").json()["id"]
+        executed = client.post(
+            f"/api/v1/changes/{change_id}/recovery/{plan_id}/execute",
+            json={"actor_id": actor_id, "approval_token": "approved-by-test"},
+        )
+        assert executed.json()["status"] == "RECOVERED"
+
+        recovering = client.post(
+            f"/api/v1/changes/{change_id}/transition",
+            json={"target_state": "RECOVERING", "expected_revision": revision},
+        )
+        assert recovering.status_code == 200
+        assert recovering.json()["lifecycle_state"] == "RECOVERING"
+        revision = recovering.json()["revision"]
+
+        verified = client.post(
+            f"/api/v1/changes/{change_id}/transition",
+            json={"target_state": "RECOVERED_VERIFIED", "expected_revision": revision},
+        )
+        assert verified.status_code == 200
+        assert verified.json()["lifecycle_state"] == "RECOVERED_VERIFIED"

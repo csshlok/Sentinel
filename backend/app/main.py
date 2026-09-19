@@ -23,6 +23,7 @@ from backend.app.core.change_service import ChangeService
 from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
+from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
 from backend.app.core.router import build_router
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
@@ -40,7 +41,6 @@ from backend.app.core.runtime_service import (
     RecoveryService,
     RuntimeServices,
 )
-from backend.app.core.unavailable_adapters import UnavailableLifecycleFacts
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.windows_store import WindowsCredentialStore
 from backend.app.git.adapter import GitRepositoryInspector
@@ -96,11 +96,17 @@ def create_app(
     resolved_settings = settings or Settings.from_environment()
     database = Database(resolved_settings.database_path)
     repository = ChangeRepository(database)
+    resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
+        DelegationRepository(database),
+        ProviderOperationRepository(database),
+        OutcomeRepository(database),
+        RecoveryRepository(database),
+    )
     service = ChangeService(
         repository=repository,
         git_inspection=git_inspection or GitRepositoryInspector(),
         verification=verification or SubprocessVerificationRunner(),
-        lifecycle_facts=lifecycle_facts or UnavailableLifecycleFacts(),
+        lifecycle_facts=resolved_lifecycle_facts,
         settings=resolved_settings,
         configured_capabilities=configured_capabilities
         or set(_DEFAULT_CONFIGURED_CAPABILITIES),
