@@ -521,6 +521,52 @@ def migration_007_tool_manifest_resolved_path(connection: sqlite3.Connection) ->
     )
 
 
+def migration_008_agent_run_pause_fields(connection: sqlite3.Connection) -> None:
+    """`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A: agent pause/resume.
+
+    `AgentRun.paused_at`/`resumed_at` are stored in the existing JSON run
+    payload (same place `stdout`/`stderr`/`limitations` already live), not
+    in a dedicated column -- the run row's shape has always been a JSON blob
+    keyed by run id, so no column addition is needed. This migration is a
+    changelog entry only, matching the "no-op" precedent already established
+    for pure-application-layer additions: it exists so schema version history
+    stays a complete, honest record of every behavior-affecting change, even
+    ones that touch no table.
+    """
+
+    del connection  # no schema change
+
+
+def migration_009_change_fork_columns(connection: sqlite3.Connection) -> None:
+    """`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part B: checkpoint forking.
+
+    `forked_from_change_id`/`forked_from_checkpoint_id` record which Change
+    and checkpoint a fork was created from. Both are nullable (most Changes
+    are not forks) and `ON DELETE SET NULL` so deleting the source Change or
+    checkpoint later never blocks or cascades into deleting the fork itself
+    -- the fork's own evidence was already copied into its own rows at fork
+    time (see `ChangeService.fork`), so these columns are provenance only,
+    not a data dependency.
+    """
+
+    _add_column(
+        connection,
+        "changes",
+        "forked_from_change_id",
+        "TEXT NULL REFERENCES changes(id) ON DELETE SET NULL",
+    )
+    _add_column(
+        connection,
+        "changes",
+        "forked_from_checkpoint_id",
+        "TEXT NULL REFERENCES git_checkpoints(id) ON DELETE SET NULL",
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_changes_forked_from "
+        "ON changes(forked_from_change_id)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -529,6 +575,8 @@ MIGRATIONS = (
     Migration(5, "journal_cascade_delete_fix", migration_005_journal_cascade_delete_fix),
     Migration(6, "change_deletion_log", migration_006_change_deletion_log),
     Migration(7, "tool_manifest_resolved_path", migration_007_tool_manifest_resolved_path),
+    Migration(8, "agent_run_pause_fields", migration_008_agent_run_pause_fields),
+    Migration(9, "change_fork_columns", migration_009_change_fork_columns),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

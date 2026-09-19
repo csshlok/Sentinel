@@ -97,6 +97,12 @@ class AgentLauncherPort(Protocol):
     def stop(self, run_id: UUID) -> AgentRun:
         """Request cancellation of the top-level invocation when supported."""
 
+    def pause(self, run_id: UUID) -> AgentRun:
+        """Suspend the top-level process only (Windows-first, no descendants)."""
+
+    def resume(self, run_id: UUID) -> AgentRun:
+        """Resume a previously paused top-level process."""
+
 
 @runtime_checkable
 class EnvironmentPort(Protocol):

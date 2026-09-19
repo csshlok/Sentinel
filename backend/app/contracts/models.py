@@ -136,6 +136,7 @@ class ActorKind(StrEnum):
 class AgentRunStatus(StrEnum):
     ATTACHED = "ATTACHED"
     RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
     PASSED = "PASSED"
     FAILED = "FAILED"
     TIMED_OUT = "TIMED_OUT"
@@ -281,6 +282,7 @@ class ChangeCreateRequest(ContractModel):
     intent: TrimmedIntent
     repository_path: RepositoryPath
     contract: ChangeContract = Field(default_factory=ChangeContract)
+    fork_from_checkpoint_id: UUID | None = None
 
 
 class ChangeContractUpdateRequest(ContractModel):
@@ -337,6 +339,8 @@ class ChangeView(ContractModel):
     evidence_revision: int = Field(default=0, ge=0)
     verification_evidence_revision: int | None = Field(default=None, ge=0)
     last_transition_at: AwareDatetime | None = None
+    forked_from_change_id: UUID | None = None
+    forked_from_checkpoint_id: UUID | None = None
 
 
 class ChangeListResponse(ContractModel):
@@ -418,6 +422,8 @@ class AgentRun(ContractModel):
     output_truncated: bool = False
     descendant_control_available: Literal[False] = False
     limitations: list[str] = Field(default_factory=list, max_length=32)
+    paused_at: AwareDatetime | None = None
+    resumed_at: AwareDatetime | None = None
 
 
 class GitCheckpoint(ContractModel):
@@ -722,6 +728,9 @@ class JournalEventType(StrEnum):
     TOOL_MANIFEST_REGISTERED = "tool.manifest.registered"
     TOOL_TRUST_DECIDED = "tool.trust.decided"
     TOOL_TRUST_INVALIDATED = "tool.trust.invalidated"
+    AGENT_PAUSED = "agent.paused"
+    AGENT_RESUMED = "agent.resumed"
+    CHANGE_FORKED = "change.forked"
 
 
 class JournalEvent(ContractModel):
