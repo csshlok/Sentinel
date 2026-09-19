@@ -116,6 +116,10 @@ No code, schema, route, or copy may imply an event journal, process supervision,
 
 ## Current implementation status
 
+### `[KB]` - 2026-09-19 03:55 -04:00 - Plan reconciliation: `[KB]` scope complete; API authentication and the rest of the release path are open
+
+`[KB]`'s scope is complete against the plan, including the section 8 read routes, idempotency keys on every `[KB]` mutation and a visible checkpoint freshness flag. A clean clone of `origin/master` (`d8c2300`) passes **560 passed, 1 skipped**. Open items owned by others: **API authentication (plan section 17) is not implemented anywhere**, `[SD]` Gate 2 review of `[KB]` and recording of the release matrix, and the remaining `[AC]` terminal UI screens and interaction tests. Full detail in `OVERALL_CONTEXT.md`.
+
 ### `[KB]` - 2026-09-19 03:40 -04:00 - Full suite: 544 passed, 1 skipped
 
 With the `textual` extra installed the whole repository, TUI tests included, passes: **544 passed, 1 skipped**. Earlier `[KB]` counts (531, 509, 502) excluded `backend/tests/tui` and are superseded by this figure.

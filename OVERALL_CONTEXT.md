@@ -160,6 +160,24 @@ The product is not complete because a happy-path screen renders. It is complete 
 
 Implementation records describe completed work without changing the stable product principles above.
 
+### `[KB]` - 2026-09-19 03:55 -04:00 - Reconciliation of `[KB]` scope against `BACKEND_IMPLEMENTATION_PLAN.md` and all commits to date
+
+`[KB]` re-read the plan (sections 6-8, 10, 13.2, 14, 17-19) and every commit through `0cb2cae`, and closed the last gaps in its own scope:
+
+- **Section 8 routes**: added `GET /changes/{id}/git/checkpoints`, `GET /changes/{id}/git/compare?baseline_id&current_id`, `GET /changes/{id}/environment` (latest passport plus drift from the first) and `GET /changes/{id}/dependencies`, with matching `evidence checkpoints|compare|environment|dependencies` CLI commands. The `evidence`, `agents` and `assurance` route families remain the way to capture, launch and plan.
+- **Section 8 "every mutation accepts an idempotency key"**: `evidence/baseline`, `evidence/current`, `assurance/plan`, `assurance/{plan_id}/run`, `agents/launch` and `agents/attach` all accept `Idempotency-Key` (replay returns the stored result, a different body is refused, a failed attempt frees the key), also as `--idempotency-key` in the CLI.
+- **Definition of done item 3 ("visibly fresh/stale")**: `GET /changes/{id}/evidence` now reports `latest_checkpoint_fresh` (`true`, `false`, or `null` when nothing is captured or the repository cannot be read).
+
+**Result**: `[KB]`'s work items P2.1-P2.6 / KB-0..KB-6, their composition into the API, CLI and persistence are complete. A **clean clone of `origin/master` (`d8c2300`)** passes the whole suite: **560 passed, 1 skipped** (the opt-in Windows Credential Manager test). This supersedes the 544 figure recorded earlier.
+
+**Not complete, and not `[KB]`'s** (found while reconciling; listed so nobody assumes otherwise):
+
+1. **API authentication is not implemented.** Plan section 17 requires authenticating non-health routes, and `[AC]`'s AC-1 lists local principal/session validation. No auth middleware or token check exists in `backend/app/main.py` or `backend/app/core/`; the API relies only on loopback binding and the CORS origin. Every route, including the `[KB]` ones, is currently open to any local process. `[SD]`/`[AC]` to decide owner and design.
+2. **Independent `[SD]` review of the `[KB]` stream (Gate 2) and of `[KB]`'s edits to `[SD]`/`[AC]` files** has not been recorded. `[KB]`'s work is self-verified only.
+3. **`[AC]` terminal UI** is still partial (dashboard, recovery, Passport and detail screens exist; lifecycle stepper, Git/dependency tables, assurance panel, contract/delegation forms, Pilot interaction tests and resize/no-colour verification do not), so definition-of-done items 9 and 12 are not yet met.
+4. **Release matrix (Gate 6)** and the `[SD]` clean-clone/upgrade/failure-injection run have not been recorded as an acceptance decision.
+5. Known `[KB]` limits unchanged: Codex/Claude installs that exist only as Windows `.cmd` shims cannot be launched; no Linux/macOS or real-agent smoke test; Jest/Vitest are covered by discovery fixtures only.
+
 ### `[KB]` - 2026-09-19 03:40 -04:00 - Full-suite result with the TUI tests included
 
 The optional `textual` extra (0.89.1, as declared in `pyproject.toml`) was installed in this environment, so `backend/tests/tui` now runs. `python -m pytest -o addopts="" -q` over the whole repository: **544 passed, 1 skipped** (the opt-in Windows Credential Manager test), 2 third-party deprecation warnings, 224 s. This supersedes the earlier counts in the `[KB]` records below (531, 509 and 502), which excluded the 13 TUI tests because `textual` was not installed; those records were true when written and are left unchanged. The TUI tests are `[AC]`'s unit tests of formatting logic and screen construction; interactive Pilot tests are still not set up.
