@@ -12,11 +12,19 @@ from __future__ import annotations
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Button, DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+
+_ACTIVE_STATUSES = {"RUNNING", "PAUSED"}
+# How often the screen re-polls agent runs while one is RUNNING/PAUSED, so
+# incrementally-captured stdout/stderr (Part C) and a pause/resume made from
+# elsewhere become visible without a manual refresh. Polling stops on its
+# own once nothing is active -- no wasted requests once nothing is changing.
+_LIVE_POLL_INTERVAL_SECONDS = 2.0
+_OUTPUT_TAIL_LINES = 20
 
 
 def format_evidence(
@@ -90,26 +98,77 @@ def format_evidence(
     return "\n".join(lines)
 
 
+def _tail(text: str, lines: int) -> str:
+    if not text:
+        return "(no output yet)"
+    parts = text.splitlines()
+    shown = parts[-lines:]
+    prefix = f"... ({len(parts) - len(shown)} earlier line(s) omitted) ...\n" if len(parts) > lines else ""
+    return prefix + "\n".join(shown)
+
+
+def _run_status_label(status: str) -> str:
+    color = {"RUNNING": "cyan", "PAUSED": "yellow", "PASSED": "green",
+             "FAILED": "red", "ERROR": "red", "TIMED_OUT": "red",
+             "CANCELLED": "grey50", "ATTACHED": "white"}.get(status, "white")
+    return f"[{color}]{status}[/{color}]"
+
+
 class EvidenceScreen(Screen):
-    """Read-only Git/environment/dependency/assurance evidence for a Change."""
+    """Git/environment/dependency/assurance evidence plus agent-run control.
+
+    Agent runs are listed with a live-updating output tail (Part C: the
+    screen polls faster, on its own, only while a run is RUNNING/PAUSED --
+    no push/streaming transport, matching the operator's own scoping
+    decision) and Pause/Resume/Stop actions (Part A: the single top-level
+    process only; a multi-process agent's descendants are never paused
+    along with it, and this is never implied by these controls).
+    """
 
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("r", "refresh", "Refresh")]
 
-    def __init__(self, change_id: str, api_url: str) -> None:
+    def __init__(self, change_id: str, api_url: str, actor_id: str | None = None) -> None:
         super().__init__()
         self.change_id = change_id
+        self.actor_id = actor_id
         self.client = ApiClient(api_url)
+        self._run_ids: list[str] = []
+        self._runs_by_id: dict[str, dict[str, Any]] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Vertical(Static("Loading evidence...", id="evidence_view"))
+        yield Vertical(
+            Static("Loading evidence...", id="evidence_view"),
+            Static("[bold]Agent runs[/bold]"),
+            DataTable(id="agent_runs"),
+            Static("", id="agent_output"),
+            Horizontal(
+                Button("Pause", id="pause", disabled=True),
+                Button("Resume", id="resume", disabled=True),
+                Button("Stop", id="stop", variant="error", disabled=True),
+            ),
+            Static("", id="agent_result"),
+        )
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one("#agent_runs", DataTable)
+        table.add_columns("Adapter", "Status", "PID", "Exit", "Duration (ms)")
+        table.cursor_type = "row"
+        if not self.actor_id:
+            self.query_one("#agent_result", Static).update(
+                "[yellow]No actor id configured; pause/resume/stop require an "
+                "authenticated actor. Launch the TUI with --actor-id.[/yellow]"
+            )
         self.action_refresh()
+        self.set_interval(_LIVE_POLL_INTERVAL_SECONDS, self._poll_if_active)
 
     def action_refresh(self) -> None:
         self.run_worker(self._load, thread=True, exclusive=True)
+
+    def _poll_if_active(self) -> None:
+        if any(run.get("status") in _ACTIVE_STATUSES for run in self._runs_by_id.values()):
+            self.action_refresh()
 
     def _fetch_or_none(self, call) -> Any:
         try:
@@ -130,3 +189,91 @@ class EvidenceScreen(Screen):
         )
         text = format_evidence(checkpoints, environment, dependencies, assurance_plan, assurance_facts)
         self.app.call_from_thread(view.update, text)
+
+        runs_payload = self._fetch_or_none(lambda: self.client.list_agent_runs(self.change_id))
+        runs = (runs_payload or {}).get("items", [])
+        self.app.call_from_thread(self._render_runs, runs)
+
+    def _render_runs(self, runs: list[dict[str, Any]]) -> None:
+        table = self.query_one("#agent_runs", DataTable)
+        previous_selection = self._run_ids[table.cursor_row] if (
+            self._run_ids and table.cursor_row is not None and table.cursor_row < len(self._run_ids)
+        ) else None
+        table.clear()
+        self._run_ids = [run["id"] for run in runs]
+        self._runs_by_id = {run["id"]: run for run in runs}
+        for run in runs:
+            table.add_row(
+                run.get("adapter", ""), _run_status_label(run.get("status", "")),
+                run.get("top_level_pid") or "-", run.get("exit_code") if run.get("exit_code") is not None else "-",
+                run.get("duration_ms") if run.get("duration_ms") is not None else "-",
+            )
+        if previous_selection in self._run_ids:
+            table.cursor_coordinate = (self._run_ids.index(previous_selection), 0)
+        self._render_selected_output()
+        self._update_run_buttons()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        del event
+        self._render_selected_output()
+        self._update_run_buttons()
+
+    def _selected_run(self) -> dict[str, Any] | None:
+        table = self.query_one("#agent_runs", DataTable)
+        if not self._run_ids or table.cursor_row is None:
+            return None
+        try:
+            return self._runs_by_id.get(self._run_ids[table.cursor_row])
+        except IndexError:
+            return None
+
+    def _render_selected_output(self) -> None:
+        run = self._selected_run()
+        output = self.query_one("#agent_output", Static)
+        if run is None:
+            output.update("")
+            return
+        stdout_tail = _tail(run.get("stdout", ""), _OUTPUT_TAIL_LINES)
+        stderr_tail = run.get("stderr", "")
+        text = f"[bold]stdout (last {_OUTPUT_TAIL_LINES} lines)[/bold]\n{stdout_tail}"
+        if stderr_tail:
+            text += f"\n\n[bold]stderr[/bold]\n{_tail(stderr_tail, _OUTPUT_TAIL_LINES)}"
+        output.update(text)
+
+    def _update_run_buttons(self) -> None:
+        run = self._selected_run()
+        status = run.get("status") if run else None
+        have_actor = bool(self.actor_id)
+        self.query_one("#pause", Button).disabled = not (have_actor and status == "RUNNING")
+        self.query_one("#resume", Button).disabled = not (have_actor and status == "PAUSED")
+        self.query_one("#stop", Button).disabled = not (have_actor and status in _ACTIVE_STATUSES)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id in ("pause", "resume", "stop"):
+            self._control_selected(event.button.id)
+
+    def _control_selected(self, action: str) -> None:
+        run = self._selected_run()
+        if run is None or not self.actor_id:
+            return
+        self.run_worker(
+            lambda: self._submit_control(run["id"], action), thread=True, exclusive=True
+        )
+
+    def _submit_control(self, run_id: str, action: str) -> None:
+        result = self.query_one("#agent_result", Static)
+        try:
+            if action == "pause":
+                self.client.pause_agent(self.change_id, run_id, actor_id=self.actor_id)
+            elif action == "resume":
+                self.client.resume_agent(self.change_id, run_id, actor_id=self.actor_id)
+            else:
+                self.client.stop_agent(self.change_id, run_id, actor_id=self.actor_id)
+        except ApiConnectionError as error:
+            self.app.call_from_thread(result.update, f"[red]x Could not reach the API: {error}[/red]")
+            return
+        except ApiError as error:
+            self.app.call_from_thread(result.update, f"[red]x {error.code}: {error.message}[/red]")
+            return
+        self.app.call_from_thread(result.update, f"{action.capitalize()} requested for {run_id}.")
+        self._load()

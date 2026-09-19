@@ -167,7 +167,7 @@ class ChangeDashboard(App):
             change_id = self._change_ids[table.cursor_row]
         except IndexError:
             return
-        self.push_screen(EvidenceScreen(change_id, self.api_url))
+        self.push_screen(EvidenceScreen(change_id, self.api_url, actor_id=self.actor_id))
 
     def action_outcomes(self) -> None:
         table = self.query_one(DataTable)

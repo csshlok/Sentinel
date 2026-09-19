@@ -295,6 +295,91 @@ async def test_tools_screen_real_approve_decision_reaches_the_api(live_change) -
 
 
 @pytest.mark.anyio
+async def test_evidence_screen_real_pause_and_resume_a_running_agent(live_change) -> None:
+    """Launch a real long-running agent in the background, pause it and
+    resume it through the real interactive evidence-screen controls (not a
+    stubbed worker), and confirm the real backend's status transitions and
+    incremental stdout both reach the TUI -- not just that the buttons
+    don't crash."""
+
+    from textual.widgets import Button, DataTable
+
+    from backend.app.cli.client import ApiClient
+
+    api_url, change_id, actor_id, human_id = live_change
+    client = ApiClient(api_url)
+    client.create_delegation(
+        grantor_id=human_id, grantee_id=actor_id, change_id=change_id,
+        scopes=["agent.pause", "agent.resume"], ttl_seconds=3600,
+    )
+
+    def launch_slow_agent() -> None:
+        client.launch_agent(
+            change_id, actor_id=actor_id, executable="python",
+            args=["-c", "import time; print('a'); time.sleep(3); print('b')"],
+        )
+
+    launcher_thread = threading.Thread(target=launch_slow_agent, daemon=True)
+    launcher_thread.start()
+
+    app = ChangeDashboard(api_url=api_url, actor_id=actor_id)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _select_first_row(pilot)
+        await pilot.press("g")
+        await pilot.pause()
+        assert isinstance(app.screen, EvidenceScreen)
+
+        # Wait (real wall-clock) for the run to appear and be RUNNING.
+        deadline = time.monotonic() + 10.0
+        runs = client.list_agent_runs(change_id).get("items", [])
+        while not runs and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+            runs = client.list_agent_runs(change_id).get("items", [])
+        assert runs, "the background agent launch never registered a run"
+        run_id = runs[0]["id"]
+
+        await _wait_for_rows(pilot, "#agent_runs")
+        table = pilot.app.query_one("#agent_runs", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        pause_button = pilot.app.query_one("#pause", Button)
+        deadline = time.monotonic() + 10.0
+        while pause_button.disabled and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+        assert not pause_button.disabled, "Pause should enable once a RUNNING row is selected"
+        pause_button.press()
+
+        deadline = time.monotonic() + 10.0
+        status = client.list_agent_runs(change_id)["items"][0]["status"]
+        while status != "PAUSED" and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+            status = client.list_agent_runs(change_id)["items"][0]["status"]
+        assert status == "PAUSED"
+
+        resume_button = pilot.app.query_one("#resume", Button)
+        deadline = time.monotonic() + 5.0
+        while resume_button.disabled and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+        assert not resume_button.disabled
+        resume_button.press()
+
+        launcher_thread.join(timeout=15)
+        deadline = time.monotonic() + 10.0
+        status = client.list_agent_runs(change_id)["items"][0]["status"]
+        while status not in ("PASSED", "FAILED") and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+            status = client.list_agent_runs(change_id)["items"][0]["status"]
+        assert status == "PASSED"
+
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_branch_screen_real_tree_with_no_forks_yet(live_change) -> None:
     """No fork exists yet: the real backend returns an empty forks list.
     Must render the honest single-node tree, not crash."""
