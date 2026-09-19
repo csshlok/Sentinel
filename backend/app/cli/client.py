@@ -127,6 +127,21 @@ class ApiClient:
     def get_change(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}")
 
+    def fork_change(
+        self, change_id: UUID, *, actor_id: UUID, checkpoint_id: UUID, title: str, intent: str,
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"/api/v1/changes/{change_id}/fork",
+            json_body={
+                "actor_id": str(actor_id),
+                "fork": {"checkpoint_id": str(checkpoint_id), "title": title, "intent": intent},
+            },
+        )
+
+    def list_change_forks(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/forks")
+
     def update_change_contract(
         self,
         change_id: UUID,

@@ -16,7 +16,7 @@ processes, which the launcher cannot observe across restarts.
 from __future__ import annotations
 
 import hashlib
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import Field
 
@@ -26,7 +26,7 @@ from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
     AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan, AssuranceRun,
     ChangeView, ContractModel, DependencyReport, EnvironmentDrift, EnvironmentPassport,
-    GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass,
+    GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass, utc_now,
 )
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -179,6 +179,48 @@ class EvidenceService:
         return EvidenceSnapshot(checkpoint=checkpoint, comparison=comparison,
                                 environment=environment, drift=drift, dependencies=dependencies,
                                 limitations=limitations)
+
+    def get_checkpoint(self, change_id: UUID, checkpoint_id: UUID) -> GitCheckpoint:
+        """A single persisted checkpoint, validated as belonging to ``change_id``."""
+
+        checkpoint = self._store.get_checkpoint(checkpoint_id)
+        if checkpoint is None or checkpoint.change_id != change_id:
+            raise AppError("CHECKPOINT_NOT_FOUND",
+                           "A checkpoint does not exist for this Change.", status_code=404)
+        return checkpoint
+
+    def copy_checkpoint_baseline(
+        self, source_checkpoint: GitCheckpoint, target_change: ChangeView,
+    ) -> GitCheckpoint:
+        """Seed a forked Change's own baseline from a validated source checkpoint.
+
+        Takes an already-fetched, already-ownership-checked ``GitCheckpoint``
+        (see ``get_checkpoint``) rather than looking one up itself, so a
+        caller validates *before* creating the fork's Change row -- a
+        checkpoint that does not exist must fail before any new row is
+        written, not leave an orphaned, evidence-less fork behind.
+
+        Copies only the Git checkpoint itself (repository root, branch, head
+        SHA, status digest, summary) into a new row scoped to
+        ``target_change.id`` -- a real re-attribution, not a cross-Change
+        reference, so the fork's own journal chain describes evidence this
+        Change now honestly holds. Environment passports and dependency
+        reports are deliberately not copied here: this store has no
+        as-of-a-checkpoint correlation between a checkpoint and the
+        environment/dependency evidence captured near it (only "first" and
+        "latest" per Change), so guessing one would risk attaching evidence
+        from the wrong point in time -- worse than omitting it. A fork's own
+        `capture_current` after launch captures fresh environment/dependency
+        evidence honestly, same as any other Change.
+        """
+
+        forked = source_checkpoint.model_copy(update={
+            "id": uuid4(), "change_id": target_change.id, "name": BASELINE,
+            "evidence_revision": 1, "captured_at": utc_now(),
+        })
+        self._store.save_checkpoint(forked)
+        self._journal_checkpoint_captured(forked, before_digest=None)
+        return forked
 
     def overview(self, change_id: UUID) -> EvidenceOverview:
         checkpoints = self._store.list_checkpoints(change_id)

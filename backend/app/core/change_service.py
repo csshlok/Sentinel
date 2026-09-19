@@ -17,6 +17,7 @@ from backend.app.contracts.models import (
     ChangeListResponse,
     ChangeTransitionRequest,
     ChangeView,
+    JournalEventType,
     LifecycleFacts,
     RepositoryInfo,
     VerificationRequest,
@@ -99,6 +100,58 @@ class ChangeService:
             request_hash=request_hash,
         )
         return self._to_view(stored)
+
+    def fork(
+        self, source_change_id: UUID, checkpoint_id: UUID, *, title: str, intent: str,
+    ) -> ChangeView:
+        """Create a new, independent Change forked from a checkpoint of another.
+
+        Caller (the evidence-runtime orchestration layer, which holds the
+        Evidence store this service does not) is responsible for validating
+        that ``checkpoint_id`` actually belongs to ``source_change_id``
+        *before* calling this -- this method trusts that check and only
+        creates the new Change row, recording provenance. Copying the
+        checkpoint's own evidence into the fork's baseline is a separate,
+        `EvidenceService`-owned step that follows this call.
+        """
+
+        source = self._get_stored(source_change_id)
+        now = self.clock()
+        fork_id = uuid4()
+        stored = self.repository.create(
+            StoredChange(
+                id=fork_id,
+                title=title,
+                intent=intent,
+                repository_path=source.repository_path,
+                created_at=now,
+                updated_at=now,
+                last_refreshed_at=None,
+                git_summary=None,
+                verification=None,
+                contract=source.contract,
+                forked_from_change_id=source_change_id,
+                forked_from_checkpoint_id=checkpoint_id,
+            ),
+        )
+        if self.repository.journal is not None:
+            self.repository.journal.append(
+                source_change_id, JournalEventType.CHANGE_FORKED,
+                subject_type="change", subject_id=fork_id,
+                payload={"forked_change_id": str(fork_id), "checkpoint_id": str(checkpoint_id)},
+            )
+            self.repository.journal.append(
+                fork_id, JournalEventType.CHANGE_FORKED,
+                subject_type="change", subject_id=fork_id,
+                payload={"forked_from_change_id": str(source_change_id),
+                         "forked_from_checkpoint_id": str(checkpoint_id)},
+            )
+        return self._to_view(stored)
+
+    def forks(self, source_change_id: UUID) -> ChangeListResponse:
+        self._get_stored(source_change_id)
+        items = [self._to_view(item) for item in self.repository.list_forks(source_change_id)]
+        return ChangeListResponse(items=items, count=len(items))
 
     def list(self, *, limit: int, offset: int) -> ChangeListResponse:
         changes = [
@@ -309,4 +362,6 @@ class ChangeService:
             evidence_revision=stored.evidence_revision,
             verification_evidence_revision=stored.verification_evidence_revision,
             last_transition_at=stored.last_transition_at,
+            forked_from_change_id=stored.forked_from_change_id,
+            forked_from_checkpoint_id=stored.forked_from_checkpoint_id,
         )

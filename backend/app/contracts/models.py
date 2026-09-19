@@ -975,6 +975,17 @@ class ActorActionRequest(ContractModel):
     actor_id: UUID
 
 
+class ChangeForkRequest(ContractModel):
+    checkpoint_id: UUID
+    title: TrimmedTitle
+    intent: TrimmedIntent
+
+
+class ChangeForkActionRequest(ContractModel):
+    actor_id: UUID
+    fork: ChangeForkRequest
+
+
 class AssuranceRunActionRequest(ContractModel):
     actor_id: UUID
     output_limit_bytes: int = Field(default=200_000, ge=0, le=1_048_576)

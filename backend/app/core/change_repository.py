@@ -54,6 +54,8 @@ class StoredChange:
     evidence_revision: int = 0
     verification_evidence_revision: int | None = None
     last_transition_at: datetime | None = None
+    forked_from_change_id: UUID | None = None
+    forked_from_checkpoint_id: UUID | None = None
 
 
 class ChangeRepository:
@@ -82,8 +84,8 @@ class ChangeRepository:
                     last_refreshed_at, git_summary_json, verification_json,
                     lifecycle_state, revision, contract_json, risk_level,
                     evidence_revision, verification_evidence_revision,
-                    last_transition_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    last_transition_at, forked_from_change_id, forked_from_checkpoint_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._to_values(change),
             )
@@ -113,6 +115,17 @@ class ChangeRepository:
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def list_forks(self, source_change_id: UUID) -> list[StoredChange]:
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM changes WHERE forked_from_change_id = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (str(source_change_id),),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
@@ -549,6 +562,8 @@ class ChangeRepository:
             change.evidence_revision,
             change.verification_evidence_revision,
             change.last_transition_at.isoformat() if change.last_transition_at else None,
+            str(change.forked_from_change_id) if change.forked_from_change_id else None,
+            str(change.forked_from_checkpoint_id) if change.forked_from_checkpoint_id else None,
         )
 
     @classmethod
@@ -595,6 +610,14 @@ class ChangeRepository:
                 if row["last_transition_at"]
                 else None
             ),
+            forked_from_change_id=(
+                UUID(row["forked_from_change_id"]) if row["forked_from_change_id"] else None
+            ),
+            forked_from_checkpoint_id=(
+                UUID(row["forked_from_checkpoint_id"])
+                if row["forked_from_checkpoint_id"]
+                else None
+            ),
         )
 
     @classmethod
@@ -632,6 +655,14 @@ class ChangeRepository:
                 if change.last_transition_at
                 else None
             ),
+            "forked_from_change_id": (
+                str(change.forked_from_change_id) if change.forked_from_change_id else None
+            ),
+            "forked_from_checkpoint_id": (
+                str(change.forked_from_checkpoint_id)
+                if change.forked_from_checkpoint_id
+                else None
+            ),
         }
 
     @staticmethod
@@ -667,6 +698,16 @@ class ChangeRepository:
             last_transition_at=(
                 datetime.fromisoformat(payload["last_transition_at"])
                 if payload["last_transition_at"]
+                else None
+            ),
+            forked_from_change_id=(
+                UUID(payload["forked_from_change_id"])
+                if payload.get("forked_from_change_id")
+                else None
+            ),
+            forked_from_checkpoint_id=(
+                UUID(payload["forked_from_checkpoint_id"])
+                if payload.get("forked_from_checkpoint_id")
                 else None
             ),
         )

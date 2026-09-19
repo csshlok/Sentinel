@@ -144,6 +144,35 @@ def change_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = Json
     _run(lambda: ApiClient(api_url).get_change(change_id), as_json=json_, no_color=no_color)
 
 
+@change_app.command("fork")
+def change_fork(
+    change_id: UUID,
+    actor_id: UUID,
+    checkpoint_id: UUID,
+    title: str,
+    intent: str,
+    api_url: str = ApiUrlOption,
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Fork a new Change from a checkpoint of an existing one (evidence-trail fork only)."""
+    _run(
+        lambda: ApiClient(api_url).fork_change(
+            change_id, actor_id=actor_id, checkpoint_id=checkpoint_id, title=title, intent=intent,
+        ),
+        as_json=json_,
+        no_color=no_color,
+    )
+
+
+@change_app.command("forks")
+def change_forks(
+    change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    """List Changes forked from this one."""
+    _run(lambda: ApiClient(api_url).list_change_forks(change_id), as_json=json_, no_color=no_color)
+
+
 @change_app.command("contract-update")
 def change_contract_update(
     change_id: UUID,

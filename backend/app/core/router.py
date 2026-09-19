@@ -34,6 +34,7 @@ from backend.app.contracts.models import (
     ChangeCancelRequest,
     ChangeContractUpdateRequest,
     ChangeCreateRequest,
+    ChangeForkActionRequest,
     ChangeListResponse,
     ChangePassport,
     ChangeTransitionRequest,
@@ -194,6 +195,23 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
             change_id, request.actor_id, request.verification,
             idempotency_key=idempotency_key,
         )
+
+    @router.post(
+        "/changes/{change_id}/fork",
+        response_model=ChangeView,
+        status_code=status.HTTP_201_CREATED,
+        tags=["changes"],
+    )
+    def fork_change(change_id: UUID, request: ChangeForkActionRequest) -> ChangeView:
+        return runtime.evidence.fork_change(change_id, request.actor_id, request.fork)
+
+    @router.get(
+        "/changes/{change_id}/forks",
+        response_model=ChangeListResponse,
+        tags=["changes"],
+    )
+    def list_change_forks(change_id: UUID) -> ChangeListResponse:
+        return runtime.evidence.forks(change_id)
 
     @router.delete(
         "/changes/{change_id}",

@@ -241,6 +241,63 @@ def test_declare_tool_manifest_registers_and_lists_for_the_change(tmp_path):
     assert for_change["items"][0]["id"] == body["id"]
 
 
+def test_fork_change_from_checkpoint_copies_baseline_and_is_independent(tmp_path):
+    repo = make_repo(tmp_path / "repo", FILES)
+    client = build(tmp_path)
+    change, agent, human = setup_change(client, repo, ["agent.launch"])
+    base = f"/api/v1/changes/{change['id']}"
+
+    baseline = client.post(f"{base}/evidence/baseline")
+    assert baseline.status_code == 201, baseline.text
+    checkpoint_id = baseline.json()["checkpoint"]["id"]
+
+    # Default-denied without change.fork.
+    denied = client.post(f"{base}/fork", json={
+        "actor_id": human, "fork": {"checkpoint_id": checkpoint_id,
+                                     "title": "try a different model", "intent": "compare outcomes"}})
+    assert denied.status_code == 403, denied.text
+
+    grantor = client.post("/api/v1/actors", json={"kind": "HUMAN", "display_name": "Grantor"}).json()
+    delegation = client.post("/api/v1/delegations", json={
+        "grantor_id": grantor["id"], "grantee_id": human, "change_id": change["id"],
+        "scopes": ["change.fork"], "ttl_seconds": 3600})
+    assert delegation.status_code == 201, delegation.text
+
+    forked = client.post(f"{base}/fork", json={
+        "actor_id": human, "fork": {"checkpoint_id": checkpoint_id,
+                                     "title": "try a different model", "intent": "compare outcomes"}})
+    assert forked.status_code == 201, forked.text
+    fork = forked.json()
+    assert fork["id"] != change["id"]
+    assert fork["forked_from_change_id"] == change["id"]
+    assert fork["forked_from_checkpoint_id"] == checkpoint_id
+    assert fork["title"] == "try a different model"
+
+    # The fork got its own, independent baseline checkpoint (new id, same content).
+    fork_overview = client.get(f"/api/v1/changes/{fork['id']}/evidence").json()
+    assert fork_overview["baseline_captured"] is True
+    fork_checkpoint = fork_overview["checkpoints"][0]
+    assert fork_checkpoint["id"] != checkpoint_id
+    assert fork_checkpoint["change_id"] == fork["id"]
+    assert fork_checkpoint["head_sha"] == baseline.json()["checkpoint"]["head_sha"]
+    assert fork_checkpoint["name"] == "baseline"
+
+    # The source Change's own evidence is untouched.
+    source_overview = client.get(f"{base}/evidence").json()
+    assert len(source_overview["checkpoints"]) == 1
+
+    listed = client.get(f"{base}/forks").json()
+    assert listed["count"] == 1 and listed["items"][0]["id"] == fork["id"]
+
+    unknown_checkpoint = "00000000-0000-4000-8000-000000000000"
+    bad = client.post(f"{base}/fork", json={
+        "actor_id": human, "fork": {"checkpoint_id": unknown_checkpoint,
+                                     "title": "t", "intent": "i"}})
+    assert bad.status_code == 404 and bad.json()["error"]["code"] == "CHECKPOINT_NOT_FOUND"
+    # A failed fork (bad checkpoint) must not leave an orphaned Change behind.
+    assert client.get(f"{base}/forks").json()["count"] == 1
+
+
 def test_stale_evidence_blocks_local_verification_transition(tmp_path):
     repo = make_repo(tmp_path / "repo", FILES)
     client = build(tmp_path)

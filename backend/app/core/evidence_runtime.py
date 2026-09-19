@@ -26,7 +26,8 @@ from backend.app.assurance.service import (
 from backend.app.assurance.store import IdempotencyStore
 from backend.app.contracts.models import (
     AgentAdapterInfo, AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan,
-    AssuranceRun, ChangeView, DependencyReport, GitCheckpoint, GitCheckpointComparison,
+    AssuranceRun, ChangeForkRequest, ChangeListResponse, ChangeView, DependencyReport,
+    GitCheckpoint, GitCheckpointComparison,
 )
 from backend.app.contracts.ports import PolicyPort
 from backend.app.core.change_service import ChangeService
@@ -42,6 +43,7 @@ LAUNCH_SCOPE = "agent.launch"
 ATTACH_SCOPE = "agent.attach"
 STOP_SCOPE = "agent.stop"
 ASSURANCE_RUN_SCOPE = "assurance.run"
+FORK_SCOPE = "change.fork"
 
 
 class EvidenceAdminService:
@@ -181,6 +183,31 @@ class EvidenceAdminService:
     def list_agent_runs(self, change_id: UUID) -> list[AgentRun]:
         self.change_service.get(change_id)
         return self.evidence.agent_runs(change_id)
+
+    # -- checkpoint forking (Part B) -----------------------------------------
+
+    def fork_change(
+        self, source_change_id: UUID, actor_id: UUID, request: ChangeForkRequest,
+    ) -> ChangeView:
+        """Fork a new, independent Change from a checkpoint of an existing one.
+
+        The checkpoint is validated as belonging to ``source_change_id``
+        *before* the new Change row is created, so a bad checkpoint id fails
+        cleanly with no orphaned, evidence-less fork left behind.
+        """
+
+        source = self.change_service.get(source_change_id)
+        self._authorize(actor_id, source, FORK_SCOPE, {"checkpoint_id": str(request.checkpoint_id)})
+        checkpoint = self.evidence.get_checkpoint(source_change_id, request.checkpoint_id)
+        fork = self.change_service.fork(
+            source_change_id, request.checkpoint_id, title=request.title, intent=request.intent,
+        )
+        self.evidence.copy_checkpoint_baseline(checkpoint, fork)
+        return fork
+
+    def forks(self, source_change_id: UUID) -> ChangeListResponse:
+        self.change_service.get(source_change_id)
+        return self.change_service.forks(source_change_id)
 
     # -- assurance ----------------------------------------------------------
 
