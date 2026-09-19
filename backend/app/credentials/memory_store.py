@@ -7,11 +7,11 @@ class InMemoryCredentialStore:
     def __init__(self) -> None:
         self._secrets: dict[str, str] = {}
 
-    def set_secret(self, name: str, value: str) -> None:
-        self._secrets[name] = value
+    def put(self, key: str, secret: str) -> None:
+        self._secrets[key] = secret
 
-    def get_secret(self, name: str) -> str | None:
-        return self._secrets.get(name)
+    def get(self, key: str) -> str | None:
+        return self._secrets.get(key)
 
-    def delete_secret(self, name: str) -> None:
-        self._secrets.pop(name, None)
+    def delete(self, key: str) -> bool:
+        return self._secrets.pop(key, None) is not None

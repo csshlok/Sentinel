@@ -1,52 +1,34 @@
-"""Identity domain models: actors and scoped, expiring delegations."""
+"""Identity-domain helper types.
+
+`Actor` and `Delegation` are now frozen shared contracts
+(`backend.app.contracts.models`); this module only adds the internal,
+non-shared vocabulary needed to explain an authorization decision before
+it is translated into the frozen `PolicyDecision` at the `PolicyPort`
+boundary.
+"""
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict
 
-ScopeName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)
-]
-DisplayName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+# Re-exported for convenience so callers can import identity types from
+# one place; these are the frozen contracts, not local duplicates.
+from backend.app.contracts.models import Actor, ActorKind, Delegation
+
+__all__ = [
+    "Actor",
+    "ActorKind",
+    "Delegation",
+    "DelegationDenialReason",
+    "AuthorizationDecision",
 ]
 
 
 class IdentityModel(BaseModel):
-    """Strict base class matching the project's frozen-contract convention."""
-
     model_config = ConfigDict(extra="forbid")
-
-
-class ActorKind(StrEnum):
-    HUMAN = "HUMAN"
-    AGENT = "AGENT"
-    SERVICE = "SERVICE"
-
-
-class Actor(IdentityModel):
-    id: UUID
-    kind: ActorKind
-    display_name: DisplayName
-    created_at: AwareDatetime
-
-
-class Delegation(IdentityModel):
-    id: UUID
-    grantor_actor_id: UUID
-    grantee_actor_id: UUID
-    change_id: UUID
-    repository_path: str
-    scopes: list[ScopeName] = Field(min_length=1, max_length=32)
-    issued_at: AwareDatetime
-    expires_at: AwareDatetime
-    revoked_at: AwareDatetime | None = None
-    max_uses: int | None = Field(default=None, ge=1)
-    use_count: int = Field(default=0, ge=0)
 
 
 class DelegationDenialReason(StrEnum):

@@ -3,11 +3,13 @@ from uuid import uuid4
 
 import pytest
 
+from backend.app.contracts.ports import CredentialBrokerPort
 from backend.app.core.errors import AppError
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.memory_store import InMemoryCredentialStore
 
 CANARY_SECRET = "ghp_do_not_leak_this_canary_value"
+ONE_HOUR_SECONDS = 3600
 
 
 class _FakeClock:
@@ -24,31 +26,29 @@ def _broker() -> tuple[CredentialBroker, _FakeClock]:
     return broker, clock
 
 
+def test_broker_satisfies_the_frozen_port() -> None:
+    broker, _ = _broker()
+    assert isinstance(broker, CredentialBrokerPort)
+
+
 def test_resolve_secret_returns_stored_value_for_valid_grant() -> None:
     broker, _ = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS
     )
 
     resolved = broker.resolve_secret(grant.id, scope="github.pr.create")
 
     assert resolved == CANARY_SECRET
+    assert grant.provider == "github"
 
 
 def test_grant_object_never_contains_the_secret() -> None:
     broker, _ = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS
     )
 
     assert CANARY_SECRET not in repr(grant)
@@ -62,17 +62,18 @@ def test_resolve_secret_denies_unknown_grant() -> None:
     assert excinfo.value.code == "CREDENTIAL_GRANT_NOT_FOUND"
 
 
+def test_revoke_unknown_grant_raises() -> None:
+    broker, _ = _broker()
+    with pytest.raises(AppError) as excinfo:
+        broker.revoke(uuid4())
+    assert excinfo.value.code == "CREDENTIAL_GRANT_NOT_FOUND"
+
+
 def test_resolve_secret_denies_expired_grant() -> None:
     broker, clock = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)
-    grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
-    )
-    clock.now += timedelta(minutes=6)
+    grant = broker.issue_grant(uuid4(), uuid4(), ["github.pr.create"], 300)
+    clock.now += timedelta(seconds=301)
 
     with pytest.raises(AppError) as excinfo:
         broker.resolve_secret(grant.id, scope="github.pr.create")
@@ -83,13 +84,9 @@ def test_resolve_secret_denies_revoked_grant() -> None:
     broker, _ = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS
     )
-    broker.revoke_grant(grant.id)
+    broker.revoke(grant.id)
 
     with pytest.raises(AppError) as excinfo:
         broker.resolve_secret(grant.id, scope="github.pr.create")
@@ -100,11 +97,7 @@ def test_resolve_secret_denies_wrong_scope() -> None:
     broker, _ = _broker()
     broker.store_provider_secret("github", CANARY_SECRET)
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.repo.read"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.repo.read"], ONE_HOUR_SECONDS
     )
 
     with pytest.raises(AppError) as excinfo:
@@ -115,11 +108,7 @@ def test_resolve_secret_denies_wrong_scope() -> None:
 def test_resolve_secret_denies_when_provider_never_configured() -> None:
     broker, _ = _broker()
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS
     )
 
     with pytest.raises(AppError) as excinfo:
@@ -133,11 +122,7 @@ def test_revoke_provider_secret_removes_it_from_the_store() -> None:
     broker.revoke_provider_secret("github")
 
     grant = broker.issue_grant(
-        actor_id=uuid4(),
-        change_id=uuid4(),
-        provider="github",
-        scopes=["github.pr.create"],
-        ttl=timedelta(minutes=5),
+        uuid4(), uuid4(), ["github.pr.create"], ONE_HOUR_SECONDS
     )
     with pytest.raises(AppError) as excinfo:
         broker.resolve_secret(grant.id, scope="github.pr.create")

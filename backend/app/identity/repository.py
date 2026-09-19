@@ -1,10 +1,11 @@
 """Owner-local persistence for actors and delegations.
 
-Consumes `backend.app.core.database.Database`'s connection boundary
-without editing shared core/migration files. This module manages its
-own tables idempotently, the same way `Database.initialize` manages the
-`changes` table, until `[SD]` promotes this schema into a shared
-migration.
+Reads and writes the canonical `actors`/`delegations` tables created by
+`[SD]`'s `backend.migrations.versions.migration_002_change_runtime_core`
+(applied by `Database.initialize`). This module owns no schema of its
+own; it only consumes the already-migrated tables through
+`Database.connection()`, matching the shared `Actor`/`Delegation`
+contracts from `backend.app.contracts.models`.
 """
 
 from __future__ import annotations
@@ -13,54 +14,31 @@ import json
 from datetime import datetime
 from uuid import UUID
 
+from backend.app.contracts.models import Actor, ActorKind, Delegation
 from backend.app.core.database import Database
-from backend.app.identity.models import Actor, ActorKind, Delegation
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS identity_actors (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS identity_delegations (
-    id TEXT PRIMARY KEY,
-    grantor_actor_id TEXT NOT NULL,
-    grantee_actor_id TEXT NOT NULL,
-    change_id TEXT NOT NULL,
-    repository_path TEXT NOT NULL,
-    scopes_json TEXT NOT NULL,
-    issued_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    revoked_at TEXT NULL,
-    max_uses INTEGER NULL,
-    use_count INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_identity_delegations_grantee
-ON identity_delegations(grantee_actor_id, change_id);
-"""
 
 
 class ActorRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
-        with self.database.connection() as connection:
-            connection.executescript(SCHEMA)
 
     def create(self, actor: Actor) -> Actor:
         with self.database.connection() as connection:
             connection.execute(
                 """
-                INSERT INTO identity_actors (id, kind, display_name, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO actors (
+                    id, kind, display_name, provenance_json, created_at,
+                    updated_at, revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(actor.id),
                     actor.kind.value,
                     actor.display_name,
+                    json.dumps(actor.provenance, separators=(",", ":")),
                     actor.created_at.isoformat(),
+                    actor.updated_at.isoformat(),
+                    actor.revision,
                 ),
             )
         return actor
@@ -68,7 +46,7 @@ class ActorRepository:
     def get(self, actor_id: UUID) -> Actor | None:
         with self.database.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM identity_actors WHERE id = ?", (str(actor_id),)
+                "SELECT * FROM actors WHERE id = ?", (str(actor_id),)
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
@@ -78,24 +56,25 @@ class ActorRepository:
             id=UUID(row["id"]),  # type: ignore[index]
             kind=ActorKind(row["kind"]),  # type: ignore[index]
             display_name=row["display_name"],  # type: ignore[index]
+            provenance=json.loads(row["provenance_json"]),  # type: ignore[index]
             created_at=datetime.fromisoformat(row["created_at"]),  # type: ignore[index]
+            updated_at=datetime.fromisoformat(row["updated_at"]),  # type: ignore[index]
+            revision=row["revision"],  # type: ignore[index]
         )
 
 
 class DelegationRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
-        with self.database.connection() as connection:
-            connection.executescript(SCHEMA)
 
     def create(self, delegation: Delegation) -> Delegation:
         with self.database.connection() as connection:
             connection.execute(
                 """
-                INSERT INTO identity_delegations (
-                    id, grantor_actor_id, grantee_actor_id, change_id,
+                INSERT INTO delegations (
+                    id, grantor_id, grantee_id, change_id,
                     repository_path, scopes_json, issued_at, expires_at,
-                    revoked_at, max_uses, use_count
+                    revoked_at, use_limit, uses
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._to_values(delegation),
@@ -105,22 +84,20 @@ class DelegationRepository:
     def get(self, delegation_id: UUID) -> Delegation | None:
         with self.database.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM identity_delegations WHERE id = ?",
+                "SELECT * FROM delegations WHERE id = ?",
                 (str(delegation_id),),
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def list_for_grantee(
-        self, grantee_actor_id: UUID, change_id: UUID
-    ) -> list[Delegation]:
+    def list_for_grantee(self, grantee_id: UUID, change_id: UUID) -> list[Delegation]:
         with self.database.connection() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM identity_delegations
-                WHERE grantee_actor_id = ? AND change_id = ?
+                SELECT * FROM delegations
+                WHERE grantee_id = ? AND change_id = ?
                 ORDER BY issued_at DESC
                 """,
-                (str(grantee_actor_id), str(change_id)),
+                (str(grantee_id), str(change_id)),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
@@ -128,7 +105,7 @@ class DelegationRepository:
         with self.database.connection() as connection:
             cursor = connection.execute(
                 """
-                UPDATE identity_delegations
+                UPDATE delegations
                 SET revoked_at = ?
                 WHERE id = ? AND revoked_at IS NULL
                 """,
@@ -141,7 +118,7 @@ class DelegationRepository:
     def record_use(self, delegation_id: UUID) -> Delegation | None:
         with self.database.connection() as connection:
             cursor = connection.execute(
-                "UPDATE identity_delegations SET use_count = use_count + 1 WHERE id = ?",
+                "UPDATE delegations SET uses = uses + 1 WHERE id = ?",
                 (str(delegation_id),),
             )
             if cursor.rowcount == 0:
@@ -152,24 +129,24 @@ class DelegationRepository:
     def _to_values(delegation: Delegation) -> tuple[str | int | None, ...]:
         return (
             str(delegation.id),
-            str(delegation.grantor_actor_id),
-            str(delegation.grantee_actor_id),
+            str(delegation.grantor_id),
+            str(delegation.grantee_id),
             str(delegation.change_id),
             delegation.repository_path,
             json.dumps(list(delegation.scopes), separators=(",", ":")),
             delegation.issued_at.isoformat(),
             delegation.expires_at.isoformat(),
             delegation.revoked_at.isoformat() if delegation.revoked_at else None,
-            delegation.max_uses,
-            delegation.use_count,
+            delegation.use_limit,
+            delegation.uses,
         )
 
     @staticmethod
     def _from_row(row: object) -> Delegation:
         return Delegation(
             id=UUID(row["id"]),  # type: ignore[index]
-            grantor_actor_id=UUID(row["grantor_actor_id"]),  # type: ignore[index]
-            grantee_actor_id=UUID(row["grantee_actor_id"]),  # type: ignore[index]
+            grantor_id=UUID(row["grantor_id"]),  # type: ignore[index]
+            grantee_id=UUID(row["grantee_id"]),  # type: ignore[index]
             change_id=UUID(row["change_id"]),  # type: ignore[index]
             repository_path=row["repository_path"],  # type: ignore[index]
             scopes=json.loads(row["scopes_json"]),  # type: ignore[index]
@@ -178,6 +155,6 @@ class DelegationRepository:
             revoked_at=datetime.fromisoformat(row["revoked_at"])  # type: ignore[index]
             if row["revoked_at"]  # type: ignore[index]
             else None,
-            max_uses=row["max_uses"],  # type: ignore[index]
-            use_count=row["use_count"],  # type: ignore[index]
+            use_limit=row["use_limit"],  # type: ignore[index]
+            uses=row["uses"],  # type: ignore[index]
         )

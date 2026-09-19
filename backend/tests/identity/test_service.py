@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
+from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.database import Database
 from backend.app.identity.models import Delegation, DelegationDenialReason
 from backend.app.identity.repository import DelegationRepository
@@ -17,8 +18,8 @@ def _delegation(now: datetime, **overrides: object) -> Delegation:
     change_id = overrides.pop("change_id", uuid4())
     defaults: dict[str, object] = dict(
         id=uuid4(),
-        grantor_actor_id=uuid4(),
-        grantee_actor_id=uuid4(),
+        grantor_id=uuid4(),
+        grantee_id=uuid4(),
         change_id=change_id,
         repository_path=REPO_PATH,
         scopes=[SCOPE],
@@ -38,12 +39,15 @@ def _delegation(now: datetime, **overrides: object) -> Delegation:
             DelegationDenialReason.EXPIRED,
         ),
         (
-            {"expires_at": lambda now: now - timedelta(minutes=1)},
+            {
+                "issued_at": lambda now: now - timedelta(minutes=2),
+                "expires_at": lambda now: now - timedelta(minutes=1),
+            },
             DelegationDenialReason.EXPIRED,
         ),
         ({"scopes": ["other.scope"]}, DelegationDenialReason.SCOPE_NOT_GRANTED),
         (
-            {"max_uses": 1, "use_count": 1},
+            {"use_limit": 1, "uses": 1},
             DelegationDenialReason.EXHAUSTED,
         ),
     ],
@@ -136,6 +140,19 @@ def test_identity_service_authorizes_through_repository(tmp_path) -> None:
     repository = DelegationRepository(database)
     now = datetime.now(UTC)
     delegation = _delegation(now)
+    ChangeRepository(database).create(
+        StoredChange(
+            id=delegation.change_id,
+            title="Test change",
+            intent="Exercise identity service",
+            repository_path=REPO_PATH,
+            created_at=now,
+            updated_at=now,
+            last_refreshed_at=None,
+            git_summary=None,
+            verification=None,
+        )
+    )
     repository.create(delegation)
 
     service = IdentityService(repository)

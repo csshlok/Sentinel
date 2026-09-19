@@ -26,14 +26,14 @@ def test_real_windows_credential_manager_round_trip() -> None:
     store = WindowsCredentialStore(target_prefix="ChangeAssuranceRuntimeSmokeTest")
 
     try:
-        assert store.get_secret(unique_name) is None
+        assert store.get(unique_name) is None
 
-        store.set_secret(unique_name, "smoke-test-value")
-        assert store.get_secret(unique_name) == "smoke-test-value"
+        store.put(unique_name, "smoke-test-value")
+        assert store.get(unique_name) == "smoke-test-value"
 
-        store.set_secret(unique_name, "smoke-test-value-2")
-        assert store.get_secret(unique_name) == "smoke-test-value-2"
+        store.put(unique_name, "smoke-test-value-2")
+        assert store.get(unique_name) == "smoke-test-value-2"
     finally:
-        store.delete_secret(unique_name)
+        store.delete(unique_name)
 
-    assert store.get_secret(unique_name) is None
+    assert store.get(unique_name) is None

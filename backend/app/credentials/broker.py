@@ -1,6 +1,7 @@
 """Issues short-lived internal grants and gates access to durable secrets.
 
-The durable provider secret lives only in a `CredentialStorePort`
+Implements `backend.app.contracts.ports.CredentialBrokerPort`. The
+durable provider secret lives only in a `CredentialStorePort`
 implementation. `resolve_secret` is the single boundary where that
 secret leaves the store, and only for a grant that is present,
 unrevoked, unexpired, and scoped to the request. No other method on
@@ -13,20 +14,27 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from backend.app.contracts.models import CredentialGrant
+from backend.app.contracts.ports import CredentialStorePort
 from backend.app.credentials.errors import (
     grant_denied,
     grant_not_found,
     provider_secret_not_configured,
 )
-from backend.app.credentials.models import CredentialGrant
-from backend.app.credentials.ports import CredentialStorePort
 
 
 def _default_clock() -> datetime:
     return datetime.now(UTC)
 
 
+def _provider_from_scopes(scopes: Sequence[str]) -> str:
+    first = scopes[0]
+    return first.split(".", 1)[0] if "." in first else first
+
+
 class CredentialBroker:
+    """Implements `CredentialBrokerPort`."""
+
     def __init__(
         self,
         store: CredentialStorePort,
@@ -38,36 +46,36 @@ class CredentialBroker:
         self._grants: dict[UUID, CredentialGrant] = {}
 
     def store_provider_secret(self, provider: str, token: str) -> None:
-        self.store.set_secret(self._secret_name(provider), token)
+        self.store.put(self._secret_key(provider), token)
 
     def revoke_provider_secret(self, provider: str) -> None:
-        self.store.delete_secret(self._secret_name(provider))
+        self.store.delete(self._secret_key(provider))
 
     def issue_grant(
         self,
-        *,
         actor_id: UUID,
         change_id: UUID,
-        provider: str,
-        scopes: Sequence[str],
-        ttl: timedelta,
+        scopes: list[str],
+        ttl_seconds: int,
     ) -> CredentialGrant:
         now = self._clock()
         grant = CredentialGrant(
             id=uuid4(),
             actor_id=actor_id,
             change_id=change_id,
-            provider=provider,
+            provider=_provider_from_scopes(scopes),
             scopes=list(scopes),
             issued_at=now,
-            expires_at=now + ttl,
+            expires_at=now + timedelta(seconds=ttl_seconds),
         )
         self._grants[grant.id] = grant
         return grant
 
-    def revoke_grant(self, grant_id: UUID) -> CredentialGrant | None:
+    def revoke(self, grant_id: UUID) -> CredentialGrant:
         grant = self._grants.get(grant_id)
-        if grant is None or grant.revoked_at is not None:
+        if grant is None:
+            raise grant_not_found(str(grant_id))
+        if grant.revoked_at is not None:
             return grant
         revoked = grant.model_copy(update={"revoked_at": self._clock()})
         self._grants[grant_id] = revoked
@@ -85,11 +93,11 @@ class CredentialBroker:
             raise grant_denied(str(grant_id))
         if scope not in grant.scopes:
             raise grant_denied(str(grant_id))
-        secret = self.store.get_secret(self._secret_name(grant.provider))
+        secret = self.store.get(self._secret_key(grant.provider))
         if secret is None:
             raise provider_secret_not_configured(grant.provider)
         return secret
 
     @staticmethod
-    def _secret_name(provider: str) -> str:
+    def _secret_key(provider: str) -> str:
         return f"provider:{provider}"

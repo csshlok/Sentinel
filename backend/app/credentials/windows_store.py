@@ -63,13 +63,13 @@ class WindowsCredentialStore:
     def _target_name(self, name: str) -> str:
         return f"{self._target_prefix}:{name}"
 
-    def set_secret(self, name: str, value: str) -> None:
-        blob = value.encode("utf-16-le")
+    def put(self, key: str, secret: str) -> None:
+        blob = secret.encode("utf-16-le")
         blob_buffer = ctypes.create_string_buffer(blob, len(blob)) if blob else None
         credential = _CREDENTIAL(
             Flags=0,
             Type=CRED_TYPE_GENERIC,
-            TargetName=self._target_name(name),
+            TargetName=self._target_name(key),
             Comment=None,
             CredentialBlobSize=len(blob),
             CredentialBlob=ctypes.cast(blob_buffer, ctypes.POINTER(ctypes.c_char))
@@ -85,10 +85,10 @@ class WindowsCredentialStore:
         if not ok:
             raise OSError(ctypes.get_last_error(), "CredWriteW failed")
 
-    def get_secret(self, name: str) -> str | None:
+    def get(self, key: str) -> str | None:
         credential_ptr = ctypes.POINTER(_CREDENTIAL)()
         ok = self._advapi32.CredReadW(
-            self._target_name(name), CRED_TYPE_GENERIC, 0, ctypes.byref(credential_ptr)
+            self._target_name(key), CRED_TYPE_GENERIC, 0, ctypes.byref(credential_ptr)
         )
         if not ok:
             error = ctypes.get_last_error()
@@ -105,9 +105,11 @@ class WindowsCredentialStore:
         finally:
             self._advapi32.CredFree(credential_ptr)
 
-    def delete_secret(self, name: str) -> None:
-        ok = self._advapi32.CredDeleteW(self._target_name(name), CRED_TYPE_GENERIC, 0)
-        if not ok:
-            error = ctypes.get_last_error()
-            if error != ERROR_NOT_FOUND:
-                raise OSError(error, "CredDeleteW failed")
+    def delete(self, key: str) -> bool:
+        ok = self._advapi32.CredDeleteW(self._target_name(key), CRED_TYPE_GENERIC, 0)
+        if ok:
+            return True
+        error = ctypes.get_last_error()
+        if error == ERROR_NOT_FOUND:
+            return False
+        raise OSError(error, "CredDeleteW failed")

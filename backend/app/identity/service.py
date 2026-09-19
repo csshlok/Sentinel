@@ -52,7 +52,7 @@ def evaluate_delegation(
         return AuthorizationDecision(
             allowed=False, denial_reason=DelegationDenialReason.SCOPE_NOT_GRANTED
         )
-    if delegation.max_uses is not None and delegation.use_count >= delegation.max_uses:
+    if delegation.use_limit is not None and delegation.uses >= delegation.use_limit:
         return AuthorizationDecision(
             allowed=False, denial_reason=DelegationDenialReason.EXHAUSTED
         )
