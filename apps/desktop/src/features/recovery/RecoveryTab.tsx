@@ -65,6 +65,7 @@ function PlanView({ plan, change }: { plan: RecoveryPlan; change: ChangeView }) 
             { label: "From checkpoint", value: <code title={plan.source_checkpoint_id}>{shortSha(plan.source_checkpoint_id)}</code> },
             ...(plan.approved_at ? [{ label: "Approved", value: formatTime(plan.approved_at) }] : []),
             ...(plan.completed_at ? [{ label: "Completed", value: formatTime(plan.completed_at) }] : []),
+            ...(plan.completed_at ? [{ label: "Processes terminated", value: <span className="tabular-nums">{plan.processes_terminated}</span> }] : []),
             { label: "Verified afterwards", value: verified ? "Yes, the Change is Recovered, verified" : `No (${lifecycleInfo(change.lifecycle_state).label})` },
           ]}
         />

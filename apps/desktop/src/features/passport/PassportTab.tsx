@@ -9,7 +9,8 @@ import { useActors } from "@/features/authority/useActors";
 import { ApiError } from "@/lib/api/client";
 import { exportFileName, saveJsonExport, type SaveResult } from "@/lib/export";
 import { evidenceInfo, formatRelative, formatTime, lifecycleInfo, recoveryInfo, signatureInfo, trustInfo } from "@/lib/status";
-import { buildPassport, passportQuery } from "@/services/actions";
+import { buildPassport, exportSignedPassport, passportQuery } from "@/services/actions";
+import { signingKeyQuery } from "@/services/system";
 
 /** "Trace verified" is the honest reading of a verified hash chain; a passport doesn't prove the change is correct. */
 function replayLine(p: { replay_verified?: boolean | null; replay_checked_events?: number | null; replay_first_break_seq?: number | null }) {
@@ -22,10 +23,15 @@ export function PassportTab() {
   const id = useParams({ from: "/changes/$changeId" }).changeId;
   const qc = useQueryClient();
   const q = useQuery(passportQuery(id));
+  const signingKey = useQuery(signingKeyQuery());
   const { nameOf } = useActors(id);
   const [saved, setSaved] = useState<SaveResult | null>(null);
   const build = useMutation({ mutationFn: () => buildPassport(id), onSuccess: () => qc.invalidateQueries({ queryKey: passportQuery(id).queryKey }) });
   const save = useMutation({ mutationFn: (data: unknown) => saveJsonExport(exportFileName("passport", id), data), onSuccess: setSaved });
+  const signAndSave = useMutation({
+    mutationFn: async () => saveJsonExport(exportFileName("passport-signed", id), await exportSignedPassport(id)),
+    onSuccess: setSaved,
+  });
 
   const missing = q.isError && q.error instanceof ApiError && q.error.kind === "not_found";
   const p = q.data;
@@ -42,6 +48,7 @@ export function PassportTab() {
     <>
       {build.isError ? <Notice tone="danger" title="The passport wasn't built" role="alert">{build.error instanceof ApiError ? build.error.message : "The request failed."}</Notice> : null}
       {save.isError ? <Notice tone="danger" title="The export wasn't saved" role="alert">{save.error instanceof Error ? save.error.message : "Saving failed."}</Notice> : null}
+      {signAndSave.isError ? <Notice tone="danger" title="The signed export wasn't saved" role="alert">{signAndSave.error instanceof ApiError ? signAndSave.error.message : signAndSave.error instanceof Error ? signAndSave.error.message : "The request failed."}</Notice> : null}
       {saved?.kind === "saved" ? <Notice title="Saved" role="status">Written to <code className="break-all">{saved.where}</code>.</Notice> : null}
 
       {!p ? (
@@ -51,7 +58,15 @@ export function PassportTab() {
           <Section
             title="Change passport"
             description={`Built ${formatRelative(p.generated_at)}`}
-            action={<div className="flex gap-2">{buildButton}<Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate(p)}><Download aria-hidden="true" /> Export JSON</Button></div>}
+            action={
+              <div className="flex flex-wrap gap-2">
+                {buildButton}
+                <Button size="sm" variant="outline" disabled={save.isPending} onClick={() => save.mutate(p)}><Download aria-hidden="true" /> Export JSON</Button>
+                <Button size="sm" variant="outline" disabled={signAndSave.isPending} onClick={() => signAndSave.mutate()}>
+                  <Download aria-hidden="true" /> {signAndSave.isPending ? "Signing…" : "Export signed"}
+                </Button>
+              </div>
+            }
           >
             <Facts
               items={[
@@ -61,9 +76,14 @@ export function PassportTab() {
                 { label: "Trace", value: replayLine(p) },
                 { label: "Recovery", value: p.recovery_status ? <StatusLabel status={recoveryInfo(p.recovery_status)} /> : "None" },
                 { label: "Outcomes", value: p.outcomes?.length ? p.outcomes.join(", ") : "None recorded" },
+                { label: "Processes observed", value: `${p.processes_attributed} attributed, ${p.processes_unattributed} unattributed, ${p.processes_terminated} terminated by recovery` },
+                {
+                  label: "This operator's signing key",
+                  value: signingKey.data ? <code className="break-all" title={signingKey.data.public_key}>{signingKey.data.public_key}</code> : signingKey.isError ? "Unavailable" : "Loading…",
+                },
               ]}
             />
-            <p className="mt-3 text-xs text-muted-foreground">Exports contain exactly this passport as the server produced it. A passport records what was observed; it doesn't certify the change is correct.</p>
+            <p className="mt-3 text-xs text-muted-foreground">Exports contain exactly this passport as the server produced it. A passport records what was observed; it doesn't certify the change is correct. A signed export adds this operator's Ed25519 signature over the same passport so a recipient who already trusts this key can verify it wasn't altered in transit — it does not certify the change is correct, and no recipient key is stored or trusted anywhere here.</p>
           </Section>
 
           <div className="grid gap-6 lg:grid-cols-2">

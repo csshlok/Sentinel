@@ -70,3 +70,6 @@ export type ReplayTimeline = S["ReplayTimeline"];
 export type ToolTrustDecision = S["ToolTrustDecision"];
 export type ToolTrustScope = S["ToolTrustScope"];
 export type EvidenceSnapshot = S["EvidenceSnapshot"];
+export type DescendantProcess = S["DescendantProcess"];
+export type SignedPassportExport = S["SignedPassportExport"];
+export type SigningPublicKeyResponse = S["SigningPublicKeyResponse"];

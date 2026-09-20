@@ -1,11 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { http } from "../lib/api";
-import type { BackendIdentity, CapabilitiesResponse, Health } from "../lib/api/types";
+import type { BackendIdentity, CapabilitiesResponse, Health, SigningPublicKeyResponse } from "../lib/api/types";
 
 export const systemKeys = {
   health: ["system", "health"] as const,
   capabilities: ["system", "capabilities"] as const,
   runtime: ["system", "runtime"] as const,
+  signingKey: ["system", "signing-key"] as const,
 };
 
 /** Polled while the window is visible; the shell derives the connection indicator from this. */
@@ -46,5 +47,13 @@ export const identityQuery = () =>
   queryOptions({
     queryKey: ["system", "identity"] as const,
     queryFn: ({ signal }) => http.get<BackendIdentity>("/api/v1/system/backend-identity", { signal }),
+    retry: false,
+  });
+
+/** This operator's Ed25519 public key, so a signed Passport export can be shown alongside who could have signed it. */
+export const signingKeyQuery = () =>
+  queryOptions({
+    queryKey: systemKeys.signingKey,
+    queryFn: ({ signal }) => http.get<SigningPublicKeyResponse>("/api/v1/identity/signing-key", { signal }),
     retry: false,
   });

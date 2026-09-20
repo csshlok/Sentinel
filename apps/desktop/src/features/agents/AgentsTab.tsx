@@ -5,10 +5,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorState } from "@/components/ErrorState";
 import { Field, FormDialog, Select, useDialogState, useFormAction } from "@/components/FormDialog";
 import { ActorPicker } from "@/components/pickers";
-import { EmptyState, Facts, Notice, Section, Skeleton, StatusLabel } from "@/components/product";
+import { DataTable, EmptyState, Facts, Notice, Section, Skeleton, StatusLabel, td, th } from "@/components/product";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { AgentAdapterInfo, AgentRun } from "@/lib/api/types";
+import type { AgentAdapterInfo, AgentRun, DescendantProcess } from "@/lib/api/types";
 import { agentRunInfo, formatRelative, formatTime } from "@/lib/status";
 import { adaptersQuery, agentsQuery, attachAgent, isActiveRun, launchAgent, pauseAgent, resumeAgent, stopAgent } from "@/services/actions";
 import { changeKeys } from "@/services/changes";
@@ -59,22 +59,26 @@ export function AgentsTab() {
                 <span className="font-medium">{a.adapter}</span>
                 <span className="text-muted-foreground">
                   {Object.entries(a.executables).map(([name, found]) => `${name}: ${found ? "found" : "not found"}`).join(" · ") || "no executables listed"}
+                  {" · "}
+                  {a.restricted_token_available ? "restricted-token launch available" : "restricted-token launch not available"}
+                  {" · "}
+                  {a.descendant_control_available ? "process-tree evidence available" : "process-tree evidence not available"}
                 </span>
               </li>
             ))}
           </ul>
         )}
       </Section>
-      <p className="text-xs leading-5 text-muted-foreground">The runtime records the top-level run only. It doesn't observe descendant processes, file writes, or an agent's internal tool calls, and stopping a run doesn't stop its descendants.</p>
+      <p className="text-xs leading-5 text-muted-foreground">On Windows with process-tree supervision available, the runtime observes the processes a launched agent spawns (best-effort attribution) and terminates the whole tree on stop. It still doesn't observe file writes or an agent's internal tool calls, and a swap or race outside the observed window can leave a descendant unattributed.</p>
     </>
   );
 }
 
 type RunAction = "pause" | "resume" | "stop";
 const RUN_ACTIONS: Record<RunAction, { button: string; title: string; description: string; confirm: string; danger: boolean; run: typeof stopAgent }> = {
-  pause: { button: "Pause", title: "Pause this top-level run?", description: "The runtime suspends the top-level process it started. Processes that one spawned aren't tracked, so they may keep running.", confirm: "Pause run", danger: false, run: pauseAgent },
+  pause: { button: "Pause", title: "Pause this top-level run?", description: "The runtime suspends only the top-level process it started; pausing never reaches into its process tree even when that tree is otherwise supervised. See this run's own limitations for what's actually tracked.", confirm: "Pause run", danger: false, run: pauseAgent },
   resume: { button: "Resume", title: "Resume this top-level run?", description: "The runtime resumes the top-level process it suspended.", confirm: "Resume run", danger: false, run: resumeAgent },
-  stop: { button: "Stop", title: "Stop this top-level run?", description: "The runtime asks the run it started to stop. Processes it spawned are not tracked and may keep running.", confirm: "Stop run", danger: true, run: stopAgent },
+  stop: { button: "Stop", title: "Stop this top-level run?", description: "The runtime asks the run it started to stop, terminating its whole supervised process tree when one exists (see this run's limitations); otherwise only the top-level process is affected.", confirm: "Stop run", danger: true, run: stopAgent },
 };
 
 /** One control for pause, resume and stop: choose the acting actor, confirm the consequence, and reconcile from the server afterwards. */
@@ -130,13 +134,54 @@ function RunCard({ run, changeId, actors }: { run: AgentRun; changeId: string; a
           { label: "Top-level PID", value: <span className="tabular-nums">{run.top_level_pid ?? "—"}</span> },
           ...(run.external_run_id ? [{ label: "External run", value: <code>{run.external_run_id}</code> }] : []),
           { label: "Descendant control", value: run.descendant_control_available ? "Available" : "Not available" },
+          { label: "Restricted-token launch", value: run.restricted_token_applied ? "Applied" : "Not applied" },
         ]}
       />
       {run.limitations?.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-[13px] text-muted-foreground">{run.limitations.map((l) => <li key={l}>{l}</li>)}</ul> : null}
+      <DescendantProcessesTable processes={run.descendant_processes} />
       <OutputBlock label="stdout" text={run.stdout} />
       <OutputBlock label="stderr" text={run.stderr} />
       {run.output_truncated ? <p className="mt-2 text-xs text-muted-foreground">Output was truncated to the configured limit.</p> : null}
     </Section>
+  );
+}
+
+/** Best-effort process-tree evidence (PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md Part A): only rendered when the runtime actually observed descendants. */
+function DescendantProcessesTable({ processes }: { processes: DescendantProcess[] | undefined }) {
+  if (!processes?.length) return null;
+  return (
+    <details className="mt-3 rounded-md border">
+      <summary className="cursor-pointer px-3 py-2 text-[13px] text-muted-foreground">
+        Descendant processes <span className="tabular-nums">({processes.length})</span>
+      </summary>
+      <DataTable label="Descendant processes">
+        <thead>
+          <tr>
+            <th className={th}>PID</th>
+            <th className={th}>Parent</th>
+            <th className={th}>Executable</th>
+            <th className={th}>Attributed</th>
+            <th className={th}>Started</th>
+            <th className={th}>Terminated</th>
+            <th className={th}>Exit code</th>
+          </tr>
+        </thead>
+        <tbody>
+          {processes.map((p) => (
+            <tr key={p.pid}>
+              <td className={`${td} tabular-nums`}>{p.pid}</td>
+              <td className={`${td} tabular-nums`}>{p.parent_pid ?? "—"}</td>
+              <td className={`${td} mono break-all`} title={p.command_line ?? undefined}>{p.executable_path ?? "—"}</td>
+              <td className={td} title={p.attribution_reason ?? undefined}>{p.attributed ? "Yes" : "No"}</td>
+              <td className={td} title={formatTime(p.started_at)}>{formatRelative(p.started_at)}</td>
+              <td className={td}>{p.terminated_at ? <span title={formatTime(p.terminated_at)}>{formatRelative(p.terminated_at)}</span> : "Still running"}</td>
+              <td className={`${td} tabular-nums`}>{p.exit_code ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
+      <p className="px-3 py-2 text-xs text-muted-foreground">A process that both started and exited between two supervision polls can be missing from this list; this is not a guarantee of complete observation.</p>
+    </details>
   );
 }
 
@@ -174,7 +219,7 @@ function LaunchAgent({ changeId, actors, adapters }: { changeId: string; actors:
         open={dlg.open}
         onOpenChange={dlg.onOpenChange}
         title="Launch a top-level agent"
-        description="Start an agent executable in this repository. The runtime records this run only, not its descendant processes."
+        description="Start an agent executable in this repository. When process-tree supervision is available the runtime attributes descendant processes on a best-effort basis and can terminate the whole tree on stop; see this run's own limitations for what applied."
         submitLabel="Launch"
         pending={run.isPending}
         error={run.error}

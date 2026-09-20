@@ -30,6 +30,7 @@ import type {
   ProviderOperation,
   RecoveryPlan,
   ReplayTimeline,
+  SignedPassportExport,
   ToolManifest,
   ToolManifestListResponse,
   ToolTrustDecision,
@@ -60,6 +61,7 @@ export const captureEvidence = (id: string, kind: "baseline" | "current") =>
   http.post<EvidenceSnapshot>(`${base(id)}/evidence/${kind}`, undefined, idem());
 
 export const buildPassport = (id: string) => http.post<ChangePassport>(`${base(id)}/passport`, undefined, idem());
+export const exportSignedPassport = (id: string) => http.post<SignedPassportExport>(`${base(id)}/passport/export`, undefined, idem());
 
 export const forkChange = (id: string, body: { actor_id: string; fork: { checkpoint_id: string; title: string; intent: string } }, key?: string) =>
   http.post<ChangeView>(`${base(id)}/fork`, body, idem(key));
