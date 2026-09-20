@@ -64,6 +64,32 @@ themselves emit no journal events directly (their journaling happens through
 `assurance/service.py`, already covered above) — the five-file list in #16's commit message is a
 slight over-scoping of where the actual call sites live.
 
+**KB follow-up — done, with one real caveat found along the way.** `EvidenceStore.save_agent_run`,
+`save_checkpoint`, `save_environment`, `save_dependency_report`, `save_plan` and `save_runs` all
+now accept an optional `connection` via `Database.connection_or`. `EvidenceService` wraps each
+write+journal pair in one `database.connection(immediate=True)` block exactly as scoped, for:
+`capture_baseline` (checkpoint + environment), `capture_current` (checkpoint + environment +
+dependency report), `copy_checkpoint_baseline` (checkpoint), `plan_assurance` (plan), and
+`run_assurance` (runs, batched with their per-run journal events). Verified atomic with a real
+`_ExplodingJournal` double (`backend/tests/assurance/test_service_atomicity.py`, mirroring
+`test_runtime_service_atomicity.py`'s pattern): a journal failure now rolls back all of these.
+
+**Found while implementing, not originally scoped: `launch_agent`/`attach_agent`/`pause_agent`/
+`resume_agent` cannot be made atomic this same way.** `AgentLauncher` persists every state
+transition of a run -- including the terminal one -- through `on_update`, bound at
+`EvidenceService.__init__` directly to `store.save_agent_run` with no connection parameter. Each
+`_notify` call inside `launcher.launch()`/`.pause()`/`.resume()` therefore commits its own separate
+transaction *before* `EvidenceService` regains control, so by the time these four methods reach
+their own `save_agent_run` + journal-append pair, the row is already durably saved regardless of
+what the journal append does next. Wrapping that final pair in a shared transaction (tried first,
+reverted) is cosmetic: it re-writes an already-committed row and provides no rollback. Confirmed by
+test (`test_agent_launch_persistence_is_not_covered_by_this_fix`): a journal failure still raises
+(so the caller is never lied to about the *request* failing), but the run row is left in its
+terminal state anyway. Closing this for real means `on_update` itself participating in a shared
+transaction -- a change to `execution/launcher.py`'s notify/persistence wiring, not just
+`assurance/service.py` and `assurance/store.py`. Left open, scoped precisely for whoever picks it
+up next.
+
 ---
 
 ## Also found while completing the test suite (not threat-model findings, noted here for the record)

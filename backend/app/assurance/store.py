@@ -12,6 +12,7 @@ other readers (the Passport builder) can order by them.
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import TypeVar
 from uuid import UUID
@@ -45,11 +46,16 @@ class StoredPlan:
 class EvidenceStore:
     def __init__(self, database: Database) -> None:
         self._db = database
+        # Public alias so a caller (EvidenceService) composing one of these
+        # writes with a JournalWriter.append can open the shared transaction
+        # itself and pass it into both, mirroring
+        # IdentityAdminService/DelegationRepository's existing pattern.
+        self.database = database
 
     # -- agent runs ---------------------------------------------------------
 
-    def save_agent_run(self, run: AgentRun) -> None:
-        with self._db.connection(immediate=True) as c:
+    def save_agent_run(self, run: AgentRun, *, connection: sqlite3.Connection | None = None) -> None:
+        with self._db.connection_or(connection, immediate=True) as c:
             c.execute(
                 "INSERT OR REPLACE INTO agent_runs "
                 "(id, change_id, status, payload_json, started_at, completed_at) "
@@ -81,8 +87,8 @@ class EvidenceStore:
 
     # -- Git checkpoints ----------------------------------------------------
 
-    def save_checkpoint(self, cp: GitCheckpoint) -> None:
-        with self._db.connection(immediate=True) as c:
+    def save_checkpoint(self, cp: GitCheckpoint, *, connection: sqlite3.Connection | None = None) -> None:
+        with self._db.connection_or(connection, immediate=True) as c:
             c.execute(
                 "INSERT OR IGNORE INTO git_checkpoints "
                 "(id, change_id, name, head_sha, evidence_revision, payload_json, captured_at) "
@@ -114,8 +120,10 @@ class EvidenceStore:
 
     # -- environment passports ----------------------------------------------
 
-    def save_environment(self, passport: EnvironmentPassport) -> None:
-        with self._db.connection(immediate=True) as c:
+    def save_environment(
+        self, passport: EnvironmentPassport, *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        with self._db.connection_or(connection, immediate=True) as c:
             c.execute(
                 "INSERT OR IGNORE INTO environment_passports "
                 "(id, change_id, payload_json, captured_at) VALUES (?, ?, ?, ?)",
@@ -138,8 +146,10 @@ class EvidenceStore:
 
     # -- dependency reports -------------------------------------------------
 
-    def save_dependency_report(self, report: DependencyReport) -> None:
-        with self._db.connection(immediate=True) as c:
+    def save_dependency_report(
+        self, report: DependencyReport, *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        with self._db.connection_or(connection, immediate=True) as c:
             c.execute(
                 "INSERT OR IGNORE INTO dependency_reports "
                 "(id, change_id, checkpoint_id, payload_json, captured_at) VALUES (?, ?, ?, ?, ?)",
@@ -153,10 +163,13 @@ class EvidenceStore:
 
     # -- assurance ----------------------------------------------------------
 
-    def save_plan(self, plan: AssurancePlan, contract_sha256: str) -> None:
+    def save_plan(
+        self, plan: AssurancePlan, contract_sha256: str, *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
         envelope = json.dumps({"plan": json.loads(plan.model_dump_json()),
                                "contract_sha256": contract_sha256}, separators=(",", ":"))
-        with self._db.connection(immediate=True) as c:
+        with self._db.connection_or(connection, immediate=True) as c:
             c.execute(
                 "INSERT OR IGNORE INTO assurance_plans "
                 "(id, change_id, checkpoint_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -178,8 +191,10 @@ class EvidenceStore:
         body = json.loads(row["payload_json"])
         return StoredPlan(AssurancePlan.model_validate(body["plan"]), str(body["contract_sha256"]))
 
-    def save_runs(self, runs: list[AssuranceRun]) -> None:
-        with self._db.connection(immediate=True) as c:
+    def save_runs(
+        self, runs: list[AssuranceRun], *, connection: sqlite3.Connection | None = None
+    ) -> None:
+        with self._db.connection_or(connection, immediate=True) as c:
             for run in runs:
                 c.execute(
                     "INSERT OR IGNORE INTO assurance_runs (id, change_id, plan_id, checkpoint_id, "

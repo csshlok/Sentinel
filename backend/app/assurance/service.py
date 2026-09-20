@@ -16,6 +16,7 @@ processes, which the launcher cannot observe across restarts.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from uuid import UUID, uuid4
 
 from pydantic import Field
@@ -134,10 +135,14 @@ class EvidenceService:
         checkpoint = self._git.capture(change.id, BASELINE, change.repository_path,
                                        self._revision(change), self._patch_limit)
         environment = self._environment.capture(change.id, change.repository_path)
-        self._store.save_checkpoint(checkpoint)
-        self._store.save_environment(environment)
-        self._journal_checkpoint_captured(checkpoint, before_digest=None)
-        self._journal_environment_captured(environment, before_digest=None)
+        # #16 remainder (THREAT_MODEL_FINDINGS.md): each write and its journal
+        # event commit or roll back together, so a journal failure cannot
+        # leave evidence durably saved while the caller was told it wasn't.
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_checkpoint(checkpoint, connection=connection)
+            self._store.save_environment(environment, connection=connection)
+            self._journal_checkpoint_captured(checkpoint, before_digest=None, connection=connection)
+            self._journal_environment_captured(environment, before_digest=None, connection=connection)
         return EvidenceSnapshot(checkpoint=checkpoint, environment=environment,
                                 limitations=list(environment.limitations))
 
@@ -164,18 +169,21 @@ class EvidenceService:
         if comparison.branch_moved:
             limitations.append("The branch moved since the baseline; dependency changes "
                                "are measured by commit content, not branch identity.")
-        self._store.save_checkpoint(checkpoint)
-        self._store.save_environment(environment)
-        self._store.save_dependency_report(dependencies)
-        self._journal_checkpoint_captured(
-            checkpoint,
-            before_digest=prior_checkpoint.status_digest if prior_checkpoint else None,
-        )
-        self._journal_environment_captured(
-            environment,
-            before_digest=passport_digest(prior_environment) if prior_environment else None,
-        )
-        self._journal_dependency_report_captured(dependencies)
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_checkpoint(checkpoint, connection=connection)
+            self._store.save_environment(environment, connection=connection)
+            self._store.save_dependency_report(dependencies, connection=connection)
+            self._journal_checkpoint_captured(
+                checkpoint,
+                before_digest=prior_checkpoint.status_digest if prior_checkpoint else None,
+                connection=connection,
+            )
+            self._journal_environment_captured(
+                environment,
+                before_digest=passport_digest(prior_environment) if prior_environment else None,
+                connection=connection,
+            )
+            self._journal_dependency_report_captured(dependencies, connection=connection)
         return EvidenceSnapshot(checkpoint=checkpoint, comparison=comparison,
                                 environment=environment, drift=drift, dependencies=dependencies,
                                 limitations=limitations)
@@ -218,8 +226,9 @@ class EvidenceService:
             "id": uuid4(), "change_id": target_change.id, "name": BASELINE,
             "evidence_revision": 1, "captured_at": utc_now(),
         })
-        self._store.save_checkpoint(forked)
-        self._journal_checkpoint_captured(forked, before_digest=None)
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_checkpoint(forked, connection=connection)
+            self._journal_checkpoint_captured(forked, before_digest=None, connection=connection)
         return forked
 
     def overview(self, change_id: UUID) -> EvidenceOverview:
@@ -281,6 +290,16 @@ class EvidenceService:
         "in flight" moment for a synchronous launch.
         """
 
+        # Not part of the #16-remainder fix below: `AgentLauncher.launch`
+        # already persisted this exact run (including its terminal state)
+        # through `on_update` -- bound at __init__ directly to
+        # `store.save_agent_run` with no connection, so it commits its own
+        # transaction as soon as `_notify` fires inside `launch()`, before
+        # this method regains control. The call below is a harmless
+        # re-write of an already-durable row, not a first write this
+        # transaction could roll back -- true atomicity here would need
+        # `on_update` itself to participate in a shared transaction, which
+        # is a launcher-level change, not just a store/service one.
         run = self._launcher.launch(change.id, change.repository_path, request, output_limit_bytes)
         self._store.save_agent_run(run)
         self._journal_append(
@@ -315,6 +334,8 @@ class EvidenceService:
         return run
 
     def attach_agent(self, change: ChangeView, request: AgentAttachRequest) -> AgentRun:
+        # Same on_update caveat as launch_agent above: AgentLauncher.attach
+        # already committed this run through its own transaction.
         run = self._launcher.attach(change.id, request)
         self._store.save_agent_run(run)
         self._journal_append(
@@ -353,6 +374,8 @@ class EvidenceService:
         ``AGENT_RUN_NOT_FOUND`` rather than a fabricated partial success.
         """
 
+        # Same on_update caveat as launch_agent above: AgentLauncher.pause
+        # already committed this state change through its own transaction.
         run = self._launcher.pause(run_id)
         self._store.save_agent_run(run)
         self._journal_append(
@@ -364,6 +387,7 @@ class EvidenceService:
     def resume_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
         """Resume a previously paused run's top-level process; persist the result."""
 
+        # Same on_update caveat as launch_agent above.
         run = self._launcher.resume(run_id)
         self._store.save_agent_run(run)
         self._journal_append(
@@ -392,13 +416,15 @@ class EvidenceService:
         plan = self._assurance.discover(
             change, checkpoint, self._store.latest_environment(change.id),
             self._dependencies_for(change.id, checkpoint))
-        self._store.save_plan(plan, contract_digest(change))
-        self._journal_append(
-            change.id, JournalEventType.ASSURANCE_PLAN_CREATED,
-            subject_type="assurance_plan", subject_id=plan.id,
-            payload={"checks_count": len(plan.checks),
-                     "coverage_gaps_count": len(plan.coverage_gaps)},
-        )
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_plan(plan, contract_digest(change), connection=connection)
+            self._journal_append(
+                change.id, JournalEventType.ASSURANCE_PLAN_CREATED,
+                subject_type="assurance_plan", subject_id=plan.id,
+                payload={"checks_count": len(plan.checks),
+                         "coverage_gaps_count": len(plan.coverage_gaps)},
+                connection=connection,
+            )
         return plan
 
     def run_assurance(
@@ -406,17 +432,19 @@ class EvidenceService:
     ) -> list[AssuranceRun]:
         plan = self._load_plan(change, plan_id)
         runs = self._assurance.run(change, plan, change.repository_path, output_limit_bytes)
-        self._store.save_runs(runs)
-        for run in runs:
-            output_digest = hashlib.sha256(
-                (run.stdout + "\x00" + run.stderr).encode("utf-8", errors="replace")
-            ).hexdigest()
-            self._journal_append(
-                change.id, JournalEventType.ASSURANCE_CHECK_COMPLETED,
-                subject_type="assurance_run", subject_id=run.id,
-                payload={"check_id": run.check_id, "status": run.status.value,
-                         "duration_ms": run.duration_ms, "output_digest": output_digest},
-            )
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_runs(runs, connection=connection)
+            for run in runs:
+                output_digest = hashlib.sha256(
+                    (run.stdout + "\x00" + run.stderr).encode("utf-8", errors="replace")
+                ).hexdigest()
+                self._journal_append(
+                    change.id, JournalEventType.ASSURANCE_CHECK_COMPLETED,
+                    subject_type="assurance_run", subject_id=run.id,
+                    payload={"check_id": run.check_id, "status": run.status.value,
+                             "duration_ms": run.duration_ms, "output_digest": output_digest},
+                    connection=connection,
+                )
         return runs
 
     def evaluate(self, change: ChangeView, plan_id: UUID) -> AssuranceEvaluation:
@@ -469,7 +497,8 @@ class EvidenceService:
         self._journal.append(change_id, event_type, **kwargs)
 
     def _journal_checkpoint_captured(
-        self, checkpoint: GitCheckpoint, *, before_digest: str | None
+        self, checkpoint: GitCheckpoint, *, before_digest: str | None,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         if self._journal is None:
             return
@@ -478,15 +507,18 @@ class EvidenceService:
             subject_type="git_checkpoint", subject_id=checkpoint.id,
             payload={"name": checkpoint.name, "head_sha": checkpoint.head_sha,
                      "branch": checkpoint.branch},
+            connection=connection,
         )
         self._journal.append_effect(
             event, resource_type="git_checkpoint", resource_id=checkpoint.id,
             restoration_class=RestorationClass.NONE,
             before_digest=before_digest, produced_digest=checkpoint.status_digest,
+            connection=connection,
         )
 
     def _journal_environment_captured(
-        self, environment: EnvironmentPassport, *, before_digest: str | None
+        self, environment: EnvironmentPassport, *, before_digest: str | None,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         if self._journal is None:
             return
@@ -494,19 +526,24 @@ class EvidenceService:
             environment.change_id, JournalEventType.ENVIRONMENT_PASSPORT_CAPTURED,
             subject_type="environment_passport", subject_id=environment.id,
             payload={"status": environment.status.value, "fact_count": len(environment.facts)},
+            connection=connection,
         )
         self._journal.append_effect(
             event, resource_type="environment_passport", resource_id=environment.id,
             restoration_class=RestorationClass.UNKNOWN,
             before_digest=before_digest, produced_digest=passport_digest(environment),
+            connection=connection,
         )
 
-    def _journal_dependency_report_captured(self, report: DependencyReport) -> None:
+    def _journal_dependency_report_captured(
+        self, report: DependencyReport, *, connection: sqlite3.Connection | None = None
+    ) -> None:
         self._journal_append(
             report.change_id, JournalEventType.DEPENDENCY_REPORT_CAPTURED,
             subject_type="dependency_report", subject_id=report.id,
             payload={"changes_count": len(report.changes),
                      "unsupported_ecosystems_count": len(report.unsupported_ecosystems)},
+            connection=connection,
         )
 
     # -- helpers ------------------------------------------------------------
