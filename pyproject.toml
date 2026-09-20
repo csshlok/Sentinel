@@ -13,6 +13,7 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "typer>=0.15,<1",
   "rich>=13,<15",
+  "cryptography>=44,<48",
 ]
 
 [project.optional-dependencies]
