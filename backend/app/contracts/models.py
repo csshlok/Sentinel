@@ -689,6 +689,27 @@ class ChangePassport(ContractModel):
     canonical_digest: Digest
 
 
+class SignedPassportExport(ContractModel):
+    """A `ChangePassport` signed with this operator's own Ed25519 key (A.7).
+
+    This is "we can sign what we already export" only: no other party's
+    public key is stored or trusted anywhere in this codebase, and this
+    model makes no claim about sharing, transport, or delivery to any
+    recipient -- that is unimplemented, threat-model-only Part B.
+    """
+
+    passport: ChangePassport
+    signature: str
+    signer_public_key: str
+    signed_at: AwareDatetime
+
+
+class SigningPublicKeyResponse(ContractModel):
+    """This operator's own Ed25519 public key, for `GET /identity/signing-key`."""
+
+    public_key: str
+
+
 class RestorationClass(StrEnum):
     EXACT = "exact"
     CONDITIONAL = "conditional"
@@ -736,6 +757,7 @@ class JournalEventType(StrEnum):
     RECOVERY_ACTION_COMPLETED = "recovery.action.completed"
     RECOVERY_PLAN_COMPLETED = "recovery.plan.completed"
     PASSPORT_BUILT = "passport.built"
+    PASSPORT_EXPORT_SIGNED = "passport.export.signed"
     POLICY_DECISION_DENIED = "policy.decision.denied"
     TOOL_MANIFEST_REGISTERED = "tool.manifest.registered"
     TOOL_TRUST_DECIDED = "tool.trust.decided"

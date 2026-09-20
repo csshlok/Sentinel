@@ -59,6 +59,7 @@ from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.identity.repository import ActorRepository, DelegationRepository
 from backend.app.outcomes.tracker import OutcomeTracker
 from backend.app.passport.builder import PassportBuilder
+from backend.app.passport.signing import SigningService
 from backend.app.policy.service import DelegationPolicyEngine
 from backend.app.providers.github import GitHubProvider
 from backend.app.providers.http_transport import HttpTransport, UrllibHttpTransport
@@ -298,8 +299,9 @@ def _build_runtime_services(
     passport_builder = PassportBuilder(
         database, delegations, tools=resolved_tools, replay=replay_service
     )
+    signing = SigningService(credential_store)
     passport = PassportService(passport_builder, service, PassportRepository(database),
-                               journal=resolved_journal)
+                               journal=resolved_journal, signing=signing)
 
     return RuntimeServices(
         identity=identity,

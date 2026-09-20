@@ -34,6 +34,7 @@ from backend.app.contracts.models import (
     ProviderOperationRequest,
     RecoveryPlan,
     RestorationClass,
+    SignedPassportExport,
     utc_now,
 )
 from backend.app.contracts.ports import (
@@ -55,6 +56,7 @@ from backend.app.core.errors import (
 )
 from backend.app.core.journal import JournalWriter
 from backend.app.core.replay_service import ReplayService
+from backend.app.passport.signing import SigningService, canonical_passport_bytes
 from backend.app.core.tool_registry_service import ToolRegistryService
 from backend.app.core.runtime_repositories import (
     CredentialGrantRepository,
@@ -640,11 +642,13 @@ class PassportService:
         passports: PassportRepository,
         *,
         journal: JournalWriter | None = None,
+        signing: SigningService | None = None,
     ) -> None:
         self.passport = passport
         self.change_service = change_service
         self.passports = passports
         self._journal = journal
+        self._signing = signing
 
     def build(self, change_id: UUID) -> ChangePassport:
         change = self.change_service.get(change_id)
@@ -664,6 +668,34 @@ class PassportService:
         if stored is None:
             raise passport_not_found(str(change_id))
         return stored
+
+    def export(self, change_id: UUID) -> SignedPassportExport:
+        """Sign the latest already-built Passport (A.7).
+
+        Matches the existing `GET .../passport` retrieve semantics: this
+        does not build a Passport on demand -- a Passport must already
+        have been built via `POST .../passport`, or this 404s the same
+        way `latest` does.
+        """
+
+        assert self._signing is not None, "PassportService.export requires a SigningService"
+        stored = self.latest(change_id)
+        bundle = self._signing.sign(stored)
+        if self._journal is not None:
+            canonical_bytes = canonical_passport_bytes(stored)
+            self._journal.append(
+                change_id, JournalEventType.PASSPORT_EXPORT_SIGNED,
+                subject_type="change_passport", subject_id=stored.id,
+                payload={
+                    "signer_public_key": bundle.signer_public_key,
+                    "exported_content_sha256": hashlib.sha256(canonical_bytes).hexdigest(),
+                },
+            )
+        return bundle
+
+    def public_key(self) -> str:
+        assert self._signing is not None, "PassportService.public_key requires a SigningService"
+        return self._signing.public_key()
 
 
 @dataclass(frozen=True, slots=True)

@@ -3089,6 +3089,7 @@
           "recovery.action.completed",
           "recovery.plan.completed",
           "passport.built",
+          "passport.export.signed",
           "policy.decision.denied",
           "tool.manifest.registered",
           "tool.trust.decided",
@@ -3806,6 +3807,51 @@
         ],
         "title": "RiskLevel",
         "type": "string"
+      },
+      "SignedPassportExport": {
+        "additionalProperties": false,
+        "description": "A `ChangePassport` signed with this operator's own Ed25519 key (A.7).\n\nThis is \"we can sign what we already export\" only: no other party's\npublic key is stored or trusted anywhere in this codebase, and this\nmodel makes no claim about sharing, transport, or delivery to any\nrecipient -- that is unimplemented, threat-model-only Part B.",
+        "properties": {
+          "passport": {
+            "$ref": "#/components/schemas/ChangePassport"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          },
+          "signed_at": {
+            "format": "date-time",
+            "title": "Signed At",
+            "type": "string"
+          },
+          "signer_public_key": {
+            "title": "Signer Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "passport",
+          "signature",
+          "signer_public_key",
+          "signed_at"
+        ],
+        "title": "SignedPassportExport",
+        "type": "object"
+      },
+      "SigningPublicKeyResponse": {
+        "additionalProperties": false,
+        "description": "This operator's own Ed25519 public key, for `GET /identity/signing-key`.",
+        "properties": {
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_key"
+        ],
+        "title": "SigningPublicKeyResponse",
+        "type": "object"
       },
       "ToolDeclareRequest": {
         "additionalProperties": false,
@@ -6937,6 +6983,65 @@
         ]
       }
     },
+    "/api/v1/changes/{change_id}/passport/export": {
+      "post": {
+        "operationId": "export_passport_api_v1_changes__change_id__passport_export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedPassportExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Passport",
+        "tags": [
+          "passport"
+        ]
+      }
+    },
     "/api/v1/changes/{change_id}/providers/github/grants": {
       "post": {
         "operationId": "issue_github_grant_api_v1_changes__change_id__providers_github_grants_post",
@@ -8164,6 +8269,55 @@
         "summary": "Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/v1/identity/signing-key": {
+      "get": {
+        "operationId": "get_signing_public_key_api_v1_identity_signing_key_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SigningPublicKeyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Signing Public Key",
+        "tags": [
+          "identity"
         ]
       }
     },

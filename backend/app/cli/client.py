@@ -323,6 +323,13 @@ class ApiClient:
     def get_latest_passport(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/passport")
 
+    def export_signed_passport(self, change_id: UUID) -> Any:
+        return self._request("POST", f"/api/v1/changes/{change_id}/passport/export")
+
+    # -- identity --
+    def get_signing_public_key(self) -> Any:
+        return self._request("GET", "/api/v1/identity/signing-key")
+
     # -- evidence, agents, assurance (Person 2 stream) --
     def get_evidence(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/evidence")

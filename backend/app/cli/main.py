@@ -29,6 +29,7 @@ github_app = typer.Typer(no_args_is_help=True)
 outcome_app = typer.Typer(no_args_is_help=True)
 recovery_app = typer.Typer(no_args_is_help=True)
 passport_app = typer.Typer(no_args_is_help=True)
+identity_app = typer.Typer(no_args_is_help=True)
 evidence_app = typer.Typer(no_args_is_help=True)
 agent_app = typer.Typer(no_args_is_help=True)
 assurance_app = typer.Typer(no_args_is_help=True)
@@ -42,6 +43,7 @@ app.add_typer(github_app, name="github")
 app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(passport_app, name="passport")
+app.add_typer(identity_app, name="identity")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(agent_app, name="agent")
 app.add_typer(assurance_app, name="assurance")
@@ -406,6 +408,22 @@ def passport_build(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = J
 @passport_app.command("show")
 def passport_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     _run(lambda: ApiClient(api_url).get_latest_passport(change_id), as_json=json_, no_color=no_color)
+
+
+@passport_app.command("export")
+def passport_export(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Sign the latest already-built Passport and print the signed export.
+
+    Requires a Passport to already exist for this Change (`passport build`
+    first) -- this signs what was already built, it does not build one.
+    """
+    _run(lambda: ApiClient(api_url).export_signed_passport(change_id), as_json=json_, no_color=no_color)
+
+
+@identity_app.command("signing-key")
+def identity_signing_key(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Show this operator's own Ed25519 public signing key."""
+    _run(lambda: ApiClient(api_url).get_signing_public_key(), as_json=json_, no_color=no_color)
 
 
 @evidence_app.command("show")

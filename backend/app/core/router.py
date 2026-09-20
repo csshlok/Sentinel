@@ -59,6 +59,8 @@ from backend.app.contracts.models import (
     ReplayTimeline,
     RepositoryInfo,
     RepositoryPathRequest,
+    SignedPassportExport,
+    SigningPublicKeyResponse,
     ToolManifest,
     ToolManifestListResponse,
     ToolTrustDecision,
@@ -437,6 +439,22 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def get_latest_passport(change_id: UUID) -> ChangePassport:
         return runtime.passport.latest(change_id)
+
+    @router.post(
+        "/changes/{change_id}/passport/export",
+        response_model=SignedPassportExport,
+        tags=["passport"],
+    )
+    def export_passport(change_id: UUID) -> SignedPassportExport:
+        return runtime.passport.export(change_id)
+
+    @router.get(
+        "/identity/signing-key",
+        response_model=SigningPublicKeyResponse,
+        tags=["identity"],
+    )
+    def get_signing_public_key() -> SigningPublicKeyResponse:
+        return SigningPublicKeyResponse(public_key=runtime.passport.public_key())
 
     # -- Person 2 stream: evidence, agents, assurance -------------------------
 
