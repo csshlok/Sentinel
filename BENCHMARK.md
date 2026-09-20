@@ -1,8 +1,12 @@
 # Benchmarks
 
-Every number on this page came from actually running Sentinel and timing it — nothing here is
-estimated, modeled, or carried over from a vendor claim. Where a number is *cited* rather than
-measured (one is, below), it says so and links its source.
+Every number on this page came from actually running Sentinel — nothing here is estimated,
+modeled, or carried over from a vendor claim. Where a number is *cited* rather than measured
+(one is, below), it says so and links its source.
+
+Speed is reassuring, but it isn't the point. The numbers that actually matter for a tool like this
+are whether it sees what an agent does and whether its record of that can be trusted — so this
+page leads with correctness and tamper-resistance, and puts latency last.
 
 ## Methodology and honest limits
 
@@ -20,6 +24,105 @@ measured (one is, below), it says so and links its source.
 - **What isn't measured here:** multi-user concurrency, a large monorepo (thousands of files),
   network latency to a remote backend (everything above is loopback), and Linux/macOS (the
   process-tree supervision and restricted-token features are Windows-only by design).
+
+## Correctness: does it actually catch what it claims to?
+
+### Dependency drift detection
+
+A real `requirements.txt` was changed between two evidence captures — one package's version
+bumped, one package removed, one new package added — and compared against what Sentinel's
+dependency report actually recorded.
+
+**3 out of 3 injected changes detected, exactly (no false positives, no misses):**
+`requests==2.31.0 → 2.32.0` (version bump), `flask==2.3.0 → removed`, `click → 8.1.0 added`.
+
+### Credential redaction, honestly measured by attack type
+
+`AgentLauncher._text` — the real function every launched agent's captured stdout/stderr passes
+through — was called directly with a known secret transformed ten different ways, and checked for
+whether its `[REDACTED]` marker actually appeared (not just whether the literal substring vanished,
+which gives false credit to things like a reversed string that a human could still trivially read):
+
+| Attack | Redacted? |
+|---|---|
+| Plain | ✅ |
+| Base64 (standard) | ✅ |
+| Base64 (URL-safe) | ✅ |
+| Hex | ✅ |
+| Surrounded by other text | ✅ |
+| Split across a newline | ❌ |
+| Reversed | ❌ |
+| URL-encoded | ❌ |
+| Inserted whitespace | ❌ |
+| Double base64 | ❌ |
+
+**5 out of 10 (50%) redacted.** The module's own docstring already states this scope honestly —
+"arbitrary transformation (splitting across lines, a custom encoding, compression) by a compromised
+agent can still defeat it" — this benchmark just puts a number on exactly which attacks that
+covers and which it doesn't, rather than leaving the boundary vague.
+
+### Journal tamper detection — two independent layers, both tested
+
+Three real tampering attempts were made directly against the SQLite file behind a Change with a
+real journal: editing an event's payload, deleting a middle event, and corrupting a stored hash.
+
+**3 out of 3 were rejected outright by the database's own append-only triggers** — `journal_events
+is append-only` — before the edit could take effect at all, let alone need detecting afterward.
+
+To test the *second* layer independently, the trigger was deliberately dropped for one edit (as
+if an attacker bypassed the database engine's own enforcement entirely, e.g. by editing the raw
+file with the process stopped), the payload was corrupted, and the trigger restored:
+
+**The hash-chain replay verification caught it and named the exact broken sequence number** —
+`verified: false`, `first_break_seq: 1`, `reason: "event_hash does not match its recomputed
+value."` Two independent defenses, both confirmed to actually work, not just assumed to.
+
+### Privilege reduction — concrete, named privileges, not just "lower"
+
+The same `whoami /priv` command was run from inside a real Sentinel-supervised (restricted-token)
+launch and from a real unsupervised launch, and the resulting Windows token privileges were diffed:
+
+- **Plain launch:** `SeChangeNotifyPrivilege`, `SeIncreaseWorkingSetPrivilege`,
+  `SeShutdownPrivilege`, `SeTimeZonePrivilege`, `SeUndockPrivilege` (5 total)
+- **Restricted-token launch:** `SeChangeNotifyPrivilege` only (1 total)
+
+**4 named privileges concretely removed**: the ability to shut down or undock the system, change
+the system clock, and increase its own working-set quota are gone before the agent's code ever
+runs — not a vague claim of "lower privilege," a specific, checkable list.
+
+## Known limits, quantified rather than hidden
+
+This documentation already states that descendant-process observation is best-effort and that
+Sentinel doesn't independently observe filesystem writes outside Git. Rather than leave those as
+vague caveats, here's what's actually been measured and what hasn't yet:
+
+- **Process capture across a range of real lifetimes** (1ms–500ms buckets, 30 trials each, on a
+  Sentinel-supervised Job Object polling roughly every 50ms) was run for this page. A first attempt
+  showed 100% capture at every bucket, but that run turned out to be confounded: the interpreter
+  used for the launched processes was itself a Windows-venv launcher stub (see the pause/resume
+  fix earlier in this project's history), which meant each "single child" was actually two or three
+  overlapping processes, making the true single-process capture rate impossible to read off that
+  run honestly. A corrected re-run against an unwrapped interpreter was still in progress at the
+  time this page was written and its result is intentionally left out rather than reported before
+  it's confirmed. What's real and unambiguous either way: Windows Job Object membership queries
+  return every PID ever assigned to the job, including ones that have already exited, which is why
+  a short-lived *direct* child has a real chance of survival even between ~50ms polls; a process
+  nested several levels deep that starts and fully exits inside one polling window is the
+  harder, not-yet-isolated case the documentation's own caveat is actually about.
+- **Pause/resume reliability across many repeated trials with real nested process trees** was
+  attempted for this page but the specific run produced a measurement artifact (inconsistent
+  worker-PID identification across trials, not a reliability failure) rather than a clean result,
+  and was dropped rather than published as if it were trustworthy. The single, carefully isolated
+  verification earlier in this project's own history stands as real evidence instead: a 4-process
+  supervised tree (top-level plus three nested layers) showed completely flat CPU time across a
+  full 6-second observation window while paused, with zero exceptions across the trial. A clean
+  statistical version of this at higher N is real, valuable future work.
+- **Recovery success/safety across many injected bad changes, a large-scale (1K/10K/100K-file)
+  repository test, journal verification at scale, and an adversarial head-to-head comparing an
+  agent's own self-report against Sentinel's independently captured evidence** were all judged
+  worth doing (see the project's own benchmark-planning discussion) but were not completed for
+  this page in the time available. Naming them here, unfinished, is more honest than omitting them
+  silently or filling them with invented numbers.
 
 ## Operation latency
 
