@@ -1179,6 +1179,12 @@ export interface components {
             /** Executable */
             executable: string;
             /**
+             * Isolation
+             * @default restricted_token
+             * @enum {string}
+             */
+            isolation: "restricted_token" | "container";
+            /**
              * Timeout Seconds
              * @default 900
              */
@@ -1197,6 +1203,10 @@ export interface components {
             change_id: string;
             /** Completed At */
             completed_at?: string | null;
+            /** Container Id */
+            container_id?: string | null;
+            /** Container Image */
+            container_image?: string | null;
             /**
              * Descendant Control Available
              * @default false
@@ -1215,8 +1225,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Isolation Mode
+             * @default restricted_token
+             * @enum {string}
+             */
+            isolation_mode: "restricted_token" | "container";
             /** Limitations */
             limitations?: string[];
+            /** Network Isolated */
+            network_isolated?: boolean | null;
             /**
              * Output Truncated
              * @default false

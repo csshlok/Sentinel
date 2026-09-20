@@ -410,6 +410,12 @@ class AgentLaunchRequest(ContractModel):
     args: list[CommandArgument] = Field(default_factory=list, max_length=128)
     environment_keys: list[ShortText] = Field(default_factory=list, max_length=128)
     timeout_seconds: int = Field(default=900, ge=1, le=86400)
+    # "container": Docker-backed filesystem/network isolation instead of
+    # restricted-token privilege reduction (execution/container_supervisor.py).
+    # Only executables with a configured Linux image support this; requesting
+    # it for one that doesn't, or when Docker itself is unavailable, fails
+    # with a stable error rather than silently using restricted_token instead.
+    isolation: Literal["restricted_token", "container"] = "restricted_token"
 
 
 class AgentAttachRequest(ContractModel):
@@ -459,6 +465,10 @@ class AgentRun(ContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=32)
     paused_at: AwareDatetime | None = None
     resumed_at: AwareDatetime | None = None
+    isolation_mode: Literal["restricted_token", "container"] = "restricted_token"
+    container_id: str | None = Field(default=None, max_length=128)
+    container_image: str | None = Field(default=None, max_length=256)
+    network_isolated: bool | None = None
 
 
 class GitCheckpoint(ContractModel):

@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -32,6 +33,7 @@ from backend.app.contracts.models import (
 from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution import container_supervisor
 from backend.app.execution.process_supervisor import (
     IS_WINDOWS, SupervisedProcess, is_process_running, list_pids, spawn_restricted_supervised,
 )
@@ -163,6 +165,14 @@ class AgentLauncher:
                 or not 0 <= output_limit_bytes <= MAX_OUTPUT_BYTES):
             raise AppError("INVALID_OUTPUT_LIMIT", "Output limit must be between zero and one MiB.")
         root = self._root(repository_path)
+        if request.isolation == "container":
+            # A wholly separate path from here down: container isolation
+            # trades Windows process-tree attribution and restricted-token
+            # privilege reduction for real filesystem/network isolation (see
+            # execution/container_supervisor.py's own docstring). It does
+            # not share the restricted-token machinery below at all, so it
+            # cannot regress it.
+            return self._launch_containerized(change_id, root, request, adapter, output_limit_bytes)
         env, secrets = self._environment(request, adapter, root)
         # Resolve the executable path exactly once and reuse it for both the
         # trust-check hash and the actual spawn below. Re-resolving the same
@@ -345,6 +355,94 @@ class AgentLauncher:
         self._notify(final)
         if self._tool_registry is not None and tool_manifest is not None:
             self._record_tool_observation(tool_manifest.id, change_id, run_id, "launch")
+        state.done.set()
+        return final
+
+    def _launch_containerized(
+        self, change_id: UUID, root: Path, request: AgentLaunchRequest,
+        adapter: AgentAdapter, output_limit_bytes: int,
+    ) -> AgentRun:
+        """Blocking container-isolated launch (see container_supervisor.py).
+
+        Deliberately does not share `launch()`'s incremental on_poll/capture
+        machinery: that machinery is built around a Windows process handle
+        and pipe-based stdout/stderr, neither of which a Docker container
+        provides the same way. This is a real, current limitation, stated
+        here rather than faked with a partial imitation: no live output
+        during the run, and no pause/resume/stop support (the run only
+        reaches a terminal state once the container itself exits or its
+        timeout elapses).
+        """
+
+        run_id = uuid4()
+        started_at = utc_now()
+        running = AgentRun(
+            id=run_id, change_id=change_id, adapter=adapter.name,
+            status=AgentRunStatus.RUNNING, started_at=started_at,
+            isolation_mode="container",
+            limitations=[
+                "Container isolation: no live output during the run, and no "
+                "pause/resume/stop support -- the run only reaches a "
+                "terminal state once the container exits or times out.",
+                "No Windows process-tree attribution in this mode; only the "
+                "container's own process list is visible, in its own PID "
+                "namespace, not cross-referenced with host evidence.",
+            ],
+        )
+        state = _State(running, threading.Event(), threading.Event(), threading.Event())
+        with self._lock:
+            self._runs[run_id] = state
+        self._notify(running)
+
+        try:
+            argv = [request.executable, *request.args]
+            process = container_supervisor.run_containerized(argv, cwd=root, network_isolated=True)
+        except AppError as exc:
+            failed = running.model_copy(update={
+                "status": AgentRunStatus.ERROR, "completed_at": utc_now(),
+                "limitations": [*running.limitations, f"The agent did not start: {exc.message}"],
+            })
+            with self._lock:
+                state.record = failed
+            self._notify(failed)
+            state.done.set()
+            return failed
+
+        with self._lock:
+            state.record = state.record.model_copy(update={
+                "container_id": process.container_id,
+                "container_image": process.image,
+                "network_isolated": True,
+            })
+        self._notify(state.record)
+
+        try:
+            exit_code = process.wait(timeout=request.timeout_seconds)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            process.kill()
+            exit_code = None
+            timed_out = True
+        raw_stdout, raw_stderr = process.logs()
+        process.remove()
+
+        completed_at = utc_now()
+        stdout = self._text(raw_stdout[:output_limit_bytes], [])
+        stderr = self._text(raw_stderr[:output_limit_bytes], [])
+        status = (
+            AgentRunStatus.TIMED_OUT if timed_out
+            else AgentRunStatus.PASSED if exit_code == 0
+            else AgentRunStatus.FAILED
+        )
+        with self._lock:
+            state.record = state.record.model_copy(update={
+                "status": status, "exit_code": exit_code, "completed_at": completed_at,
+                "duration_ms": int((completed_at - started_at).total_seconds() * 1000),
+                "stdout": stdout, "stderr": stderr,
+                "output_truncated": len(raw_stdout) > output_limit_bytes or len(raw_stderr) > output_limit_bytes,
+            })
+            final = state.record
+        self._notify(final)
         state.done.set()
         return final
 

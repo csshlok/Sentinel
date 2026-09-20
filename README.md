@@ -165,10 +165,19 @@ A few of the load-bearing decisions:
   suspend/resume. Other platforms get a stable, honest error — never a fabricated success.
 - **No filesystem tracker.** File writes outside Git are not independently observed; this was a
   deliberate scope cut, not an oversight.
-- **Not a sandbox.** Restricted-token privilege reduction lowers what an agent's process can do;
-  it provides no filesystem or network isolation and makes no such claim.
-- **No cross-agent container sharing.** Threat-modeled but not implemented — no code, no routes,
-  no new tables exist for it, and none of this codebase's copy claims otherwise.
+- **Not a sandbox (restricted-token mode).** Privilege reduction lowers what an agent's process
+  can do; it provides no filesystem or network isolation and makes no such claim.
+- **Container isolation exists for a narrow set of executables only.** An opt-in Docker-backed
+  isolation mode (`execution/container_supervisor.py`) gives real filesystem isolation (only the
+  repository is mounted in) and real network isolation (`--network none` by default), but only for
+  executables with a configured Linux image (`python`/`node` today) — not the Windows-native
+  `claude`/`codex` CLIs, which have no Linux equivalent here. It has no live output during a run
+  and no pause/resume/stop support yet, and requires Docker installed and reachable; if it isn't,
+  requesting container isolation fails with a stable error rather than silently using
+  restricted-token instead.
+- **No cross-agent container sharing.** A separate, unrelated idea from the isolation mode above —
+  an external party receiving and acting on a Change's evidence or execution state. Threat-modeled
+  but not implemented — no code, no routes, no new tables exist for it.
 - **No MCP or descendant tool-call interception.** Only the top-level launched executable and
   explicitly declared tool manifests are tracked.
 - **Descendant-process evidence is best-effort.** A process that starts and exits between two
