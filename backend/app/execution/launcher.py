@@ -33,7 +33,7 @@ from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
 from backend.app.execution.process_supervisor import (
-    IS_WINDOWS, SupervisedProcess, spawn_restricted_supervised,
+    IS_WINDOWS, SupervisedProcess, is_process_running, list_pids, spawn_restricted_supervised,
 )
 from backend.app.execution.resolve import find_executable, resolve_argv, safe_path_entries
 from backend.app.execution.signal_control import resume_process, suspend_process
@@ -55,7 +55,9 @@ DESCENDANT_LIMITATION = (
 )
 SUPERVISED_LIMITATION = (
     "The launched process tree was supervised by a Windows Job Object; pause/resume "
-    "still applies only to the top-level PID."
+    "acts on every process the runtime has observed in that tree, not the top-level "
+    "PID alone. A descendant that starts and exits between two supervision polls, or "
+    "one spawned by an already-suspended process, is not covered."
 )
 RESTRICTED_AUTHORITY = (
     "Reduced privilege via a restricted Windows token with maximum privileges "
@@ -390,8 +392,42 @@ class AgentLauncher:
             state, "Cancellation was requested but has not completed yet."
         )
 
+    @staticmethod
+    def _tree_pids(state: _State, top_level_pid: int) -> list[int]:
+        """Every live PID pause/resume should act on together.
+
+        A single top-level PID is not always the process actually doing the
+        work: a Windows Python venv's own ``python.exe`` is a launcher stub
+        that spawns the real interpreter as a child and waits on it (this is
+        standard CPython venv behaviour, not specific to any one install),
+        and other wrapped executables can behave the same way. Suspending
+        only the stub leaves the real child running -- pause silently does
+        nothing, and the run finishes as if pause had never been called.
+
+        When the run has a supervised Job Object (restricted-token launch
+        available), this returns the top-level PID plus every PID Windows
+        currently reports as a member of that job -- a live query, not the
+        historical `descendant_processes` evidence list, so it also catches
+        a child that has not yet been individually attributed. Without a
+        supervised Job Object (an attached run, or supervision unavailable),
+        this falls back to the original top-level-PID-only scope, since
+        there is no reliable way to discover descendants otherwise.
+        """
+
+        session = getattr(state.process, "session", None)
+        job = getattr(session, "job", None) if session is not None else None
+        if not job:
+            return [top_level_pid]
+        try:
+            pids = list_pids(job)
+        except AppError:
+            return [top_level_pid]
+        if top_level_pid not in pids:
+            pids = [top_level_pid, *pids]
+        return [p for p in pids if is_process_running(p)]
+
     def pause(self, run_id: UUID) -> AgentRun:
-        """Suspend the top-level process only (Windows-first, no descendants).
+        """Suspend the run's process tree (see ``_tree_pids``).
 
         Requires the run to be ``RUNNING`` with an observed PID; a run that
         is attached, already paused, or already terminal is rejected with a
@@ -407,7 +443,20 @@ class AgentLauncher:
         if pid is None:
             raise AppError("AGENT_RUN_NOT_PAUSABLE",
                            "The agent run has no observed process yet.", status_code=409)
-        suspend_process(pid)
+        suspended: list[int] = []
+        try:
+            for target in self._tree_pids(state, pid):
+                suspend_process(target)
+                suspended.append(target)
+        except AppError:
+            # Don't leave part of the tree suspended while reporting the
+            # pause itself as failed -- best-effort undo, then re-raise.
+            for target in suspended:
+                try:
+                    resume_process(target)
+                except AppError:
+                    pass
+            raise
         with self._lock:
             state.record = state.record.model_copy(
                 update={"status": AgentRunStatus.PAUSED, "paused_at": utc_now()})
@@ -420,7 +469,7 @@ class AgentLauncher:
         return paused
 
     def resume(self, run_id: UUID) -> AgentRun:
-        """Resume a previously paused top-level process."""
+        """Resume a previously suspended process tree (see ``_tree_pids``)."""
 
         state = self._runnable_state(run_id)
         if state.attached or state.record.status is not AgentRunStatus.PAUSED:
@@ -430,7 +479,18 @@ class AgentLauncher:
         if pid is None:
             raise AppError("AGENT_RUN_NOT_RESUMABLE",
                            "The agent run has no observed process.", status_code=409)
-        resume_process(pid)
+        # Resume every member even if one fails, rather than abandoning the
+        # rest of the tree suspended because one PID (e.g. one that exited
+        # mid-call) couldn't be resumed; the first failure is still raised.
+        first_error: AppError | None = None
+        for target in self._tree_pids(state, pid):
+            try:
+                resume_process(target)
+            except AppError as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
         with self._lock:
             state.record = state.record.model_copy(
                 update={"status": AgentRunStatus.RUNNING, "resumed_at": utc_now()})

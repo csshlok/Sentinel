@@ -10,6 +10,7 @@ well-formed, correctly-chained journal event with the right `event_type` and
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -37,6 +38,19 @@ FILES = {
 EDIT = ("import pathlib\n"
         "pathlib.Path('app.py').write_text('def add(a, b):\\n    return b + a\\n')\n"
         "pathlib.Path('requirements.txt').write_text('flask==3.0.0\\n')\nprint('done')\n")
+# `execution/resolve.py` deliberately resolves "python"/"python3" to
+# `sys.executable` -- the same interpreter running this process -- rather
+# than a PATH search, so the launched agent can't silently be a different
+# Python than expected. That is the right call for the product, but a
+# Windows venv's own `python.exe` is commonly a launcher stub that spawns
+# the real interpreter as a *child* and waits on it (real CPython
+# behaviour, not specific to any one install), which the tests below would
+# otherwise see as unexpected descendants. Point `sys.executable` at the
+# real, unwrapped interpreter for the duration of these tests instead of
+# passing a path as `executable` (the launcher's adapter allowlist only
+# accepts the bare names "python"/"python3", by design -- see
+# `AgentLauncher.launch`'s `_normalize` check).
+REAL_PYTHON = getattr(sys, "_base_executable", sys.executable)
 
 
 class Harness:
@@ -88,7 +102,8 @@ def _assert_chain_valid(events: list) -> None:
         prev_hash = event.event_hash
 
 
-def test_full_evidence_flow_produces_a_correctly_chained_journal(tmp_path):
+def test_full_evidence_flow_produces_a_correctly_chained_journal(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "executable", REAL_PYTHON)
     h = Harness(tmp_path, required_checks=["pytest"])
     service = h.service()
     change = h.view()
@@ -133,9 +148,10 @@ def test_full_evidence_flow_produces_a_correctly_chained_journal(tmp_path):
     assert {e.payload["status"] for e in check_events} == {r.status.value for r in runs}
 
 
-def test_supervised_descendants_emit_bounded_process_events(tmp_path):
+def test_supervised_descendants_emit_bounded_process_events(tmp_path, monkeypatch):
     if not IS_WINDOWS:
         return
+    monkeypatch.setattr(sys, "executable", REAL_PYTHON)
     h = Harness(tmp_path)
     child = "import time; time.sleep(0.4)"
     parent = (

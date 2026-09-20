@@ -314,9 +314,15 @@ async def test_evidence_screen_real_pause_and_resume_a_running_agent(live_change
     )
 
     def launch_slow_agent() -> None:
+        # Long enough that the run is still genuinely RUNNING well past the
+        # screen's own poll interval (2s) plus real HTTP round-trips for
+        # detecting RUNNING, enabling Pause, and the pause call itself --
+        # 3s left too little margin under load and let the process finish
+        # naturally before pause ever reached the backend, which read as a
+        # pause/resume failure rather than the timing race it actually was.
         client.launch_agent(
             change_id, actor_id=actor_id, executable="python",
-            args=["-c", "import time; print('a'); time.sleep(3); print('b')"],
+            args=["-c", "import time; print('a'); time.sleep(12); print('b')"],
         )
 
     launcher_thread = threading.Thread(target=launch_slow_agent, daemon=True)
@@ -365,8 +371,13 @@ async def test_evidence_screen_real_pause_and_resume_a_running_agent(live_change
         assert not resume_button.disabled
         resume_button.press()
 
-        launcher_thread.join(timeout=15)
-        deadline = time.monotonic() + 10.0
+        # The launch call blocks server-side until the process is terminal;
+        # the paused interval doesn't count against its 12s of real sleep,
+        # but the wall-clock total also includes however long this test took
+        # to detect RUNNING, pause and resume -- generous margin here avoids
+        # a false failure from that, not from pause/resume itself.
+        launcher_thread.join(timeout=30)
+        deadline = time.monotonic() + 20.0
         status = client.list_agent_runs(change_id)["items"][0]["status"]
         while status not in ("PASSED", "FAILED") and time.monotonic() < deadline:
             await pilot.pause(0.1)

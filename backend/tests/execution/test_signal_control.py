@@ -16,9 +16,22 @@ from backend.app.core.errors import AppError
 from backend.app.execution import signal_control
 
 
+# A Windows venv's own `python.exe` (sys.executable) is commonly a launcher
+# stub that spawns the real interpreter as a *child* and waits on it -- real,
+# standard CPython behaviour, not specific to any one install. Since this
+# module's own contract is deliberately single-PID (no process-tree
+# enumeration -- see signal_control.py's docstring), suspending that stub
+# would suspend nothing this test can observe, through no fault of the
+# suspend/resume primitives themselves. Use sys._base_executable, Python's
+# own documented way to reach the real interpreter behind a venv, so this
+# test verifies suspend/resume of one real, unwrapped process regardless of
+# whether pytest happens to be running from a venv.
+_REAL_PYTHON = getattr(sys, "_base_executable", sys.executable)
+
+
 def _spawn(code: str) -> subprocess.Popen:
     return subprocess.Popen(
-        [sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        [_REAL_PYTHON, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL, bufsize=0,
     )
 

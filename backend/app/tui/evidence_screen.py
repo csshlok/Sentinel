@@ -19,10 +19,15 @@ from textual.widgets import Button, DataTable, Footer, Header, Static
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
 
 _ACTIVE_STATUSES = {"RUNNING", "PAUSED"}
-# How often the screen re-polls agent runs while one is RUNNING/PAUSED, so
-# incrementally-captured stdout/stderr (Part C) and a pause/resume made from
-# elsewhere become visible without a manual refresh. Polling stops on its
-# own once nothing is active -- no wasted requests once nothing is changing.
+# How often the screen re-polls agent runs while this screen is open, so
+# incrementally-captured stdout/stderr (Part C), a launch/pause/resume made
+# elsewhere, and a brand-new run that didn't exist yet at the last poll all
+# become visible without a manual refresh. Deliberately unconditional: an
+# earlier version only re-polled once a run was *already* known to be
+# RUNNING/PAUSED, which meant a run that started after this screen opened
+# but before its first poll observed it was never noticed again without a
+# manual refresh -- polling one open Change's evidence view every couple of
+# seconds is cheap enough that the honesty is worth the requests.
 _LIVE_POLL_INTERVAL_SECONDS = 2.0
 _OUTPUT_TAIL_LINES = 20
 
@@ -118,12 +123,15 @@ class EvidenceScreen(Screen):
     """Git/environment/dependency/assurance evidence plus agent-run control.
 
     Agent runs are listed with a live-updating output tail (Part C: the
-    screen polls faster, on its own, only while a run is RUNNING/PAUSED --
+    screen polls on its own at a fixed interval regardless of run state --
     no push/streaming transport, matching the operator's own scoping
-    decision) and Pause/Resume/Stop actions (Part A: the single top-level
-    process only. Stop terminates the whole supervised Job Object tree when
-    available; the run detail discloses both descendant evidence and the
-    restricted-token boundary.
+    decision -- so a run started, paused, or resumed from elsewhere is
+    always noticed without a manual refresh) and Pause/Resume/Stop actions
+    (Part A: when the run has a supervised Job Object, pause/resume acts on
+    every process currently in it, not the top-level PID alone -- see
+    `AgentLauncher._tree_pids`. Stop terminates the whole supervised Job
+    Object tree when available; the run detail discloses both descendant
+    evidence and the restricted-token boundary.
     """
 
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("r", "refresh", "Refresh")]
@@ -162,14 +170,13 @@ class EvidenceScreen(Screen):
                 "authenticated actor. Launch the TUI with --actor-id.[/yellow]"
             )
         self.action_refresh()
-        self.set_interval(_LIVE_POLL_INTERVAL_SECONDS, self._poll_if_active)
+        self.set_interval(_LIVE_POLL_INTERVAL_SECONDS, self._poll_tick)
 
     def action_refresh(self) -> None:
         self.run_worker(self._load, thread=True, exclusive=True)
 
-    def _poll_if_active(self) -> None:
-        if any(run.get("status") in _ACTIVE_STATUSES for run in self._runs_by_id.values()):
-            self.action_refresh()
+    def _poll_tick(self) -> None:
+        self.action_refresh()
 
     def _fetch_or_none(self, call) -> Any:
         try:
