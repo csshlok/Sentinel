@@ -138,17 +138,16 @@ across 61 routes, described by 110 typed schemas.
 
 ## Security posture
 
-Sentinel's authority model isn't a formality bolted on afterward — it's the reason a full
-attack-surface review (credential broker, identity/delegation/policy, tool registry, execution/
-journal/replay, recovery/passport, API auth boundary) came back with 15 of 16 findings fixed and
-one closed as an accepted design decision, with **zero open findings** as of this writing (see
-[`THREAT_MODEL_FINDINGS.md`](THREAT_MODEL_FINDINGS.md)). A few of the load-bearing decisions:
+Sentinel's authority model isn't a formality bolted on afterward. A full attack-surface review
+(credential broker, identity/delegation/policy, tool registry, execution/journal/replay,
+recovery/passport, API auth boundary) covers 16 findings: 15 fixed and one closed as an accepted
+design decision, with zero left open (see [`THREAT_MODEL_FINDINGS.md`](THREAT_MODEL_FINDINGS.md)).
+A few of the load-bearing decisions:
 
 - **No unrestricted authority by default.** Minting a credential grant requires a delegation that
   actually covers the requested scope and Change — not just a check that the target actor exists.
 - **Restricted-token launch.** An agent's process starts with maximum privileges disabled via
-  `CreateRestrictedToken`; this measurably costs about 22ms (27%) over an unsupervised spawn (see
-  [`BENCHMARK.md`](BENCHMARK.md)) and is never silently skipped in favor of an unrestricted retry.
+  `CreateRestrictedToken`, and this is never silently skipped in favor of an unrestricted retry.
 - **Never a fabricated success.** Suspend/resume independently verifies a process actually stopped
   consuming CPU rather than trusting the syscall's return code; an unsupported platform raises a
   stable error instead of pretending to succeed.
@@ -180,9 +179,3 @@ one closed as an accepted design decision, with **zero open findings** as of thi
   the TUI can view, pause, resume, and stop a run once it exists.
 - **The desktop app is unsigned**, has no installer, and is Windows x64 only.
 - **Single-operator model.** No multi-tenant data isolation — this is intentional, not a gap.
-
-## Numbers
-
-See [`BENCHMARK.md`](BENCHMARK.md) for real, measured performance numbers (not estimates), the
-isolated cost of the restricted-token safety mechanism, and full test/code coverage counts, all
-reproducible from a fresh clone.
