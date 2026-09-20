@@ -1,0 +1,337 @@
+@import "tailwindcss" source(none);
+@source "../";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+/* Flat, warm-neutral, light theme. Hairline borders, no shadows, one quiet accent.
+   Palette and structure follow the CML/Vault desktop design language (MIT reference, concept-only reuse). */
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-ok: var(--status-ok);
+  --color-warn: var(--status-warn);
+  --color-danger: var(--status-error);
+  --color-info: var(--status-info);
+  --color-subtle: var(--text-subtle);
+  --font-sans: var(--font);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  --bg-canvas: #fafaf8;
+  --bg-sidebar: #f5f4f2;
+  --bg-card: #ffffff;
+  --bg-secondary: #f0ede8;
+  --bg-hover: #efefec;
+  --border-default: #e8e7e3;
+  --border-input: #d8d7d2;
+  --border-strong: #c8c7c2;
+  --text-primary: #1a1916;
+  --text-body: #3d3c39;
+  --text-muted: #6b6a66;
+  --text-subtle: #716f6a;
+  --primary: #7c6e5a;
+  --primary-hover: #9e8c74;
+  --primary-text: #ffffff;
+  --primary-tint: #f5f0eb;
+
+  --status-ok: #3b7a4d;
+  --status-ok-bg: #edf5ea;
+  --status-warn: #a5661a;
+  --status-warn-bg: #fbf2e4;
+  --status-warn-ink: #7a4d16;
+  --status-error: #b84040;
+  --status-error-bg: #faeaea;
+  --status-muted: #9b9a96;
+  --status-muted-bg: #f0efec;
+  --status-info: #4a78a8;
+  --status-info-bg: #eaf0fa;
+
+  --sidebar-width: 220px;
+  --chrome-height: 32px;
+  --font: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* shadcn semantic names */
+  --radius: 8px;
+  --background: var(--bg-canvas);
+  --foreground: var(--text-body);
+  --card: var(--bg-card);
+  --card-foreground: var(--text-body);
+  --popover: var(--bg-card);
+  --popover-foreground: var(--text-body);
+  --primary-foreground: var(--primary-text);
+  --secondary: var(--bg-secondary);
+  --secondary-foreground: var(--text-body);
+  --muted: var(--bg-secondary);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--bg-hover);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--status-error);
+  --destructive-foreground: var(--primary-text);
+  --border: var(--border-default);
+  --input: var(--border-input);
+  --ring: var(--border-strong);
+  --sidebar: var(--bg-sidebar);
+}
+
+/* Dark theme: the same warm neutrals, inverted. Set by lib/theme.ts through <html data-theme="dark">. */
+:root[data-theme="dark"] {
+  --bg-canvas: #161513;
+  --bg-sidebar: #1b1a18;
+  --bg-card: #1f1e1c;
+  --bg-secondary: #2a2825;
+  --bg-hover: #2f2d2a;
+  --border-default: #34322e;
+  --border-input: #47443f;
+  --border-strong: #5b5851;
+  --text-primary: #f2f0eb;
+  --text-body: #d6d3cc;
+  --text-muted: #a8a49c;
+  --text-subtle: #9a968e;
+  --primary: #b7a58b;
+  --primary-hover: #cdbca3;
+  --primary-text: #1a1916;
+  --primary-tint: #2b2721;
+
+  --status-ok: #6fbf86;
+  --status-ok-bg: #1d2a21;
+  --status-warn: #dba55a;
+  --status-warn-bg: #2e2618;
+  --status-warn-ink: #f0c988;
+  --status-error: #e07a7a;
+  --status-error-bg: #331f1f;
+  --status-muted: #8a8780;
+  --status-muted-bg: #2a2825;
+  --status-info: #7fa9d6;
+  --status-info-bg: #1c2735;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font);
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden; /* the app scrolls inside its own regions, like a desktop app */
+  }
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--border-strong);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-subtle);
+  }
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  button,
+  [role="button"],
+  a {
+    cursor: pointer;
+  }
+  code,
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+}
+
+/* Horizontal strips (tabs) scroll but don't draw a bar; the active item is scrolled into view by the component. */
+.quiet-scroll {
+  scrollbar-width: none;
+}
+.quiet-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- Frameless window chrome ------------------------------------------------------------------
+   No permanent title bar. A 6px hover zone at the top edge reveals a 32px bar (drag region + window
+   controls) after a short delay and hides it again when the pointer leaves. */
+.window-chrome-layer {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  height: var(--chrome-height);
+  pointer-events: none;
+}
+.window-reveal-zone {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  height: 6px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+.window-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  height: var(--chrome-height);
+  align-items: stretch;
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--background) 96%, transparent);
+  transform: translateY(calc(-100% + 3px));
+  transition:
+    transform 140ms cubic-bezier(0.25, 1, 0.5, 1) 700ms,
+    border-color 100ms ease 700ms;
+  pointer-events: none;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.window-chrome-layer:hover .window-chrome,
+.window-chrome-layer:focus-within .window-chrome {
+  border-bottom-color: var(--border-default);
+  transform: translateY(0);
+  transition-delay: 0ms;
+  pointer-events: auto;
+}
+.window-controls {
+  display: flex;
+  height: var(--chrome-height);
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+.window-control {
+  position: relative;
+  display: grid;
+  width: 46px;
+  height: var(--chrome-height);
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground);
+  transition: background-color 100ms ease;
+}
+.window-control:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.window-control:focus-visible {
+  z-index: 1;
+  outline: 0;
+  background: var(--primary-tint);
+}
+.window-control-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.window-icon {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+.window-icon-minimize::before {
+  position: absolute;
+  inset: auto 0 1px 0;
+  height: 1px;
+  background: currentColor;
+  content: "";
+}
+.window-icon-maximize {
+  border: 1px solid currentColor;
+}
+.window-icon-restore::before,
+.window-icon-restore::after {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  content: "";
+}
+.window-icon-restore::before {
+  top: 0;
+  right: 0;
+}
+.window-icon-restore::after {
+  bottom: 0;
+  left: 0;
+  background: var(--background);
+}
+.window-icon-close::before,
+.window-icon-close::after {
+  position: absolute;
+  top: 4px;
+  left: -1px;
+  width: 12px;
+  height: 1px;
+  background: currentColor;
+  content: "";
+}
+.window-icon-close::before {
+  transform: rotate(45deg);
+}
+.window-icon-close::after {
+  transform: rotate(-45deg);
+}
+@media (hover: none), (pointer: coarse) {
+  .window-chrome {
+    border-bottom-color: var(--border-default);
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .window-chrome {
+    transition-duration: 0.01ms;
+    transition-delay: 0ms;
+  }
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The sidebar background is a drag handle; every interactive child opts out. */
+.app-sidebar {
+  -webkit-app-region: drag;
+}
+.app-sidebar a,
+.app-sidebar button,
+.app-sidebar input,
+.app-sidebar nav {
+  -webkit-app-region: no-drag;
+}
