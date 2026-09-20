@@ -27,20 +27,13 @@ htmlcov/
 node_modules/
 *.log
 
-# Repo-root docs kept out of the tracked tree per explicit request (2026-09-20):
-# only README.md and PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md (the plan
-# document driving the current AppContainer sandboxing phases) stay visible.
-# Files remain on disk locally; they are just no longer git-tracked.
-/AGENT_COORDINATION.md
-/BACKEND_IMPLEMENTATION_PLAN.md
-/EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md
-/EXTERNAL_VALIDATION_RUNBOOK.md
-/FRONTEND_ELECTRON_IMPLEMENTATION_PLAN.md
-/HANDOFF.md
-/LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md
-/OVERALL_CONTEXT.md
-/PROJECT_CONTEXT.md
-/THREAT_MODEL_FINDINGS.md
+# All markdown and plain-text docs kept out of the tracked tree per explicit
+# request (2026-09-20): only the root README.md stays visible/tracked. Files
+# remain on disk locally; they are just no longer git-tracked. This includes
+# .planning/ (GSD workflow state), subdirectory READMEs, and team handoff docs.
+*.md
+!/README.md
+*.txt
 /*.pdf
 /brag-output/
 /image.png
