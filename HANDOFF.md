@@ -1,5 +1,20 @@
 # Desktop frontend: handoff for backend integration (SD / AC)
 
+> **Superseded, 2026-09-20.** This handoff describes an older, uncommitted `frontend`
+> branch state. What actually landed was `origin/frontend-desktop-ui`, tested clean
+> (typecheck, 46/46 unit, 98/98 Electron, production build) and merged into `master`
+> directly (`877b5d2`) rather than kept separate. The API client was then regenerated
+> against master's current `openapi.json` and new UI surfaces were added for what
+> master gained after this branch was cut: descendant-process evidence, restricted-token
+> launch indicators, and signed Passport export (`5472200`). All of it was verified
+> against a real backend and a real, non-toy git repository with a real 3-level launched
+> process tree (agent -> child -> grandchild), not just the fake-API/throwaway-repo e2e
+> suite -- every new field (`descendant_processes`, `restricted_token_applied`,
+> `authority_reduction`, `SignedPassportExport`, `processes_attributed/unattributed/terminated`)
+> came back populated exactly as the new UI code assumes. The items below (sections 3, 4)
+> may still be partially outstanding; treat this file's history as background, not current state.
+> See `apps/desktop/HANDOFF.md` for that branch's own original handoff.
+
 State: branch `frontend`, fast-forwarded (`git pull origin master --ff-only`) to upstream `f244184`, **uncommitted** (only `apps/` is new). Nothing pushed. Run/test/package instructions: `README.md`. Decisions and history: `FRONTEND_PLAN_ADDENDUM.md`.
 The package in `release/win-unpacked` was rebuilt on `f244184` (bundled backend audited clean; launch, connect and clean shutdown verified).
 Verified: `api:check`, typecheck, build; 93 unit tests (11 renderer, 82 Electron); Electron smoke (12 checks on the packaged app); **68 Playwright tests** (8 real-backend smoke, 15 resilience, 12 surface, 13 operation-form, 4 final (fork, close PR, declare tool, error details), 9 real-backend operation checks, 6 heavy) against the pulled backend.
