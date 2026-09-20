@@ -23,11 +23,13 @@ The PDF proposal is product-design authority; the context documents and plan rec
 | --- | --- | --- | --- |
 | Person 1 | `[SD]` | Independent verification, shared contracts/core, migrations, integration, release acceptance | `backend/app/contracts/`, `backend/app/core/`, `backend/app/main.py`, `backend/migrations/`, `backend/tests/acceptance/`, root configuration, OpenAPI snapshots, context/plan documents |
 | Person 2 | `[KB]` | Git evidence, agent launcher, environment/dependency tracking, assurance | `backend/app/git/`, `execution/`, `environment/`, `dependencies/`, `assurance/`, matching unit tests |
-| Person 3 | `[AC]` | Identity, policy, credential broker, GitHub/outcomes, recovery, Passport, CLI and terminal UI | `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, `tui/`, matching owner unit/contract tests |
+| Person 3 | `[AC]` | Identity, policy, credential broker, GitHub/outcomes, recovery, Passport, CLI, terminal UI, and the desktop application | `backend/app/identity/`, `policy/`, `credentials/`, `providers/`, `outcomes/`, `recovery/`, `passport/`, `cli/`, `tui/`, `apps/desktop/`, matching owner unit/contract tests |
 
 No additional implementation tag creates a fourth owner. `[INTEGRATION]` is a temporary activity led by `[SD]`, not a separate person or permission to edit arbitrary files.
 
-`frontend/` is reserved for the deferred browser UI and is unassigned/frozen. The user-facing terminal UI is active work owned exclusively by `[AC]` under `backend/app/tui/`; terminal presentation tests stay in `[AC]`'s matching test path until `[SD]` adds independent acceptance coverage.
+`frontend/` is reserved for the deferred **browser** UI and remains unassigned/frozen; nothing in this document reopens it. The user-facing terminal UI is active work owned exclusively by `[AC]` under `backend/app/tui/`; terminal presentation tests stay in `[AC]`'s matching test path until `[SD]` adds independent acceptance coverage.
+
+`apps/desktop/` is a separate, distinct thing from `frontend/`: an Electron desktop application consuming the backend's HTTP API, built by the `[AC]` contributor on a local, unpushed `frontend` branch (see `HANDOFF.md` at the repo root for its current state and the integration checklist). Recorded here as `[AC]`-owned per that handoff's own request, superseding any conflicting ownership note in a document local to that branch (e.g. its own `FRONTEND_PLAN_ADDENDUM.md`, which this repository does not otherwise have access to). `[KB]` has no claim on `apps/desktop/`; `[KB]`'s own `execution/`, `git/`, `environment/`, `dependencies/`, `assurance/` surfaces are consumed by it exactly as any other API client would consume them, through the same frozen contracts every other caller uses.
 
 ## Root files and documentation
 
