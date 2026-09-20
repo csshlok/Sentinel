@@ -306,15 +306,6 @@
             "title": "Executable",
             "type": "string"
           },
-          "isolation": {
-            "default": "restricted_token",
-            "enum": [
-              "restricted_token",
-              "container"
-            ],
-            "title": "Isolation",
-            "type": "string"
-          },
           "timeout_seconds": {
             "default": 900,
             "maximum": 86400.0,
@@ -365,30 +356,6 @@
               }
             ],
             "title": "Completed At"
-          },
-          "container_id": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Container Id"
-          },
-          "container_image": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Container Image"
           },
           "descendant_control_available": {
             "default": false,
@@ -443,15 +410,6 @@
             "title": "Id",
             "type": "string"
           },
-          "isolation_mode": {
-            "default": "restricted_token",
-            "enum": [
-              "restricted_token",
-              "container"
-            ],
-            "title": "Isolation Mode",
-            "type": "string"
-          },
           "limitations": {
             "items": {
               "type": "string"
@@ -459,17 +417,6 @@
             "maxItems": 32,
             "title": "Limitations",
             "type": "array"
-          },
-          "network_isolated": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Network Isolated"
           },
           "output_truncated": {
             "default": false,
