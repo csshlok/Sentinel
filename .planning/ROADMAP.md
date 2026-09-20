@@ -54,12 +54,19 @@ documented fallback design reference, not the shipped boundary, once this phase 
   4. Applying the AppContainer boundary requires no destructive one-time change to the user's
      repository or account (no integrity-label mutation, no repository-wide ACL rewrite) — the
      boundary is applied per-launch, not by altering shared state.
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — Genuine AppContainer low-box token (package SID + capability SIDs) and
+      additive per-resource repository ACL grant in `spawn_restricted_supervised`, independently
+      verified end to end on the live spawned process's own token
+- [ ] 01-02-PLAN.md — Wire the AppContainer SID through the full `AgentLauncher.launch()` surface
+      (`authority_reduction`), correct the now-stale "integrity level is retained" disclosure, and
+      prove the same repository roundtrip plus no-silent-fallback behavior at that layer
 **Notes**: Touches `execution/process_supervisor.py` and `execution/launcher.py` (native launch
-code), which `AGENT_COORDINATION.md`'s exclusive-path table assigns to `[KB]`. Any new contract
-fields (e.g. AppContainer identity/capability info on `AgentRun`) fall under `contracts/`/`main.py`
-composition, `[SD]`-exclusive. Respect the claim/handoff protocol for any cross-owner edit; do not
-let ownership block sequencing.
+code), which `AGENT_COORDINATION.md`'s exclusive-path table assigns to `[KB]`. No new contract
+fields were needed — both plans reuse the existing `AgentRun.restricted_token_applied`/
+`authority_reduction` fields, so `contracts/`/`main.py` (`[SD]`-exclusive) are untouched by this
+phase. Any future structured AppContainer disclosure fields remain available for Phase 2.
 
 ### Phase 2: Least-Privilege Scoping, Fail-Loud Errors, and Honest Disclosure
 **Goal**: The AppContainer boundary proven in Phase 1 is hardened to grant only what real testing
@@ -122,6 +129,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. AppContainer Launch With Preserved Repository Writes | 0/TBD | Not started | - |
+| 1. AppContainer Launch With Preserved Repository Writes | 0/2 | Planned | - |
 | 2. Least-Privilege Scoping, Fail-Loud Errors, and Honest Disclosure | 0/TBD | Not started | - |
 | 3. Adversarial Verification and Regression Proof | 0/TBD | Not started | - |
