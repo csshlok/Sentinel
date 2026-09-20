@@ -549,6 +549,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/passport/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Passport */
+        post: operations["export_passport_api_v1_changes__change_id__passport_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{change_id}/providers/github/grants": {
         parameters: {
             query?: never;
@@ -872,6 +889,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/identity/signing-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Signing Public Key */
+        get: operations["get_signing_public_key_api_v1_identity_signing_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/github/connect": {
         parameters: {
             query?: never;
@@ -1083,13 +1117,17 @@ export interface components {
             /**
              * Descendant Control Available
              * @default false
-             * @constant
              */
-            descendant_control_available: false;
+            descendant_control_available: boolean;
             /** Executables */
             executables: {
                 [key: string]: boolean;
             };
+            /**
+             * Restricted Token Available
+             * @default false
+             */
+            restricted_token_available: boolean;
         };
         /** AgentAdapterListResponse */
         AgentAdapterListResponse: {
@@ -1150,6 +1188,8 @@ export interface components {
         AgentRun: {
             /** Adapter */
             adapter: string;
+            /** Authority Reduction */
+            authority_reduction?: string | null;
             /**
              * Change Id
              * Format: uuid
@@ -1160,9 +1200,10 @@ export interface components {
             /**
              * Descendant Control Available
              * @default false
-             * @constant
              */
-            descendant_control_available: false;
+            descendant_control_available: boolean;
+            /** Descendant Processes */
+            descendant_processes?: components["schemas"]["DescendantProcess"][];
             /** Duration Ms */
             duration_ms?: number | null;
             /** Exit Code */
@@ -1183,6 +1224,11 @@ export interface components {
             output_truncated: boolean;
             /** Paused At */
             paused_at?: string | null;
+            /**
+             * Restricted Token Applied
+             * @default false
+             */
+            restricted_token_applied: boolean;
             /** Resumed At */
             resumed_at?: string | null;
             /**
@@ -1591,6 +1637,21 @@ export interface components {
             limitations?: string[];
             /** Outcomes */
             outcomes?: string[];
+            /**
+             * Processes Attributed
+             * @default 0
+             */
+            processes_attributed: number;
+            /**
+             * Processes Terminated
+             * @default 0
+             */
+            processes_terminated: number;
+            /**
+             * Processes Unattributed
+             * @default 0
+             */
+            processes_unattributed: number;
             recovery_status?: components["schemas"]["RecoveryStatus"] | null;
             /** Replay Checked Events */
             replay_checked_events?: number | null;
@@ -1891,6 +1952,33 @@ export interface components {
             id: string;
             /** Unsupported Ecosystems */
             unsupported_ecosystems?: string[];
+        };
+        /**
+         * DescendantProcess
+         * @description One process observed inside a launched run's Windows Job Object.
+         */
+        DescendantProcess: {
+            /** Attributed */
+            attributed: boolean;
+            /** Attribution Reason */
+            attribution_reason?: string | null;
+            /** Command Line */
+            command_line?: string | null;
+            /** Executable Path */
+            executable_path?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Parent Pid */
+            parent_pid?: number | null;
+            /** Pid */
+            pid: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Terminated At */
+            terminated_at?: string | null;
         };
         /**
          * DeviationCategory
@@ -2244,11 +2332,12 @@ export interface components {
          *
          *     Every member corresponds to a mutation of an entity this backend already
          *     models (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no
-         *     `filesystem.write` or `process.spawn` member: the filesystem tracker and
-         *     process supervisor stay cut, so those effects are never claimed here.
+         *     `filesystem.write` member because the filesystem tracker stays cut.
+         *     Process-tree observation is represented only by the bounded descendant
+         *     event types below; it is not a filesystem or tool-call trace.
          * @enum {string}
          */
-        JournalEventType: "change.created" | "change.contract_updated" | "change.transitioned" | "change.git_summary_refreshed" | "change.legacy_verification_run" | "change.deleted" | "delegation.issued" | "delegation.revoked" | "credential.grant.issued" | "credential.grant.revoked" | "credential.secret.resolved" | "git.checkpoint.captured" | "agent.launched" | "agent.attached" | "agent.stop_requested" | "agent.completed" | "environment.passport.captured" | "dependency.report.captured" | "assurance.plan.created" | "assurance.check.completed" | "provider.pull_request.created" | "provider.pull_request.refreshed" | "provider.pull_request.closed" | "provider.ci_refreshed" | "outcome.recorded" | "recovery.plan.created" | "recovery.action.completed" | "recovery.plan.completed" | "passport.built" | "policy.decision.denied" | "tool.manifest.registered" | "tool.trust.decided" | "tool.trust.invalidated" | "agent.paused" | "agent.resumed" | "change.forked";
+        JournalEventType: "change.created" | "change.contract_updated" | "change.transitioned" | "change.git_summary_refreshed" | "change.legacy_verification_run" | "change.deleted" | "delegation.issued" | "delegation.revoked" | "credential.grant.issued" | "credential.grant.revoked" | "credential.secret.resolved" | "git.checkpoint.captured" | "agent.launched" | "agent.attached" | "agent.stop_requested" | "agent.completed" | "agent.descendant.observed" | "agent.descendant.terminated" | "agent.process_tree.terminated" | "environment.passport.captured" | "dependency.report.captured" | "assurance.plan.created" | "assurance.check.completed" | "provider.pull_request.created" | "provider.pull_request.refreshed" | "provider.pull_request.closed" | "provider.ci_refreshed" | "outcome.recorded" | "recovery.plan.created" | "recovery.action.completed" | "recovery.plan.completed" | "passport.built" | "passport.export.signed" | "policy.decision.denied" | "tool.manifest.registered" | "tool.trust.decided" | "tool.trust.invalidated" | "agent.paused" | "agent.resumed" | "change.forked";
         /** Outcome */
         Outcome: {
             /**
@@ -2471,6 +2560,11 @@ export interface components {
              */
             id: string;
             /**
+             * Processes Terminated
+             * @default 0
+             */
+            processes_terminated: number;
+            /**
              * Source Checkpoint Id
              * Format: uuid
              */
@@ -2543,6 +2637,35 @@ export interface components {
          * @enum {string}
          */
         RiskLevel: "UNKNOWN" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+        /**
+         * SignedPassportExport
+         * @description A `ChangePassport` signed with this operator's own Ed25519 key (A.7).
+         *
+         *     This is "we can sign what we already export" only: no other party's
+         *     public key is stored or trusted anywhere in this codebase, and this
+         *     model makes no claim about sharing, transport, or delivery to any
+         *     recipient -- that is unimplemented, threat-model-only Part B.
+         */
+        SignedPassportExport: {
+            passport: components["schemas"]["ChangePassport"];
+            /** Signature */
+            signature: string;
+            /**
+             * Signed At
+             * Format: date-time
+             */
+            signed_at: string;
+            /** Signer Public Key */
+            signer_public_key: string;
+        };
+        /**
+         * SigningPublicKeyResponse
+         * @description This operator's own Ed25519 public key, for `GET /identity/signing-key`.
+         */
+        SigningPublicKeyResponse: {
+            /** Public Key */
+            public_key: string;
+        };
         /** ToolDeclareRequest */
         ToolDeclareRequest: {
             /** Manifest Path */
@@ -4053,6 +4176,39 @@ export interface operations {
             };
         };
     };
+    export_passport_api_v1_changes__change_id__passport_export_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedPassportExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     issue_github_grant_api_v1_changes__change_id__providers_github_grants_post: {
         parameters: {
             query?: never;
@@ -4698,6 +4854,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    get_signing_public_key_api_v1_identity_signing_key_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SigningPublicKeyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
