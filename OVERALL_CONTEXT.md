@@ -48,8 +48,9 @@ Filesystem tracking remains excluded. The process supervisor is no longer cut: r
 Windows-first, per `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A — this supersedes the
 earlier top-level-only pause/resume narrowing for process-tree supervision specifically; pause/resume
 itself is unchanged (still top-level-PID-only, per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A).
-Restricted-token authority reduction is disclosed as meaningfully lowered privilege (a Low integrity
-level token), never as a formal sandbox or OS-level isolation boundary — the product's own thesis is
+Restricted-token authority reduction is disclosed as meaningfully lowered privilege (maximum
+privileges disabled on a restricted token; caller integrity retained so ordinary repositories remain
+writable), never as a formal sandbox or OS-level isolation boundary — the product's own thesis is
 "native first," explicitly not a Docker replacement (proposal §2, §24.1). A separate, later idea —
 sharing a Change's evidence or execution state with an external party — is threat-modeled only
 (`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part B) and is not implemented; do not claim it
@@ -148,7 +149,7 @@ Terminal UI / CLI / API clients -> Authenticated local API -> Change lifecycle a
                                       -> Change Passport
 ```
 
-The Agent Launcher invokes or references only the top-level agent. No component supervises the descendant process tree or intercepts filesystem operations. The Event/Effect Journal records mutations to entities this backend already models (Change, Delegation, CredentialGrant, GitCheckpoint, EnvironmentPassport, DependencyReport, AssuranceRun, AgentRun, ProviderOperation, Outcome, RecoveryPlan/Action, ToolManifest/ToolTrustDecision) — it is not a filesystem or process-level causal trace. The Tool Registry governs only the top-level executable `AgentLauncherPort` resolves and explicitly declared tool/MCP manifests; it does not intercept or attribute a running agent's own tool calls.
+The Agent Launcher invokes the top-level agent under a restricted token and, on Windows, owns its process tree through a kill-on-close Job Object. It records observed descendants but does not intercept filesystem operations. The Event/Effect Journal records mutations to entities this backend already models plus bounded descendant-observed/terminated events — it is not a filesystem-write or tool-call causal trace. The Tool Registry governs only the top-level executable `AgentLauncherPort` resolves and explicitly declared tool/MCP manifests; it does not intercept or attribute a running agent's own tool calls.
 
 The interactive terminal UI is the current human interface. A browser web UI is a later consumer of this boundary and is not part of the active implementation phase.
 
@@ -184,6 +185,14 @@ The product is not complete because a happy-path screen renders. It is complete 
 ## Implementation record
 
 Implementation records describe completed work without changing the stable product principles above.
+
+### `[SD]` - 2026-09-19 - Windows Process Supervisor Part A completed
+
+Completed Part A of `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md`. Windows-launched agent processes now run inside a per-run Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; the launcher assigns the suspended root process before resuming it, discovers and persists descendants, journals descendant observations and terminations, and terminates the entire supervised tree on stop, timeout, or recovery. Attach mode remains explicitly observational because an already-running process cannot be retroactively guaranteed to share the same supervision boundary.
+
+The launcher creates a restricted token with maximum privileges disabled, while deliberately retaining the caller's integrity level: live validation showed that lowering to Low integrity prevents normal writes to a Medium-integrity working tree. This is defense in depth, not a sandbox or hostile-code boundary. The API, CLI, TUI evidence view, signed Change Passport, recovery result, capabilities, persistence migration, and frozen OpenAPI snapshot now expose the supported boundary and real process evidence without overstating containment.
+
+Verification: the full repository suite passed after the implementation (**782 passed, 5 skipped**); final focused supervisor/recovery coverage passed **16 tests**, focused contract/migration/Passport/TUI coverage passed **36 tests**, `python -m compileall -q backend` passed, and `git diff --check` reported no errors. Part B (cross-agent container/session sharing) was not implemented and remains independent future work.
 
 ### `[SD]` - 2026-09-19 04:10 -04:00 - Investigated the async-test blocker `[AC]` flagged; no `[SD]` action needed
 

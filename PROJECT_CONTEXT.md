@@ -55,7 +55,8 @@ attribution, orphan cleanup, and restricted-token authority reduction, per
 `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A. This supersedes the earlier
 top-level-only narrowing; pause/resume specifically stays top-level-PID-only as
 `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A defined it. Restricted-token authority reduction
-is a meaningfully lowered privilege set (Low integrity level), never a formal sandbox, namespace
+disables maximum privileges while retaining the caller's integrity level so an agent can still edit
+an ordinary selected repository; it is never a formal sandbox, namespace
 isolation, or Docker-class boundary — the PDF itself is explicit that this product is "native
 first" and is not a sandbox or a Docker replacement (§2, §24.1, §32); nothing in this reversal
 changes that identity.
@@ -123,7 +124,7 @@ Interactive terminal UI / CLI / API clients (browser UI deferred)
        -> SQLite state/evidence store
 ```
 
-The Agent Launcher may start or attach to a top-level invocation, but it does not observe or control a descendant process tree. Git is the source of code-change evidence; it is not filesystem-effect attribution. The Event/Effect Journal records mutations to entities already modeled by this backend, not a filesystem or process-level causal trace; Replay reconstructs and verifies that journal without re-executing anything. The Tool Registry governs only the top-level executable the Agent Launcher resolves and explicitly declared manifests — it does not intercept a running agent's own tool calls.
+The Agent Launcher starts a top-level invocation under a restricted token and, on Windows, observes and controls its descendant tree through a Job Object; attach remains caller-declared metadata with no supervision. Git is the source of code-change evidence; process-tree ownership is not filesystem-effect attribution. The Event/Effect Journal records modeled mutations plus bounded descendant observation/termination events, not a filesystem-write or tool-call trace; Replay reconstructs and verifies that journal without re-executing anything. The Tool Registry governs only the top-level executable the Agent Launcher resolves and explicitly declared manifests — it does not intercept a running agent's own tool calls.
 
 ## Core data concepts
 
@@ -141,9 +142,13 @@ The Agent Launcher may start or attach to a top-level invocation, but it does no
 
 The backend/terminal phase meets all acceptance criteria in `BACKEND_IMPLEMENTATION_PLAN.md`: the retained proposal flow works end to end through the API, CLI, and interactive terminal UI using real data; migrations preserve existing data; authority and credentials are enforced; evidence freshness gates lifecycle state; every relevant failure or unsupported condition is represented; and recovery stays inside its documented Git/provider boundary.
 
-No code, schema, route, or copy may imply process supervision, filesystem tracking/undo, or any capability beyond the bounded event journal/replay and tool registry described in `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` (no descendant-process attribution, no filesystem-level write timeline, no re-execution, no interception of a running agent's own tool/MCP calls). The terminal UI is required; browser UI implementation and browser acceptance are not part of this phase.
+Process-supervision claims must stay within the implemented Windows Job Object boundary described in `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A: supervised launches have descendant attribution and tree termination, while attach mode does not. No code, schema, route, or copy may imply filesystem tracking/undo or any capability beyond the bounded event journal/replay and tool registry described in `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` (no filesystem-level write timeline, no re-execution, no interception of a running agent's own tool/MCP calls). The terminal UI is required; browser UI implementation and browser acceptance are not part of this phase.
 
 ## Current implementation status
+
+### `[SD]` - 2026-09-19 - Windows Process Supervisor Part A complete
+
+Windows-launched agents now use a per-run Job Object, are assigned while suspended before execution begins, and have their descendant processes attributed, persisted, journaled, surfaced in evidence/Passport views, and terminated as a tree on stop, timeout, or recovery. A restricted token disables maximum privileges but retains the caller's integrity level so the process can edit an ordinary working tree; this is explicitly reported as defense in depth rather than sandboxing. Attach mode remains observational and does not claim descendant control. Migration, API contract/OpenAPI snapshot, CLI/TUI presentation, recovery integration, and real Windows process-tree tests are included. Full-suite verification passed (**782 passed, 5 skipped**), followed by **16** focused supervisor/recovery tests and **36** focused contract/migration/Passport/TUI tests. Part B cross-agent container/session sharing remains unimplemented future work.
 
 ### `[SD]` - 2026-09-19 03:48:18 -04:00 - Gate 6 release-matrix record: ACCEPT for backend/CLI scope
 
