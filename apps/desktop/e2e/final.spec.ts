@@ -133,7 +133,7 @@ test("delivery and agents show honest empty states", async () => {
   await expect(page.getByText("No outcomes recorded")).toBeVisible();
   await tab("Agents").click();
   await expect(page.getByText("No agent runs")).toBeVisible();
-  await expect(page.getByText(/doesn't observe descendant processes/)).toBeVisible();
+  await expect(page.getByText(/process-tree supervision available/)).toBeVisible();
 });
 
 test("the workflow raised no page or console errors, and no token reached the page", async () => {

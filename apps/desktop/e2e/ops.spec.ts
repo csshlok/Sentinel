@@ -130,7 +130,7 @@ test("a running agent can be paused, a paused one resumed; each names its actor 
   await page.reload();
   await expect(page.getByRole("button", { name: "Resume" })).toHaveCount(0);
   await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await expect(dlg(page).getByText(/aren't tracked/)).toBeVisible();
+  await expect(dlg(page).getByText(/pausing never reaches into its process tree/)).toBeVisible();
   await dlg(page).getByRole("button", { name: "Pause run" }).click();
   await expect(dlg(page).getByText("Choose the actor who is doing this.")).toBeVisible();
   await dlg(page).getByLabel("Acting as").fill("actor-1");
