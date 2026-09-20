@@ -67,7 +67,7 @@ test("the UI pages through every real Change without duplicates, and stays fast"
   await page.addInitScript((t) => sessionStorage.setItem("ca.dev.token", t), process.env.CA_E2E_TOKEN!);
   const t0 = Date.now();
   await page.goto("/changes");
-  const items = page.getByRole("list", { name: "Changes" }).getByRole("listitem");
+  const items = page.getByRole("list", { name: "Changes", exact: true }).getByRole("listitem");
   await expect(items).toHaveCount(50);
   metrics.firstPageMs = Date.now() - t0;
   while (await page.getByRole("button", { name: /Load more/ }).count()) {

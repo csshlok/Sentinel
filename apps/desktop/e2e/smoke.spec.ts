@@ -22,7 +22,7 @@ test("loads and shows real backend health without a token", async ({ page }) => 
   const errors = trackPageErrors(page);
   await page.goto("/");
   await expect(page).toHaveURL(/\/home$/);
-  await expect(page).toHaveTitle("Change Assurance");
+  await expect(page).toHaveTitle("Sentinel");
   await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
 
   // Health is an open route, so the service is reachable but the session is not signed in.
@@ -112,7 +112,7 @@ test("authenticated flow: token, empty state, validate, create, workspace tabs",
   await expect(page.getByText("change.created")).toBeVisible();
 
   await primaryNav(page).getByRole("link", { name: "Changes" }).click();
-  await expect(page.getByRole("list", { name: "Changes" }).getByText("E2E smoke change")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Changes", exact: true }).getByText("E2E smoke change")).toBeVisible();
   expect(errors).toEqual([]);
 });
 

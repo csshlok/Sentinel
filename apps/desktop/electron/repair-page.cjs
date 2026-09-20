@@ -19,7 +19,7 @@ function buildRepairPage({ retryUrl, reason, attempt = 1 }) {
     : "Automatic retries stopped. Close the app and open it again. If this keeps happening, check the logs folder under the app's data directory.";
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-${refresh}<title>Change Assurance</title>
+${refresh}<title>Sentinel</title>
 <style>body{margin:0;display:grid;min-height:100vh;place-items:center;background:#fafaf8;color:#3d3c39;font:14px/1.5 "Segoe UI",system-ui,sans-serif}
 main{max-width:34rem;padding:2rem}h1{font-size:1.25rem;color:#1a1916;margin:0 0 .5rem}p{margin:.4rem 0;color:#6b6a66}
 @media (prefers-color-scheme:dark){body{background:#161513;color:#d6d3cc}h1{color:#f2f0eb}p{color:#a8a49c}}</style></head>

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { GitPullRequestArrow, House, LoaderCircle, Search, Settings, ShieldCheck, Wrench } from "lucide-react";
+import { LoaderCircle, Search } from "lucide-react";
+import { SentinelMark } from "@/components/SentinelMark";
 import { useEffect, useRef, useState } from "react";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Button } from "@/components/ui/button";
@@ -10,13 +11,11 @@ import { ApiError } from "@/lib/api/client";
 import type { StatusInfo } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { capabilitiesQuery, healthQuery, runtimeQuery } from "@/services/system";
+import { NAV_GROUPS, NAV_ITEMS } from "@/lib/nav";
+import { lifecycleInfo } from "@/lib/status";
+import { changeListQuery } from "@/services/changes";
 
-const NAV = [
-  { to: "/home", label: "Home", icon: House },
-  { to: "/changes", label: "Changes", icon: GitPullRequestArrow },
-  { to: "/tools", label: "Tools", icon: Wrench },
-  { to: "/settings", label: "Settings", icon: Settings },
-] as const;
+
 
 /** Reachability comes from the open health route; authentication from an authenticated route. */
 function useConnection(): StatusInfo {
@@ -42,6 +41,27 @@ function useConnection(): StatusInfo {
 }
 
 const navClass = "flex h-[34px] items-center gap-2.5 rounded-md border border-transparent px-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground";
+
+const DOT: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", danger: "bg-danger", info: "bg-info", neutral: "bg-[var(--status-muted)]" };
+
+/** The five most recently updated Changes, so any of them is one click away from anywhere. */
+function RecentChanges() {
+  const list = useQuery(changeListQuery());
+  const items = (list.data?.items ?? []).slice(0, 5);
+  if (items.length === 0) return null;
+  return (
+    <ul className="mt-1 space-y-0.5" aria-label="Recent Changes">
+      {items.map((c) => (
+        <li key={c.id}>
+          <Link to="/changes/$changeId" params={{ changeId: c.id }} className="flex h-7 items-center gap-2 rounded-md px-2.5 pl-6 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground" activeProps={{ className: "flex h-7 items-center gap-2 rounded-md bg-accent px-2.5 pl-6 text-[13px] text-foreground", "aria-current": "page" }} title={`${c.title} · ${lifecycleInfo(c.lifecycle_state).label}`}>
+            <span className={cn("size-1.5 shrink-0 rounded-full", DOT[lifecycleInfo(c.lifecycle_state).tone])} aria-hidden="true" />
+            <span className="min-w-0 truncate">{c.title}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /** Managed-backend startup and failure, shown instead of the page so nothing renders against a dead service. */
 function ServiceGate() {
@@ -119,9 +139,9 @@ export function AppShell() {
 
       <aside className="app-sidebar hidden w-[var(--sidebar-width)] min-w-[var(--sidebar-width)] flex-col border-r bg-sidebar md:flex">
         <div className="px-4 pb-2 pt-10">
-          <Link to="/home" className="flex items-center gap-2 rounded-sm px-1 text-[var(--text-primary)]" aria-label="Change Assurance home">
-            <ShieldCheck className="size-[18px] text-primary" strokeWidth={1.75} aria-hidden="true" />
-            <span className="text-[15px] font-semibold tracking-[-0.01em]">Change Assurance</span>
+          <Link to="/home" className="flex items-center gap-2 rounded-sm px-1 text-[var(--text-primary)]" aria-label="Sentinel home">
+            <SentinelMark className="size-6 text-primary" />
+            <span className="text-[15px] font-semibold tracking-[-0.01em]">Sentinel</span>
           </Link>
           <button
             type="button"
@@ -134,12 +154,20 @@ export function AppShell() {
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 px-4 pt-2" aria-label="Primary">
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <Link key={to} to={to} className={navClass} activeProps={{ className: cn(navClass, "bg-accent font-medium text-accent-foreground"), "aria-current": "page" }}>
-              <Icon className="size-4" strokeWidth={1.5} aria-hidden="true" />
-              {label}
-            </Link>
+        <nav className="flex-1 space-y-4 overflow-y-auto px-4 pt-2" aria-label="Primary">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.heading}>
+              <p className="mb-1 px-2.5 text-[11px] font-medium uppercase tracking-wide text-subtle">{group.heading}</p>
+              <div className="space-y-0.5">
+                {group.items.map(({ to, label, icon: Icon }) => (
+                  <Link key={to} to={to} className={navClass} activeProps={{ className: cn(navClass, "bg-accent font-medium text-accent-foreground"), "aria-current": "page" }}>
+                    <Icon className="size-4" strokeWidth={1.5} aria-hidden="true" />
+                    {label}
+                  </Link>
+                ))}
+              </div>
+              {group.heading === "Workspace" ? <RecentChanges /> : null}
+            </div>
           ))}
         </nav>
 
@@ -155,13 +183,13 @@ export function AppShell() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto focus:outline-none">
         {/* Small screens (browser development only): a compact top nav replaces the sidebar. */}
-        <nav className="flex items-center gap-1 border-b bg-sidebar px-3 py-2 md:hidden" aria-label="Primary">
-          {NAV.map(({ to, label }) => (
-            <Link key={to} to={to} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent" activeProps={{ className: "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground", "aria-current": "page" }}>
+        <nav className="quiet-scroll flex items-center gap-1 overflow-x-auto border-b bg-sidebar px-3 py-2 md:hidden" aria-label="Primary">
+          {NAV_ITEMS.map(({ to, label }) => (
+            <Link key={to} to={to} className="shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent" activeProps={{ className: "shrink-0 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground", "aria-current": "page" }}>
               {label}
             </Link>
           ))}
-          <span className="ml-auto"><StatusLabel status={connection} /></span>
+          <span className="ml-auto shrink-0 pl-2"><StatusLabel status={connection} /></span>
         </nav>
         <div className="mx-auto w-full max-w-[1040px] space-y-6 px-6 pb-12 pt-10 md:px-8">
           {gated ? <ServiceGate /> : <Outlet />}

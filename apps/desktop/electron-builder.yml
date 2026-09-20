@@ -1,6 +1,6 @@
 # Local, unsigned packaging for testing. No signing identity, publisher, or credentials are configured.
 appId: com.changeassurance.desktop
-productName: Change Assurance
+productName: Sentinel
 copyright: null
 
 directories:

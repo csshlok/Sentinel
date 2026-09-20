@@ -2,16 +2,19 @@
 
 State: `apps/desktop`, built on upstream `master`. Run/test/package instructions: `README.md`. Decisions and history: `FRONTEND_PLAN_ADDENDUM.md`. Comparison with the CML reference: `CML_REFERENCE_STUDY.md`.
 
-## 1. Verified (this session, against upstream `d0f1301`)
+## 1. Verified (final heavy run, uncommitted working tree)
 
 | Check | Result |
 | --- | --- |
-| `api:check` (after `api:generate`), `typecheck`, `npm run build` | pass |
-| `npm test` | **46 renderer + 98 Electron** pass (was 44 + 89 at the start of the session) |
-| Playwright (`npm run test:e2e`) | **85 of 85 pass** on the final code (after code-splitting, repair page, permission handlers, identity check and the `smoke.spec.ts` Ctrl+K race fix). An earlier full run had 81 passing; its failures were that race and its serial-retry knock-on. |
-| `npm run package:dir` then `npm run test:electron:smoke` | 12/12 on the earlier package; **not rerun** after code-splitting, the repair page and the permission handlers, so repackage and rerun it too |
+| `api:check`, `typecheck`, `npm run build` | pass |
+| `npm test` | **50 renderer + 98 Electron** pass |
+| Playwright (`npm run test:e2e`) | **93 of 93 pass** (4.5 min), including the real-backend workflow, the real-repo test on a clone of `github.com/csshlok/vthacks14`, resilience and accessibility audits, 130-Change paging and the 60-second soak |
+| `npm run package:dir` then `npm run test:electron:smoke` | **12 of 12 pass** on `release/win-unpacked/Sentinel.exe` |
+| Large real repository (`django/django`, 7,091 files, 73 MB) driven through the real backend | Create, baseline, current, refresh, compare, assurance plan and trace verification all correct. Baseline capture, current capture, refresh, listing checkpoints and reading assurance facts each take about 9 to 10 seconds at this size (backend speed; the UI shows loading skeletons). |
 
-The 14 new Playwright tests cover: server-provided next states and the fallback, list `total` paging (including an exact page-size multiple), Home totals, the actor list with a filter and the manual-id fallback, duplicate-submit, backend identity in Settings, the missing-Git message, fork lineage without a repository summary, an accessible-name audit of every screen with a console-error check, keyboard focus return, and the tab strip at 1024x680.
+Not run for real (external setup): GitHub connect and pull requests, agent launch (needs an installed adapter), recovery execute, tool trust decisions. Their forms and request shapes are covered by typed forms and the scripted backend.
+
+Housekeeping: run one Playwright run at a time with port 8000 free; an interrupted run leaves its throwaway backend behind.
 
 ## 2. What the UI does (every backend operation has a screen; no generic record views remain)
 
@@ -36,6 +39,24 @@ Test-hygiene notes: a Playwright run that is interrupted leaves its throwaway ba
 - **Backend identity enforced:** the supervisor only treats a service as ready if `GET /system/backend-identity` names `change-assurance…` (a 404 from an older backend is accepted), so another program on the port is never mistaken for the backend. Three supervisor tests.
 - **Repair page:** if the renderer fails to load, or its process dies, the window shows a self-contained page (no script, locked-down CSP, escaped text) that retries every 3 seconds, at most 10 times, instead of a blank window. `electron/repair-page.cjs`; 4 unit tests and 1 behavior test.
 - **Code splitting:** every screen after first paint is its own chunk; the main bundle went from 583 kB to 388 kB.
+
+## 2c. Sentinel overhaul (uncommitted, later session)
+
+- **Renamed to Sentinel** everywhere a user sees it (window title, sidebar, repair page, installer product name, README). Internal identifiers (`CHANGE_ASSURANCE_*` environment variables, `com.changeassurance.desktop` app id, `ca.*` storage keys) are unchanged so nothing breaks. Because `productName` changed, the packaged executable is now `Sentinel.exe` and Electron's per-user data folder name follows it; an existing install's data would not be picked up automatically.
+- **Sidebar groups:** Workspace (Home, Changes, the five most recent Changes with a status dot), Control (Agents, Actors, Tools), Integrations (GitHub), System (Settings). Defined once in `src/lib/nav.ts`.
+- **New global screens** that surface backend features which previously lived only inside a Change: `/agents` (adapters, live runs across recent Changes, jump to launch), `/actors` (registered actors, register one), `/github` (connection, pull requests and CI across Changes).
+- **Home** gained a Control center: five tiles that each open a real screen.
+- **Settings capabilities** now link each available capability to where it is used (`CAPABILITY_LINKS`), with a "Used in" line. Capabilities the backend reports as unsupported show no link.
+- **Tests added** in `e2e/contract.spec.ts` (sidebar groups and recent Changes, Home links, Actors, Agents, GitHub, Settings links; the accessible-name audit now covers the three new routes). **Not yet run**: the Playwright suite needs port 8000 free, and a demo backend was running for the live preview when this was written. Typecheck and unit tests pass.
+- Limits of the new pages: the API lists agent runs and outcomes per Change, so the cross-Change views gather the eight most recently updated Changes.
+
+## 2d. Logo, walkthrough, terminal connect, capability guidance (uncommitted)
+
+- **Logo:** `components/SentinelMark.tsx` (a shield with an eye, theme-aware) in the sidebar, and `public/favicon.svg`. **Not done:** the Windows app/installer icon (`.ico`) still needs generating from the mark.
+- **Walkthrough:** `/walkthrough`, eight steps in working order, each with why, where and a button; steps tick themselves off when the API can tell (Change exists, actors exist, GitHub connected). Home shows a one-time prompt.
+- **Terminal (TUI) card** in Settings: `python -m pip install -e ".[tui]"`, load the token from its file into `CHANGE_ASSURANCE_API_TOKEN`, then `python -m backend.app.tui.app --api-url <url> [--actor-id <id>]`. The token value is never shown; non-loopback addresses produce no command. When the app runs its own private service its token is in memory only, so the card says to start the service yourself for terminal use.
+- **Capability guidance:** every capability now says what it is for and what it works with (`lib/capabilityInfo.ts`); the two unsupported ones say why.
+- **Real-life test:** `e2e/reallife.spec.ts` clones `github.com/csshlok/vthacks14` and drives create Change, evidence capture and compare, timeline verification, the walkthrough and the terminal card. It skips (not fails) offline.
 
 ## 3. Facts learned from the real backend this round
 

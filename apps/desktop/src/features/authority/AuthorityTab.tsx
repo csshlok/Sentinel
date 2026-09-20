@@ -138,7 +138,7 @@ function DelegationRow({ d, nameOf }: { d: Delegation; nameOf: (id: string) => s
   );
 }
 
-function NewActor({ onCreated }: { onCreated: () => void }) {
+export function NewActor({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ActorKind>("HUMAN");
   const [err, setErr] = useState<string | null>(null);

@@ -197,7 +197,7 @@ test("creates a frameless, sandboxed window with the expected security options",
     assert.equal(options.frame, false);
     assert.equal(options.autoHideMenuBar, true);
     assert.equal(options.show, false);
-    assert.equal(options.title, "Change Assurance");
+    assert.equal(options.title, "Sentinel");
     assert.ok(options.minWidth >= 1024 && options.minHeight >= 680);
     assert.deepEqual(
       { ci: options.webPreferences.contextIsolation, ni: options.webPreferences.nodeIntegration, sb: options.webPreferences.sandbox, ws: options.webPreferences.webSecurity },
@@ -256,7 +256,7 @@ test("the window title cannot be changed by page content", async () => {
     let prevented = false;
     win.handlers["page-title-updated"]({ preventDefault: () => (prevented = true) });
     assert.equal(prevented, true);
-    assert.equal(win.title, "Change Assurance");
+    assert.equal(win.title, "Sentinel");
   });
 });
 

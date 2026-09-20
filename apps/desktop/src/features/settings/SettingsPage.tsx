@@ -1,4 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { CAPABILITY_LINKS } from "@/lib/nav";
+import { CAPABILITY_INFO } from "@/lib/capabilityInfo";
+import { TerminalCard } from "./TerminalCard";
 import { useState } from "react";
 import { ErrorState } from "@/components/ErrorState";
 import { Facts, PageHeader, Section, Skeleton, StatusLabel } from "@/components/product";
@@ -212,6 +216,8 @@ export function SettingsPage() {
         <Diagnostics text={buildDiagnostics({ interfaceKind: inBrowser ? "browser" : "desktop", api: health.data?.api_version ?? null, reachable: health.isSuccess, runtime: runtime.data ?? null, capabilities: caps.data?.items ?? [] })} />
       </Section>
 
+      <TerminalCard />
+
       <Section title="Capabilities" description="What the local service reports. Unavailable is shown separately from failed." flush>
         {caps.isPending ? (
           <Skeleton lines={4} label="Loading capabilities" />
@@ -225,6 +231,13 @@ export function SettingsPage() {
               <li key={cap.id} className="flex items-start justify-between gap-4 px-5 py-3.5">
                 <div className="min-w-0">
                   <p className="font-medium text-[var(--text-primary)]">{cap.name}</p>
+                  {CAPABILITY_INFO[cap.id] ? (
+                    <>
+                      <p className="mt-1 text-[13px] leading-5 text-[var(--text-body)]">{CAPABILITY_INFO[cap.id]!.purpose}</p>
+                      <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">Works with: {CAPABILITY_INFO[cap.id]!.worksWith}</p>
+                    </>
+                  ) : null}
+                  {cap.state === "AVAILABLE" && CAPABILITY_LINKS[cap.id] ? <p className="mt-0.5 text-[13px] text-muted-foreground">Used in: {CAPABILITY_LINKS[cap.id]!.where}</p> : null}
                   {cap.reason ? <p className="mt-0.5 text-[13px] text-muted-foreground">{cap.reason}</p> : null}
                   {(cap.limitations ?? []).map((limit) => (
                     <p key={limit} className="mt-0.5 text-[13px] text-muted-foreground">
@@ -232,7 +245,12 @@ export function SettingsPage() {
                     </p>
                   ))}
                 </div>
-                <StatusLabel status={CAPABILITY[cap.state]} />
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <StatusLabel status={CAPABILITY[cap.state]} />
+                  {cap.state === "AVAILABLE" && CAPABILITY_LINKS[cap.id] ? (
+                    <Link to={CAPABILITY_LINKS[cap.id]!.to} className="text-[13px] underline underline-offset-2 hover:text-foreground">{CAPABILITY_LINKS[cap.id]!.label}</Link>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>

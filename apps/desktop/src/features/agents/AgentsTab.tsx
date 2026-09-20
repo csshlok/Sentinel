@@ -82,7 +82,7 @@ const RUN_ACTIONS: Record<RunAction, { button: string; title: string; descriptio
 };
 
 /** One control for pause, resume and stop: choose the acting actor, confirm the consequence, and reconcile from the server afterwards. */
-function RunControl({ kind, run, changeId, actors }: { kind: RunAction; run: AgentRun; changeId: string; actors: ReturnType<typeof useActors>["actors"] }) {
+export function RunControl({ kind, run, changeId, actors }: { kind: RunAction; run: AgentRun; changeId: string; actors: ReturnType<typeof useActors>["actors"] }) {
   const spec = RUN_ACTIONS[kind];
   const [open, setOpen] = useState(false);
   const [actor, setActor] = useState("");
@@ -206,7 +206,7 @@ function AdapterSelect({ id, adapters, value, onChange, error }: { id: string; a
   );
 }
 
-function LaunchAgent({ changeId, actors, adapters }: { changeId: string; actors: ReturnType<typeof useActors>["actors"]; adapters: AgentAdapterInfo[] }) {
+export function LaunchAgent({ changeId, actors, adapters }: { changeId: string; actors: ReturnType<typeof useActors>["actors"]; adapters: AgentAdapterInfo[] }) {
   const [v, setV] = useState({ actor: "", adapter: "", exe: "", args: "", timeout: "" });
   const [errs, setErrs] = useState<Record<string, string>>({});
   const dlg = useDialogState(() => { setV({ actor: "", adapter: adapters.length === 1 ? adapters[0]!.adapter : "", exe: "", args: "", timeout: "" }); setErrs({}); run.reset(); run.renewKey(); });
@@ -250,7 +250,7 @@ function LaunchAgent({ changeId, actors, adapters }: { changeId: string; actors:
   );
 }
 
-function AttachAgent({ changeId, actors, adapters }: { changeId: string; actors: ReturnType<typeof useActors>["actors"]; adapters: AgentAdapterInfo[] }) {
+export function AttachAgent({ changeId, actors, adapters }: { changeId: string; actors: ReturnType<typeof useActors>["actors"]; adapters: AgentAdapterInfo[] }) {
   const [v, setV] = useState({ actor: "", adapter: "", external: "" });
   const [errs, setErrs] = useState<Record<string, string>>({});
   const dlg = useDialogState(() => { setV({ actor: "", adapter: "", external: "" }); setErrs({}); run.reset(); run.renewKey(); });

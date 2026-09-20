@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { GitPullRequestArrow, House, Plus, Settings, Wrench } from "lucide-react";
+import { Bot, GitBranch, GitPullRequestArrow, House, Plus, Settings, Users, Wrench } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -46,6 +46,15 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           </CommandItem>
           <CommandItem value="changes" onSelect={run(() => navigate({ to: "/changes" }))}>
             <GitPullRequestArrow /> Changes
+          </CommandItem>
+          <CommandItem value="agents runs launch" onSelect={run(() => navigate({ to: "/agents" }))}>
+            <Bot /> Agents
+          </CommandItem>
+          <CommandItem value="actors people authority" onSelect={run(() => navigate({ to: "/actors" }))}>
+            <Users /> Actors
+          </CommandItem>
+          <CommandItem value="github pull requests connection" onSelect={run(() => navigate({ to: "/github" }))}>
+            <GitBranch /> GitHub
           </CommandItem>
           <CommandItem value="tools" onSelect={run(() => navigate({ to: "/tools" }))}>
             <Wrench /> Tools

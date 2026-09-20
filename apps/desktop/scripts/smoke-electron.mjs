@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const exe = resolve(dirname(fileURLToPath(import.meta.url)), "..", "release", "win-unpacked", "Change Assurance.exe");
+const exe = resolve(dirname(fileURLToPath(import.meta.url)), "..", "release", "win-unpacked", "Sentinel.exe");
 if (!existsSync(exe)) throw new Error("Run `npm run package:dir` first.");
 const PORT = 9430;
 const profile = mkdtempSync(join(tmpdir(), "ca-smoke-"));

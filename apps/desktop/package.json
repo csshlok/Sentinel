@@ -1,7 +1,7 @@
 {
   "name": "change-assurance-desktop",
   "version": "0.0.0",
-  "description": "Change Assurance desktop (renderer + Electron shell)",
+  "description": "Sentinel desktop (renderer + Electron shell)",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "api:generate": "node scripts/api/generate.mjs",
     "api:check": "node scripts/api/generate.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --test src/lib/api/client.test.ts src/lib/status.test.ts src/lib/lifecycle.test.ts src/lib/known.test.ts src/lib/export.test.ts src/lib/theme.test.ts src/lib/diagnostics.test.ts src/styles/contrast.test.ts src/features/delivery/outcomes.test.ts src/features/recovery/recovery.test.ts src/features/timeline/payload.test.ts",
+    "test:unit": "node --test src/lib/api/client.test.ts src/lib/status.test.ts src/lib/lifecycle.test.ts src/lib/known.test.ts src/lib/export.test.ts src/lib/theme.test.ts src/lib/diagnostics.test.ts src/lib/tui.test.ts src/styles/contrast.test.ts src/features/delivery/outcomes.test.ts src/features/recovery/recovery.test.ts src/features/timeline/payload.test.ts",
     "test:electron": "node --test electron/tests/*.test.cjs",
     "test": "npm run test:unit && npm run test:electron",
     "test:e2e": "playwright test",

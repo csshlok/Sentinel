@@ -15,7 +15,7 @@ const { buildRepairPage } = require("./repair-page.cjs");
 const { buildRuntimeStatus } = require("./runtime-status.cjs");
 const { attachWindowStateEvents, registerWindowControlHandlers } = require("./window-controls.cjs");
 
-const APP_TITLE = "Change Assurance";
+const APP_TITLE = "Sentinel";
 
 // An isolated profile for tests and smoke runs. Must be set before the app is ready.
 if (process.env.CHANGE_ASSURANCE_USER_DATA_DIR) {

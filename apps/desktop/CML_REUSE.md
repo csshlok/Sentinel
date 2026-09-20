@@ -27,7 +27,7 @@ The clone lives outside this repository (`Downloads/vthacks14-reference/CML`) an
 | CML pattern | Reason |
 | --- | --- |
 | TanStack Start / SSR / Cloudflare plugins | Local SPA |
-| Vault navigation (11 destinations), chat, sources, map, tasks | Not part of Change Assurance |
+| Vault navigation (11 destinations), chat, sources, map, tasks | Not part of Sentinel |
 | Raw backend token exposed to the renderer | The main process owns the token |
 | Variable-port packaged renderer HTTP server | Replaced by the stable `app://` protocol |
 | Onboarding/first-use tour, startup HTML page | Not needed yet; the shell shows a "starting the local service" state instead |

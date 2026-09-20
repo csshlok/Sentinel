@@ -35,13 +35,13 @@ test("the Changes list reports loaded of total and stops exactly at the total", 
   await page.getByRole("button", { name: "Load more" }).click();
   await expect(page.getByText("100 of 130 loaded")).toBeVisible();
   await page.getByRole("button", { name: "Load more" }).click();
-  await expect(page.getByRole("list", { name: "Changes" }).getByRole("listitem")).toHaveCount(130);
+  await expect(page.getByRole("list", { name: "Changes", exact: true }).getByRole("listitem")).toHaveCount(130);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
 
 test("an exact multiple of the page size does not offer a phantom next page", async ({ page }) => {
   await open(page, "/changes", { changes: many(50) });
-  await expect(page.getByRole("list", { name: "Changes" }).getByRole("listitem")).toHaveCount(50);
+  await expect(page.getByRole("list", { name: "Changes", exact: true }).getByRole("listitem")).toHaveCount(50);
   await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
 });
 
@@ -113,7 +113,7 @@ test("a forked Change names its parent even before it has a repository summary",
 test("every screen has an accessible name on every control and raises no console errors", async ({ page }) => {
   const c = makeChange(1, { title: "A11y", files: 2 });
   const { errors } = await open(page, "/home", { changes: [c], tools: [makeTool(1)], actors: [{ id: "a1-00000000", display_name: "Ada", kind: "HUMAN" }] });
-  const routes = ["/home", "/changes", "/tools", "/tools/tool-1", "/settings", ...["", "/contract", "/evidence", "/assurance", "/agents", "/delivery", "/authority", "/recovery", "/passport", "/timeline"].map((t) => `/changes/${c.id}${t}`)];
+  const routes = ["/home", "/changes", "/tools", "/tools/tool-1", "/settings", "/agents", "/actors", "/github", ...["", "/contract", "/evidence", "/assurance", "/agents", "/delivery", "/authority", "/recovery", "/passport", "/timeline"].map((t) => `/changes/${c.id}${t}`)];
   const unnamed: string[] = [];
   for (const r of routes) {
     await page.goto(r);
@@ -157,4 +157,67 @@ test("the current tab stays visible in the tab strip at the minimum window width
   expect(tb!.x).toBeGreaterThanOrEqual(nb!.x - 1);
   expect(tb!.x + tb!.width).toBeLessThanOrEqual(nb!.x + nb!.width + 1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("the sidebar groups every destination and lists recent Changes", async ({ page }) => {
+  const list = [makeChange(1, { title: "Alpha", lifecycle_state: "ACTIVE" }), makeChange(2, { title: "Beta" })];
+  await open(page, "/home", { changes: list });
+  const nav = page.getByRole("navigation", { name: "Primary" }).first();
+  for (const heading of ["Workspace", "Control", "Integrations", "System"]) await expect(nav.getByText(heading, { exact: true })).toBeVisible();
+  for (const name of ["Home", "Changes", "Agents", "Actors", "Tools", "GitHub", "Settings"]) await expect(nav.getByRole("link", { name, exact: true })).toBeVisible();
+  await expect(nav.getByRole("list", { name: "Recent Changes" }).getByRole("link")).toHaveCount(2);
+  await nav.getByRole("list", { name: "Recent Changes" }).getByRole("link", { name: /Beta/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Beta" })).toBeVisible();
+});
+
+test("Home links to every part of the product, and each link opens a real screen", async ({ page }) => {
+  await open(page, "/home", { changes: [makeChange(1)], actors: [] });
+  const center = page.getByRole("region", { name: "Control center" }).or(page.locator("section", { hasText: "Control center" }));
+  for (const [title, heading] of [["Agents", "Agents"], ["Actors", "Actors"], ["GitHub", "GitHub"], ["Tools", "Tools"]] as const) {
+    await page.goto("/home");
+    await center.getByRole("link", { name: new RegExp(`^${title}`) }).click();
+    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+  }
+});
+
+test("the Actors page lists registered actors and can register one", async ({ page }) => {
+  const { api } = await open(page, "/actors", { actors: [{ id: "a1-00000000", display_name: "Ada", kind: "HUMAN" }] });
+  await expect(page.getByRole("row", { name: /Ada/ })).toBeVisible();
+  await page.getByRole("button", { name: "Create actor" }).click();
+  await dlg(page).getByLabel("Display name").fill("Build agent");
+  await dlg(page).getByLabel("Kind").selectOption("AGENT");
+  await dlg(page).getByRole("button", { name: "Create actor" }).click();
+  await expect(page.getByRole("row", { name: /Build agent/ })).toBeVisible();
+  expect(api.calls.filter((x) => x.path === "/api/v1/actors")).toHaveLength(1);
+});
+
+test("the Agents page shows a live run across Changes and links to its Change", async ({ page }) => {
+  const c = makeChange(1, { title: "Runner" });
+  const { api } = await open(page, "/agents", { changes: [c] });
+  api.lists.agents = { [c.id]: [{ id: "r1", change_id: c.id, adapter: "claude", status: "RUNNING", started_at: "2026-09-19T12:00:00Z", stdout: "", stderr: "", limitations: [], output_truncated: false, descendant_control_available: false }] };
+  await page.reload();
+  const live = page.getByRole("table", { name: "Live runs" });
+  await expect(live.getByText("Running")).toBeVisible();
+  await live.getByRole("link", { name: "Runner" }).click();
+  await expect(page).toHaveURL(new RegExp(`/changes/${c.id}/agents$`));
+});
+
+test("Settings links each available capability to where it is used, and unsupported ones have no link", async ({ page }) => {
+  await open(page, "/settings");
+  const caps = page.getByRole("list", { name: "Capabilities" });
+  await expect(caps).toBeVisible();
+  // The fake reports one available capability, change_lifecycle.
+  await expect(caps.getByRole("link", { name: "Open Changes" })).toBeVisible();
+  await expect(caps.getByText(/Used in: Overview tab/)).toBeVisible();
+});
+
+test("the GitHub page shows the connection and outcomes across Changes", async ({ page }) => {
+  const c = makeChange(1, { title: "Has PR", files: 1 });
+  const { api } = await open(page, "/github", { changes: [c] });
+  api.lists.outcomes = { [c.id]: [{ id: "o1", change_id: c.id, kind: "PULL_REQUEST", status: "PENDING", repository: "o/r", head_sha: "a".repeat(40), provider_reference: "#7", observed_at: "2026-09-19T12:00:00Z", details: {} }] };
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Connect GitHub/ })).toBeVisible();
+  const table = page.getByRole("table", { name: "Outcomes across Changes" });
+  await expect(table.getByRole("link", { name: "Has PR" })).toBeVisible();
+  await expect(table.getByText("Pending")).toBeVisible();
 });

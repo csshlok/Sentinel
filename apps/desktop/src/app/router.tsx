@@ -52,6 +52,10 @@ const extraRoutes = extra.map(([path, component]) => createRoute({ getParentRout
 
 const toolsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tools", component: lazy(() => import("@/features/tools/ToolsPage"), "ToolsPage") });
 const toolDetailRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tools/$toolId", component: lazy(() => import("@/features/tools/ToolDetailPage"), "ToolDetailPage") });
+const walkthroughRoute = createRoute({ getParentRoute: () => rootRoute, path: "/walkthrough", component: lazy(() => import("@/features/workspace/WalkthroughPage"), "WalkthroughPage") });
+const actorsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/actors", component: lazy(() => import("@/features/workspace/ActorsPage"), "ActorsPage") });
+const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/agents", component: lazy(() => import("@/features/workspace/AgentsPage"), "AgentsPage") });
+const githubRoute = createRoute({ getParentRoute: () => rootRoute, path: "/github", component: lazy(() => import("@/features/workspace/GithubPage"), "GithubPage") });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: lazy(() => import("@/features/settings/SettingsPage"), "SettingsPage") });
 
 const routeTree = rootRoute.addChildren([
@@ -61,6 +65,10 @@ const routeTree = rootRoute.addChildren([
   changeRoute.addChildren([overviewRoute, contractRoute, evidenceRoute, ...extraRoutes, timelineRoute]),
   toolsRoute,
   toolDetailRoute,
+  walkthroughRoute,
+  actorsRoute,
+  agentsRoute,
+  githubRoute,
   settingsRoute,
 ]);
 

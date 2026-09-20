@@ -37,7 +37,7 @@ test("hostile, huge and unicode titles render as text and never overflow, at eve
   ];
   const changes = titles.map((t, i) => makeChange(i + 1, { title: t, repository_path: "C:\\" + "very-long-folder-name\\".repeat(20), files: i }));
   const { api, errors } = await open(page, "/changes", { changes });
-  await expect(page.getByRole("list", { name: "Changes" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Changes", exact: true })).toBeVisible();
   for (const vp of VIEWPORTS) {
     await page.setViewportSize(vp);
     for (const path of ["/changes", `/changes/${changes[2]!.id}`, `/changes/${changes[0]!.id}/timeline`]) {
@@ -63,7 +63,7 @@ test("losing the backend shows Offline, and everything recovers by itself when i
   api.online = true;
   await page.clock.runFor(3_000);
   await expect(page.getByRole("link", { name: /Connected/ })).toBeVisible();
-  await expect(page.getByText("Survivor")).toBeVisible();
+  await expect(page.locator("main").getByText("Survivor")).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -74,7 +74,7 @@ test("a wrong token is reported as an auth problem, and the right one fixes it",
   await page.getByLabel("Development API token").fill("right");
   await page.getByRole("button", { name: "Use token" }).click();
   await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Changes" }).click();
-  await expect(page.getByText("Guarded")).toBeVisible();
+  await expect(page.locator("main").getByText("Guarded")).toBeVisible();
 });
 
 test("rapid navigation under a slow backend never throws, and shows the last page requested", async ({ page }) => {
@@ -99,7 +99,7 @@ test("rapid navigation under a slow backend never throws, and shows the last pag
 test("filtering a full page of Changes stays fast and correct", async ({ page }) => {
   const changes = Array.from({ length: 50 }, (_, i) => makeChange(i + 1));
   await open(page, "/changes", { changes });
-  const list = page.getByRole("list", { name: "Changes" });
+  const list = page.getByRole("list", { name: "Changes", exact: true });
   await expect(list.getByRole("listitem")).toHaveCount(50);
   const started = Date.now();
   await page.getByLabel("Filter Changes").fill("number 4");
@@ -112,7 +112,7 @@ test("filtering a full page of Changes stays fast and correct", async ({ page })
 test("more than one page of Changes can be loaded, without duplicates", async ({ page }) => {
   const changes = Array.from({ length: 130 }, (_, i) => makeChange(i + 1));
   await open(page, "/changes", { changes });
-  const items = page.getByRole("list", { name: "Changes" }).getByRole("listitem");
+  const items = page.getByRole("list", { name: "Changes", exact: true }).getByRole("listitem");
   await expect(items).toHaveCount(50);
   await page.getByRole("button", { name: /Load more/ }).click();
   await expect(items).toHaveCount(100);
@@ -237,7 +237,7 @@ test("200% zoom (512x340 CSS px) with reduced motion remains usable", async ({ p
 
 test("opening and closing dialogs and the palette 40 times does not leak DOM or break focus", async ({ page }) => {
   const { errors } = await open(page, "/changes", { changes: [makeChange(1)] });
-  await expect(page.getByText("Change number 1")).toBeVisible();
+  await expect(page.locator("main").getByText("Change number 1")).toBeVisible();
   const count = () => page.evaluate(() => document.querySelectorAll("*").length);
   const baseline = await count();
   for (let i = 0; i < 40; i++) {

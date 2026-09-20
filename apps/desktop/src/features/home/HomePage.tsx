@@ -1,3 +1,4 @@
+import { ControlCenter } from "./ControlCenter";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { GitPullRequestArrow, Plus } from "lucide-react";
@@ -126,6 +127,8 @@ export function HomePage() {
           </div>
         </>
       )}
+
+      <ControlCenter />
 
       <Section title="Local service" action={<Link to="/settings" className="text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground">Settings</Link>}>
         <Facts

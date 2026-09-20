@@ -1,6 +1,6 @@
-# Change Assurance desktop
+# Sentinel desktop
 
-The Windows desktop app (Electron + React) for the Change Assurance Runtime. The renderer also runs in a plain browser for development.
+The Windows desktop app (Electron + React) for the Sentinel Runtime. The renderer also runs in a plain browser for development.
 It talks to the FastAPI backend over the authenticated `/api/v1` API and never sees the API token.
 
 > Status: local, uncommitted work on the `frontend` branch. See `FRONTEND_PLAN_ADDENDUM.md` for decisions, limits and what is left,
