@@ -57,6 +57,20 @@ class EvidenceStore:
                 (str(run.id), str(run.change_id), run.status.value, run.model_dump_json(),
                  run.started_at.isoformat(),
                  run.completed_at.isoformat() if run.completed_at else None))
+            for process in run.descendant_processes:
+                c.execute(
+                    "INSERT OR REPLACE INTO descendant_processes "
+                    "(agent_run_id, pid, parent_pid, executable_path, command_line, "
+                    "started_at, terminated_at, exit_code, attributed, attribution_reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(run.id), process.pid, process.parent_pid,
+                        process.executable_path, process.command_line,
+                        process.started_at.isoformat(),
+                        process.terminated_at.isoformat() if process.terminated_at else None,
+                        process.exit_code, int(process.attributed), process.attribution_reason,
+                    ),
+                )
 
     def get_agent_run(self, run_id: UUID) -> AgentRun | None:
         return self._one("SELECT payload_json FROM agent_runs WHERE id = ?", (str(run_id),), AgentRun)

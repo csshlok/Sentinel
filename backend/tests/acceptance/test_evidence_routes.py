@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.config import Settings
 from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.main import create_app
+from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.tests.support_kb import make_repo, write
 
 FILES = {
@@ -65,6 +66,8 @@ def test_capabilities_report_the_kb_stream_as_available(tmp_path):
     assert items["replay"]["state"] == "AVAILABLE"
     assert items["event_journal"]["state"] == "AVAILABLE"
     assert items["tool_registry"]["state"] == "AVAILABLE"
+    assert items["process_supervisor"]["state"] == "AVAILABLE"
+    assert "not a sandbox" in " ".join(items["process_supervisor"]["limitations"])
 
 
 def test_full_flow_through_the_api_and_lifecycle_guards(tmp_path):
@@ -95,7 +98,8 @@ def test_full_flow_through_the_api_and_lifecycle_guards(tmp_path):
     assert launched.status_code == 201, launched.text
     run = launched.json()
     assert run["status"] == "PASSED" and run["stdout"].strip() == "agent done"
-    assert run["descendant_control_available"] is False
+    assert run["descendant_control_available"] is IS_WINDOWS
+    assert run["restricted_token_applied"] is IS_WINDOWS
 
     # Current evidence: comparison, drift, dependencies.
     current = client.post(f"{base}/evidence/current")
@@ -196,7 +200,7 @@ def test_attach_and_stop_and_adapter_listing(tmp_path):
     assert cross.status_code == 404 and cross.json()["error"]["code"] == "AGENT_RUN_NOT_FOUND"
     adapters = client.get("/api/v1/agents/adapters").json()
     assert {item["adapter"] for item in adapters["items"]} == {"generic", "codex", "claude"}
-    assert all(item["descendant_control_available"] is False for item in adapters["items"])
+    assert all(item["descendant_control_available"] is IS_WINDOWS for item in adapters["items"])
 
 
 def test_errors_for_missing_changes_evidence_and_plans(tmp_path):

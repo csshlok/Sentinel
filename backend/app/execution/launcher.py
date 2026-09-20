@@ -1,13 +1,13 @@
-"""Top-level Agent Launcher (``AgentLauncherPort``).
+"""Agent Launcher with Windows process-tree supervision.
 
 Scope, deliberately narrow:
 
-* ``launch`` starts one process, observes only that direct child, and returns an
-  aggregate result. No event journal, process supervisor, filesystem tracker or
-  tool registry exists behind it, so descendant control, attribution and cleanup
-  are never claimed.
+* On Windows, ``launch`` uses a kill-on-close Job Object, records descendants,
+  and starts the top-level process with maximum privileges removed from a
+  restricted token (the caller integrity level is retained for repository writes).
+  Reduced privilege is not a sandbox or isolation boundary.
 * ``attach`` records caller-declared metadata. Nothing is observed.
-* ``stop`` terminates the direct child of a run started by this instance.
+* ``stop`` terminates the owned Job Object tree when supervision is available.
 
 Caller authority is enforced upstream (``PolicyPort``); the port carries no
 actor, so this class cannot and does not authorize a caller. Run records live in
@@ -32,6 +32,9 @@ from backend.app.contracts.models import (
 from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution.process_supervisor import (
+    IS_WINDOWS, SupervisedProcess, spawn_restricted_supervised,
+)
 from backend.app.execution.resolve import find_executable, resolve_argv, safe_path_entries
 from backend.app.execution.signal_control import resume_process, suspend_process
 
@@ -49,6 +52,19 @@ CHUNK_NOTIFY_INTERVAL_SECONDS = 0.5
 DESCENDANT_LIMITATION = (
     "Only the top-level invocation was launched and observed; descendant "
     "processes are not controlled, attributed or cleaned up."
+)
+SUPERVISED_LIMITATION = (
+    "The launched process tree was supervised by a Windows Job Object; pause/resume "
+    "still applies only to the top-level PID."
+)
+RESTRICTED_AUTHORITY = (
+    "Reduced privilege via a restricted Windows token with maximum privileges "
+    "disabled; the caller integrity level is retained so the selected repository "
+    "remains writable. This is not a sandbox and provides no filesystem or network isolation."
+)
+RESTRICTED_UNAVAILABLE = (
+    "Restricted-token authority reduction is unavailable on this platform; the process "
+    "was launched with the existing account authority."
 )
 EXIT_LIMITATION = (
     "The status describes the direct child only and does not describe files, "
@@ -96,6 +112,7 @@ class _State:
     done: threading.Event
     paused: threading.Event
     attached: bool = False
+    process: object | None = None
 
 
 class AgentLauncher:
@@ -162,24 +179,66 @@ class AgentLauncher:
 
         run_id = uuid4()
         started_at = utc_now()
+        initial_limitations = (
+            [] if IS_WINDOWS else [DESCENDANT_LIMITATION, RESTRICTED_UNAVAILABLE]
+        )
         running = AgentRun(
             id=run_id, change_id=change_id, adapter=adapter.name,
             status=AgentRunStatus.RUNNING, started_at=started_at,
-            limitations=[DESCENDANT_LIMITATION],
+            limitations=initial_limitations,
         )
         state = _State(running, threading.Event(), threading.Event(), threading.Event())
         with self._lock:
             self._runs[run_id] = state
         self._notify(running)
 
+        spawned: list[SupervisedProcess | None] = [None]
+
         def on_start(pid: int) -> None:
+            process = spawned[0]
+            supervised = bool(process and process.session is not None)
+            restricted = bool(process and process.restricted_token_applied)
             with self._lock:
-                state.record = state.record.model_copy(update={"top_level_pid": pid})
+                state.process = process
+                state.record = state.record.model_copy(update={
+                    "top_level_pid": pid,
+                    "descendant_control_available": supervised,
+                    "restricted_token_applied": restricted,
+                    "authority_reduction": RESTRICTED_AUTHORITY if restricted else None,
+                    "limitations": (
+                        [SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY]
+                        if supervised else [DESCENDANT_LIMITATION, RESTRICTED_AUTHORITY]
+                        if restricted else state.record.limitations
+                    ),
+                })
                 started = state.record
             self._notify(started)
 
+        def process_factory(arguments, process_cwd, process_env):
+            process = spawn_restricted_supervised(
+                arguments, cwd=process_cwd, env=process_env,
+                redact=lambda value: self._text(value.encode("utf-8"), secrets),
+            )
+            spawned[0] = process
+            return process
+
+        def on_poll(process: object) -> None:
+            if not isinstance(process, SupervisedProcess) or process.session is None:
+                return
+            descendants = process.session.observe()
+            with self._lock:
+                if descendants == state.record.descendant_processes:
+                    return
+                state.record = state.record.model_copy(
+                    update={"descendant_processes": descendants}
+                )
+                updated = state.record
+            self._notify(updated)
+
         clock = time.monotonic()
-        limitations = [DESCENDANT_LIMITATION, EXIT_LIMITATION]
+        limitations = [EXIT_LIMITATION]
+        if not IS_WINDOWS:
+            limitations.extend([DESCENDANT_LIMITATION, RESTRICTED_UNAVAILABLE])
         status = AgentRunStatus.ERROR
         exit_code: int | None = None
         stdout = stderr = ""
@@ -229,6 +288,8 @@ class AgentLauncher:
                 timeout=request.timeout_seconds, limit=output_limit_bytes,
                 max_timeout=MAX_TIMEOUT_SECONDS, cancel=state.cancel, paused=state.paused,
                 on_start=on_start, on_chunk=on_chunk,
+                process_factory=process_factory if IS_WINDOWS else None,
+                on_poll=on_poll if IS_WINDOWS else None,
             )
         except AppError as exc:
             limitations.append(f"The agent did not start: {exc.message}")
@@ -243,22 +304,38 @@ class AgentLauncher:
             if result.cancelled:
                 status = AgentRunStatus.CANCELLED
                 limitations.append(
+                    "Cancellation terminated the supervised process tree."
+                    if state.record.descendant_control_available else
                     "Cancellation terminated the direct child only; descendants may still be running."
                 )
             elif result.timed_out:
                 status = AgentRunStatus.TIMED_OUT
                 limitations.append(
+                    "Timeout terminated the supervised process tree."
+                    if state.record.descendant_control_available else
                     "Timeout terminated the direct child only; descendants may still be running."
                 )
             else:
                 exit_code = result.returncode
                 status = AgentRunStatus.PASSED if exit_code == 0 else AgentRunStatus.FAILED
+        supervised_process = spawned[0]
+        descendants = (
+            supervised_process.session.records
+            if supervised_process is not None and supervised_process.session is not None
+            else state.record.descendant_processes
+        )
+        if state.record.descendant_control_available:
+            limitations.extend([SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY])
         final = AgentRun(
             id=run_id, change_id=change_id, adapter=adapter.name, status=status,
             top_level_pid=pid, exit_code=exit_code, started_at=started_at,
             completed_at=utc_now(), duration_ms=int((time.monotonic() - clock) * 1000),
             stdout=stdout, stderr=stderr, output_truncated=truncated,
-            limitations=limitations,
+            descendant_control_available=state.record.descendant_control_available,
+            descendant_processes=descendants,
+            restricted_token_applied=state.record.restricted_token_applied,
+            authority_reduction=state.record.authority_reduction,
+            limitations=list(dict.fromkeys(limitations)),
         )
         with self._lock:
             state.record = final
@@ -389,7 +466,8 @@ class AgentLauncher:
                 "executables": {exe: find_executable(exe, env, root) is not None
                                 for exe in sorted(adapter.executables)},
                 "credential_keys": sorted(adapter.credential_keys),
-                "descendant_control_available": False,
+                "descendant_control_available": IS_WINDOWS,
+                "restricted_token_available": IS_WINDOWS,
             })
         return listing
 
@@ -452,6 +530,26 @@ class AgentLauncher:
             raise AppError("AGENT_RUN_NOT_FOUND", "The agent run does not exist.",
                            status_code=404)
         return state.record
+
+    def terminate_change(self, change_id: UUID) -> int:
+        """Terminate live supervised process trees belonging to one Change.
+
+        Job handles are intentionally process-instance-local. Persisted runs
+        restored after a daemon restart cannot be terminated by this method.
+        """
+
+        with self._lock:
+            states = [
+                state for state in self._runs.values()
+                if state.record.change_id == change_id and not state.done.is_set()
+            ]
+        terminated = 0
+        for state in states:
+            process = state.process
+            if isinstance(process, SupervisedProcess) and process.session is not None:
+                terminated += process.session.terminate()
+                state.cancel.set()
+        return terminated
 
     def _notify(self, run: AgentRun) -> None:
         observer = self.on_update

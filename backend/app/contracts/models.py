@@ -418,6 +418,26 @@ class AgentAttachRequest(ContractModel):
     declared_started_at: AwareDatetime | None = None
 
 
+class DescendantProcess(ContractModel):
+    """One process observed inside a launched run's Windows Job Object."""
+
+    pid: int = Field(ge=1)
+    parent_pid: int | None = Field(default=None, ge=1)
+    executable_path: str | None = Field(default=None, max_length=32768)
+    command_line: str | None = Field(default=None, max_length=32768)
+    started_at: AwareDatetime
+    terminated_at: AwareDatetime | None = None
+    exit_code: int | None = None
+    attributed: bool
+    attribution_reason: str | None = Field(default=None, max_length=1024)
+
+    @model_validator(mode="after")
+    def require_unattributed_reason(self) -> "DescendantProcess":
+        if not self.attributed and not self.attribution_reason:
+            raise ValueError("unattributed descendants require an attribution reason")
+        return self
+
+
 class AgentRun(ContractModel):
     id: UUID
     change_id: UUID
@@ -432,7 +452,10 @@ class AgentRun(ContractModel):
     stdout: str = ""
     stderr: str = ""
     output_truncated: bool = False
-    descendant_control_available: Literal[False] = False
+    descendant_control_available: bool = False
+    descendant_processes: list[DescendantProcess] = Field(default_factory=list, max_length=4096)
+    restricted_token_applied: bool = False
+    authority_reduction: str | None = Field(default=None, max_length=1024)
     limitations: list[str] = Field(default_factory=list, max_length=32)
     paused_at: AwareDatetime | None = None
     resumed_at: AwareDatetime | None = None
@@ -629,6 +652,7 @@ class RecoveryPlan(ContractModel):
     created_at: AwareDatetime
     approved_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
+    processes_terminated: int = Field(default=0, ge=0)
 
 
 class EvidenceReference(ContractModel):
@@ -681,6 +705,9 @@ class ChangePassport(ContractModel):
     outcomes: list[UUID] = Field(default_factory=list, max_length=10000)
     limitations: list[str] = Field(default_factory=list, max_length=256)
     recovery_status: RecoveryStatus | None = None
+    processes_attributed: int = Field(default=0, ge=0)
+    processes_unattributed: int = Field(default=0, ge=0)
+    processes_terminated: int = Field(default=0, ge=0)
     tool_trust_summary: list[ToolTrustSummaryEntry] = Field(default_factory=list, max_length=10000)
     replay_verified: bool | None = None
     replay_checked_events: int | None = Field(default=None, ge=0)
@@ -724,8 +751,9 @@ class JournalEventType(StrEnum):
 
     Every member corresponds to a mutation of an entity this backend already
     models (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no
-    `filesystem.write` or `process.spawn` member: the filesystem tracker and
-    process supervisor stay cut, so those effects are never claimed here.
+    `filesystem.write` member because the filesystem tracker stays cut.
+    Process-tree observation is represented only by the bounded descendant
+    event types below; it is not a filesystem or tool-call trace.
     """
 
     CHANGE_CREATED = "change.created"
@@ -744,6 +772,9 @@ class JournalEventType(StrEnum):
     AGENT_ATTACHED = "agent.attached"
     AGENT_STOP_REQUESTED = "agent.stop_requested"
     AGENT_COMPLETED = "agent.completed"
+    AGENT_DESCENDANT_OBSERVED = "agent.descendant.observed"
+    AGENT_DESCENDANT_TERMINATED = "agent.descendant.terminated"
+    AGENT_PROCESS_TREE_TERMINATED = "agent.process_tree.terminated"
     ENVIRONMENT_PASSPORT_CAPTURED = "environment.passport.captured"
     DEPENDENCY_REPORT_CAPTURED = "dependency.report.captured"
     ASSURANCE_PLAN_CREATED = "assurance.plan.created"
@@ -1040,7 +1071,8 @@ class AgentAdapterInfo(ContractModel):
     adapter: ShortText
     executables: dict[str, bool]
     credential_keys: list[str] = Field(default_factory=list)
-    descendant_control_available: Literal[False] = False
+    descendant_control_available: bool = False
+    restricted_token_available: bool = False
 
 
 class AgentAdapterListResponse(ContractModel):

@@ -567,6 +567,32 @@ def migration_009_change_fork_columns(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_010_descendant_processes(connection: sqlite3.Connection) -> None:
+    """Process Supervisor Part A: durable descendant-process evidence."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS descendant_processes (
+            agent_run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+            pid INTEGER NOT NULL,
+            parent_pid INTEGER NULL,
+            executable_path TEXT NULL,
+            command_line TEXT NULL,
+            started_at TEXT NOT NULL,
+            terminated_at TEXT NULL,
+            exit_code INTEGER NULL,
+            attributed INTEGER NOT NULL CHECK (attributed IN (0, 1)),
+            attribution_reason TEXT NULL,
+            PRIMARY KEY (agent_run_id, pid)
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_descendant_processes_run "
+        "ON descendant_processes(agent_run_id, started_at, pid)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -577,6 +603,7 @@ MIGRATIONS = (
     Migration(7, "tool_manifest_resolved_path", migration_007_tool_manifest_resolved_path),
     Migration(8, "agent_run_pause_fields", migration_008_agent_run_pause_fields),
     Migration(9, "change_fork_columns", migration_009_change_fork_columns),
+    Migration(10, "descendant_processes", migration_010_descendant_processes),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

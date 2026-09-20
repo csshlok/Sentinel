@@ -294,6 +294,24 @@ class EvidenceService:
             payload={"status": run.status.value, "exit_code": run.exit_code,
                      "duration_ms": run.duration_ms},
         )
+        for process in run.descendant_processes:
+            self._journal_append(
+                change.id, JournalEventType.AGENT_DESCENDANT_OBSERVED,
+                subject_type="agent_run", subject_id=run.id,
+                payload={
+                    "pid": process.pid,
+                    "parent_pid": process.parent_pid,
+                    "executable_path": process.executable_path,
+                    "attributed": process.attributed,
+                    "attribution_reason": process.attribution_reason,
+                },
+            )
+            if process.terminated_at is not None:
+                self._journal_append(
+                    change.id, JournalEventType.AGENT_DESCENDANT_TERMINATED,
+                    subject_type="agent_run", subject_id=run.id,
+                    payload={"pid": process.pid, "exit_code": process.exit_code},
+                )
         return run
 
     def attach_agent(self, change: ChangeView, request: AgentAttachRequest) -> AgentRun:
@@ -356,6 +374,11 @@ class EvidenceService:
 
     def agent_runs(self, change_id: UUID) -> list[AgentRun]:
         return self._store.list_agent_runs(change_id)
+
+    def terminate_process_trees(self, change_id: UUID) -> int:
+        """Terminate live Job Object trees still held by this daemon instance."""
+
+        return self._launcher.terminate_change(change_id)
 
     # -- assurance ----------------------------------------------------------
 

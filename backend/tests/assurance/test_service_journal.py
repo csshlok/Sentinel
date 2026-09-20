@@ -23,6 +23,7 @@ from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.database import Database
 from backend.app.core.journal import JournalWriter, compute_event_hash
 from backend.app.environment.tracker import EnvironmentTracker
+from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.tests.support_kb import make_repo
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -130,6 +131,39 @@ def test_full_evidence_flow_produces_a_correctly_chained_journal(tmp_path):
     check_events = [e for e in events if e.event_type is JournalEventType.ASSURANCE_CHECK_COMPLETED]
     assert {e.subject_id for e in check_events} == {r.id for r in runs}
     assert {e.payload["status"] for e in check_events} == {r.status.value for r in runs}
+
+
+def test_supervised_descendants_emit_bounded_process_events(tmp_path):
+    if not IS_WINDOWS:
+        return
+    h = Harness(tmp_path)
+    child = "import time; time.sleep(0.4)"
+    parent = (
+        "import subprocess,sys,time; "
+        f"p=subprocess.Popen([sys.executable, '-c', {child!r}]); p.wait()"
+    )
+    run = h.service().launch_agent(
+        h.view(),
+        AgentLaunchRequest(
+            adapter="generic", executable="python", args=["-c", parent], timeout_seconds=10,
+        ),
+    )
+
+    assert len(run.descendant_processes) == 1
+    events = h.events()
+    assert JournalEventType.AGENT_DESCENDANT_OBSERVED in {event.event_type for event in events}
+    assert JournalEventType.AGENT_DESCENDANT_TERMINATED in {event.event_type for event in events}
+    observed = next(
+        event for event in events
+        if event.event_type is JournalEventType.AGENT_DESCENDANT_OBSERVED
+    )
+    assert observed.payload["pid"] == run.descendant_processes[0].pid
+    with h.db.connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM descendant_processes WHERE agent_run_id = ?", (str(run.id),)
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["pid"] == run.descendant_processes[0].pid
 
 
 def test_git_checkpoint_effect_chains_before_and_produced_digest(tmp_path):

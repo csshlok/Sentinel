@@ -89,13 +89,13 @@ class AgentLauncherPort(Protocol):
         request: AgentLaunchRequest,
         output_limit_bytes: int,
     ) -> AgentRun:
-        """Launch and observe only the top-level invocation."""
+        """Launch an invocation; Windows implementations supervise its process tree."""
 
     def attach(self, change_id: UUID, request: AgentAttachRequest) -> AgentRun:
         """Record declared metadata for an externally launched invocation."""
 
     def stop(self, run_id: UUID) -> AgentRun:
-        """Request cancellation of the top-level invocation when supported."""
+        """Request cancellation, including the supervised tree when available."""
 
     def pause(self, run_id: UUID) -> AgentRun:
         """Suspend the top-level process only (Windows-first, no descendants)."""

@@ -26,6 +26,7 @@ from backend.app.contracts.models import (
 from backend.app.dependencies.tracker import DependencyTracker
 from backend.app.environment.tracker import EnvironmentTracker
 from backend.app.execution.launcher import AgentLauncher
+from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.app.git.state import GitStateTracker
 from backend.tests.support_kb import git, make_repo, write
 
@@ -90,7 +91,7 @@ def test_python_change_flow_from_baseline_to_fresh_assurance(tmp_path, monkeypat
     run = launcher.launch(change.id, str(repo), AgentLaunchRequest(
         adapter="generic", executable="python", args=["-c", AGENT_EDIT], timeout_seconds=30), 10_000)
     assert run.status is AgentRunStatus.PASSED and run.stdout.strip() == "edited"
-    assert run.descendant_control_available is False and run.limitations
+    assert run.descendant_control_available is IS_WINDOWS and run.limitations
 
     # 4. Current evidence and comparison.
     current_cp = git_state.capture(change.id, "current", str(repo), 2, 100_000)

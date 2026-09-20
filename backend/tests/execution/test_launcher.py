@@ -16,6 +16,7 @@ from backend.app.core.errors import AppError
 from backend.app.execution.launcher import (
     DESCENDANT_LIMITATION, AgentAdapter, AgentLauncher,
 )
+from backend.app.execution.process_supervisor import IS_WINDOWS
 
 CHANGE = uuid4()
 
@@ -45,12 +46,15 @@ def test_pass_fail_and_cwd_with_spaces(tmp_path):
     assert bad.status is AgentRunStatus.FAILED and bad.exit_code == 3
 
 
-def test_never_claims_descendant_control(tmp_path):
+def test_reports_descendant_control_only_when_job_supervision_is_real(tmp_path):
     run = launch(tmp_path, "print(1)")
-    assert run.descendant_control_available is False
-    assert DESCENDANT_LIMITATION in run.limitations
-    text = " ".join(run.limitations).lower()
-    assert "cleanup" in text or "cleaned up" in text
+    assert run.descendant_control_available is IS_WINDOWS
+    assert run.restricted_token_applied is IS_WINDOWS
+    assert (DESCENDANT_LIMITATION in run.limitations) is (not IS_WINDOWS)
+    if IS_WINDOWS:
+        assert "maximum privileges" in (run.authority_reduction or "").lower()
+        assert "integrity level is retained" in (run.authority_reduction or "").lower()
+        assert "not a sandbox" in (run.authority_reduction or "").lower()
     assert type(run).model_validate_json(run.model_dump_json()) == run
 
 
@@ -59,7 +63,8 @@ def test_timeout_terminates_direct_child(tmp_path):
     run = launch(tmp_path, "import time; time.sleep(30)", timeout_seconds=1)
     assert run.status is AgentRunStatus.TIMED_OUT and run.exit_code is None
     assert time.monotonic() - started < 6
-    assert any("direct child only" in item for item in run.limitations)
+    expected = "supervised process tree" if IS_WINDOWS else "direct child only"
+    assert any(expected in item for item in run.limitations)
 
 
 def test_output_budget_is_shared_and_bounded(tmp_path):
@@ -421,7 +426,8 @@ def test_adapter_metadata_reports_availability_without_paths(tmp_path):
     assert listing["generic"]["executables"]["python"] is True
     assert listing["ghost"]["executables"] == {"no-such-agent-xyz": False}
     assert listing["ghost"]["credential_keys"] == ["GHOST_API_KEY"]
-    assert all(item["descendant_control_available"] is False for item in listing.values())
+    assert all(item["descendant_control_available"] is IS_WINDOWS for item in listing.values())
+    assert all(item["restricted_token_available"] is IS_WINDOWS for item in listing.values())
     assert str(tmp_path) not in repr(listing) and sys.executable not in repr(listing)
     assert launcher.adapters()      # default location works
     with pytest.raises(AppError):

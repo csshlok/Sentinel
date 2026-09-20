@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ def capture(
     on_start: Callable[[int], None] | None = None,
     on_chunk: Callable[[bytes, bytes], None] | None = None,
     stderr_limit: int | None = None,
+    process_factory: Callable[[Sequence[str], str | Path, Mapping[str, str]], Any] | None = None,
+    on_poll: Callable[[Any], None] | None = None,
 ) -> CapturedProcess:
     """Drain both streams, retaining at most ``limit`` bytes across them.
 
@@ -84,9 +87,13 @@ def capture(
                 type(stderr_limit) is not int or not 0 <= stderr_limit <= 8 * 1_048_576))):
         raise ValueError("Invalid process capture bounds.")
     deadline = time.monotonic() + timeout
-    process = subprocess.Popen(
-        list(argv), cwd=cwd, env=dict(env), shell=False, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+    process = (
+        process_factory(argv, cwd, env)
+        if process_factory is not None
+        else subprocess.Popen(
+            list(argv), cwd=cwd, env=dict(env), shell=False, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+        )
     )
     if on_start is not None:
         on_start(process.pid)
@@ -102,6 +109,11 @@ def capture(
         was_paused = False
         pause_started = 0.0
         while active or process.poll() is None:
+            if on_poll is not None:
+                try:
+                    on_poll(process)
+                except Exception:
+                    pass
             if cancel is not None and cancel.is_set() and process.poll() is None:
                 cancelled = True
                 incomplete = bool(active)
@@ -167,3 +179,6 @@ def capture(
         finally:
             for stream in streams:
                 stream.close()
+            close = getattr(process, "close", None)
+            if close is not None:
+                close()
