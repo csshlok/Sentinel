@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import time
+from ctypes import wintypes
 
 from backend.app.core.errors import AppError
 
@@ -34,6 +36,21 @@ from backend.app.core.errors import AppError
 # least-privilege convention for subprocess execution (shell=False, argument
 # arrays, minimal environment).
 _PROCESS_SUSPEND_RESUME = 0x0800
+# Added to the handle opened for suspend only, so the post-suspend check
+# below can call GetProcessTimes. Still far short of PROCESS_ALL_ACCESS.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+# A found-in-production gap (THREAT_MODEL_FINDINGS.md): on at least one
+# machine, NtSuspendProcess returns STATUS_SUCCESS while the target keeps
+# running unsuspended. The status code alone is not proof of effect, so
+# suspend_process independently confirms the process stopped consuming CPU
+# before returning -- this module's contract is to never report a
+# fabricated success, the same bar signature.py holds for "unknown" checks.
+_SUSPEND_VERIFY_WINDOW_SECONDS = 0.1
+# Generous slack for the syscall's own tail end (in-flight instructions at
+# the moment of suspension) -- 15ms of CPU time is well above that noise
+# floor but far below what a genuinely still-running loop accrues in 100ms.
+_SUSPEND_VERIFY_TOLERANCE_100NS = 150_000
 
 _is_windows = sys.platform == "win32"
 _ntdll = ctypes.WinDLL("ntdll") if _is_windows else None
@@ -44,6 +61,14 @@ if _kernel32 is not None:
     _kernel32.OpenProcess.restype = ctypes.c_void_p
     _kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     _kernel32.CloseHandle.restype = ctypes.c_int
+    _kernel32.GetProcessTimes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    _kernel32.GetProcessTimes.restype = ctypes.c_int
 
 if _ntdll is not None:
     _ntdll.NtSuspendProcess.argtypes = [ctypes.c_void_p]
@@ -61,8 +86,8 @@ def _require_windows() -> None:
         )
 
 
-def _open_process(pid: int) -> int:
-    handle = _kernel32.OpenProcess(_PROCESS_SUSPEND_RESUME, 0, pid)
+def _open_process(pid: int, extra_access: int = 0) -> int:
+    handle = _kernel32.OpenProcess(_PROCESS_SUSPEND_RESUME | extra_access, 0, pid)
     if not handle:
         error = ctypes.get_last_error()
         raise AppError(
@@ -72,19 +97,54 @@ def _open_process(pid: int) -> int:
     return handle
 
 
+def _cpu_time_100ns(handle: int) -> int:
+    """Total kernel+user CPU time consumed so far, in 100ns units, or ``-1``
+    if it cannot be read (missing query rights, or the process already
+    exited) -- callers treat that as "cannot verify", not as a failure."""
+
+    creation, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    ok = _kernel32.GetProcessTimes(
+        handle, ctypes.byref(creation), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)
+    )
+    if not ok:
+        return -1
+    def _as_int(ft: wintypes.FILETIME) -> int:
+        return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+    return _as_int(kernel) + _as_int(user)
+
+
+def _verify_actually_suspended(handle: int) -> None:
+    before = _cpu_time_100ns(handle)
+    if before < 0:
+        return
+    time.sleep(_SUSPEND_VERIFY_WINDOW_SECONDS)
+    after = _cpu_time_100ns(handle)
+    if after < 0:
+        return
+    if after - before > _SUSPEND_VERIFY_TOLERANCE_100NS:
+        raise AppError(
+            "AGENT_PAUSE_FAILED",
+            "NtSuspendProcess reported success but the process kept consuming "
+            "CPU; it was not actually suspended.",
+        )
+
+
 def suspend_process(pid: int) -> None:
     """Suspend the top-level process's threads.
 
-    Raises ``AppError`` on failure, never silently no-ops. Descendants are
-    not suspended: no process-tree enumeration is performed here.
+    Raises ``AppError`` on failure, never silently no-ops -- including the
+    case where ``NtSuspendProcess`` itself reports success but the process
+    did not actually stop (see ``_verify_actually_suspended``). Descendants
+    are not suspended: no process-tree enumeration is performed here.
     """
 
     _require_windows()
-    handle = _open_process(pid)
+    handle = _open_process(pid, extra_access=_PROCESS_QUERY_LIMITED_INFORMATION)
     try:
         status = _ntdll.NtSuspendProcess(handle)
         if status != 0:
             raise AppError("AGENT_PAUSE_FAILED", f"NtSuspendProcess returned {status:#x}.")
+        _verify_actually_suspended(handle)
     finally:
         _kernel32.CloseHandle(handle)
 

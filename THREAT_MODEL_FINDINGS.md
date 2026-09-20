@@ -83,6 +83,24 @@ slight over-scoping of where the actual call sites live.
   (`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A); needs KB's own environment to reproduce and
   debug further, or a from-scratch alternative implementation of process suspension.
 
+  **KB follow-up (different machine, Lenovo, not the Dell XPS 15 above):** could not reproduce --
+  both the existing test and a from-scratch repro (print-loop child, and separately a CPU-busy-loop
+  child checked via `GetProcessTimes`) show genuine suspension: zero new output and zero CPU-time
+  delta for the full observation window. Root cause on the original machine is still unconfirmed
+  and may be host-specific (EDR/AV hooking the syscall, a Windows-build quirk, or something else
+  entirely) -- not something fixable from here without access to that machine. What *is* fixable
+  regardless of root cause: the module trusted `STATUS_SUCCESS` as proof of effect with no
+  independent check, which is exactly how a machine where the syscall lies produces a silent
+  fabricated success instead of a raised error. Fixed: `suspend_process` now samples
+  `GetProcessTimes` before and ~100ms after the syscall and raises `AGENT_PAUSE_FAILED` if the
+  process kept consuming CPU, rather than trusting the return code alone. Added
+  `test_suspend_raises_if_ntsuspendprocess_lies_about_success` (stubs the syscall to a no-op
+  returning success against a real CPU-busy child, confirms the verification catches it). This
+  turns AC's exact failure mode into a raised error on any machine where it recurs, even though the
+  underlying cause on the original box is still open -- KB should re-run the original test on that
+  Dell XPS 15 to see whether it now fails loudly (verification working as intended) or the syscall
+  genuinely suspends there too under this build (bug was possibly transient/environmental).
+
 ---
 
 ## SD — open, SD's exclusive paths (`contracts/`, `core/`, `main.py`, `migrations/`)

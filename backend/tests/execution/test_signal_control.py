@@ -87,6 +87,30 @@ def test_unknown_pid_raises_a_stable_error():
     assert info.value.code == "AGENT_PAUSE_FAILED"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="suspend/resume is Windows-only")
+def test_suspend_raises_if_ntsuspendprocess_lies_about_success(monkeypatch):
+    """THREAT_MODEL_FINDINGS.md: observed on at least one machine, NtSuspendProcess
+    returns STATUS_SUCCESS while the process keeps running. Simulate that lie by
+    stubbing the syscall to a no-op returning success, and confirm the CPU-time
+    verification catches it rather than reporting a fabricated success."""
+
+    process = _spawn(
+        "import time\nx = 0\nwhile True:\n    x += 1\n"
+    )
+    try:
+        real_suspend = signal_control._ntdll.NtSuspendProcess
+        monkeypatch.setattr(
+            signal_control._ntdll, "NtSuspendProcess", lambda handle: 0, raising=False
+        )
+        with pytest.raises(AppError) as info:
+            signal_control.suspend_process(process.pid)
+        assert info.value.code == "AGENT_PAUSE_FAILED"
+        assert real_suspend is not signal_control._ntdll.NtSuspendProcess
+    finally:
+        process.kill()
+        process.wait(timeout=5)
+
+
 def test_unsupported_platform_raises_a_stable_error_never_a_fabricated_success(monkeypatch):
     monkeypatch.setattr(signal_control, "_ntdll", None)
     monkeypatch.setattr(signal_control, "_kernel32", None)
