@@ -44,21 +44,39 @@ A developer can define a bounded Change, delegate scoped authority to an agent, 
 
 The following proposal subsystems are intentionally removed from the product:
 
-- Process supervisor, descendant-process attribution, and process cleanup — narrowed, not
-  absolute: suspending/resuming the single top-level launched process is retained (Windows-first,
-  honestly unsupported elsewhere), per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A.
-- Filesystem observation, before-images, snapshots, file-effect attribution, and local-file recovery/undo.
+- Filesystem observation, before-images, snapshots, file-effect attribution, and local-file recovery/undo. (Process supervisor is no longer on this list — see below.)
 
 The event/effect journal, causal timeline, and trace-only replay are retained in bounded form, as is a tool registry scoped to the top-level launched executable and explicitly declared manifests. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design and its own non-goals. Checkpoint-based Change forking and incremental, poll-based (TUI-only) agent output are also retained; see `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Parts B and C.
 
+## Process supervisor — reversed to PDF scope
+
+Real process-tree supervision is now in scope: Windows Job Object-based descendant-process
+attribution, orphan cleanup, and restricted-token authority reduction, per
+`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A. This supersedes the earlier
+top-level-only narrowing; pause/resume specifically stays top-level-PID-only as
+`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A defined it. Restricted-token authority reduction
+is a meaningfully lowered privilege set (Low integrity level), never a formal sandbox, namespace
+isolation, or Docker-class boundary — the PDF itself is explicit that this product is "native
+first" and is not a sandbox or a Docker replacement (§2, §24.1, §32); nothing in this reversal
+changes that identity.
+
+A new, separate idea — sharing a Change's evidence or execution state with an external party
+("cross-agent container sharing") — is **not implemented**. It is threat-modeled only in
+`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part B, pending a product decision on its most
+basic shape (does an external party run something on their own machine using our signed evidence,
+or does something of ours become reachable by them — these are wildly different risk profiles).
+Do not claim, imply, or design toward this capability until Part B's open questions are resolved
+and a separate Part C plan exists.
+
 ## Necessary consequences and non-goals
 
-- No descendant-process ownership, orphan cleanup, process-tree policy, or Windows Job Object enforcement because the process supervisor remains cut beyond top-level pause/resume.
-- No uncommitted-file restoration, resource versions, write attribution, or environment rollback because filesystem/process observation is absent.
-- No attribution of an environment/dependency change to a particular process; only checkpoint comparison is claimed.
-- No descendant-process attribution in any replay row, no filesystem-level write timeline, and no re-execution of any kind during replay — replay is a per-Change hash chain reconstruction/verification only.
-- No interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope — the tool registry governs only the top-level launched executable and explicitly declared manifests.
-- No automatic recovery. Retained recovery is limited to known Git commits and supported provider objects and always requires approval.
+- No filesystem-level before-image restoration, resource versions beyond Git, or environment rollback beyond Git-native recovery — filesystem tracking beyond Git checkpoints is absent.
+- No attribution of an environment/dependency change to a particular descendant process yet beyond what Job Object supervision directly observes; checkpoint comparison remains the primary evidence source for environment/dependency drift.
+- No descendant-process attribution in any replay row, no filesystem-level write timeline, and no re-execution of any kind during replay — replay is a per-Change hash chain reconstruction/verification only. (Process-tree supervision is a Part A capability of the launcher/recovery stream, not a replay capability.)
+- No interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope beyond the launched top-level process's own restricted-token privilege — the tool registry governs only the top-level launched executable and explicitly declared manifests.
+- No automatic recovery. Retained recovery is limited to known Git commits, supported provider objects, and (now) Change-owned process trees this process instance is still tracking, and always requires approval.
+- No formal sandbox, namespace/mount isolation, or cross-platform enforcement claim from restricted-token authority reduction — it is disclosed as reduced privilege, nothing more.
+- No cross-agent or cross-machine sharing of evidence or execution state — threat-model only, not implemented (see above).
 - Initial host collectors target Windows; other platforms require tested adapters before support is claimed.
 
 ## Product language
@@ -76,17 +94,17 @@ Preferred terms:
 
 Do not claim:
 
-- Complete observation, causal attribution, or sandboxing.
-- Descendant-process control.
-- Local-file/environment rollback.
-- Process-tree visibility.
+- Complete observation or causal attribution beyond what Job Object supervision, Git checkpoints, and the tool registry actually observe.
+- A formal sandbox, namespace/mount isolation, or Docker-equivalence — restricted-token authority reduction is disclosed as reduced privilege, never as isolation.
+- Local-file/environment rollback beyond Git-native recovery.
 - Interception or enforcement of a running agent's own tool/MCP calls, or credential trust enforcement.
-- General recovery beyond the explicitly supported Git/provider actions.
+- General recovery beyond the explicitly supported Git/provider actions and Change-owned process trees this process instance is still tracking.
 - Replay beyond a per-Change hash-chain trace reconstruction/verification with no re-execution.
 - Tool trust beyond the top-level launched executable and explicitly declared manifests.
-- Pause/resume beyond the single top-level process (no descendant suspension), or on any non-Windows platform.
+- Pause/resume beyond the single top-level process (no descendant suspension via pause/resume specifically — descendant *attribution and termination* are separately in scope per the process-supervisor reversal), or on any non-Windows platform.
 - Change forking as a Git branch/merge operation — it is an evidence-trail fork only, no repository mutation.
 - Real-time agent output as a push/streaming transport, or in the browser frontend — TUI polling only.
+- Cross-agent or cross-machine sharing of a Change's evidence or execution state, in any form, until `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part B is resolved and a Part C plan exists. Signed Passport export (Part A) is not cross-agent sharing by itself — it produces a signed artifact, but stores or trusts no other party's key.
 
 ## Active architecture
 

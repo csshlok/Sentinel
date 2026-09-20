@@ -126,13 +126,22 @@ At Gates 2 through 6 in the plan, `[SD]` posts a review or integration lock nami
 
 The product implements the PDF proposal except for:
 
-- Process supervisor — narrowed, not absolute: top-level-only pause/resume (suspend/resume the
-  single launched process, Windows-first) is in scope per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md`
-  Part A. Descendant-process observation, attribution, cleanup, and process-tree enforcement
-  remain cut.
-- Filesystem tracker.
+- Process supervisor — reversed to the PDF's original scope (Windows Job Object process-tree
+  supervision, descendant-process attribution, orphan cleanup, and restricted-token authority
+  reduction), per `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A. This supersedes the
+  earlier top-level-only narrowing in `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A, which
+  remains in effect for pause/resume specifically (still top-level-PID-only) alongside the wider
+  process-tree work. Not reversed: any claim of a formal sandbox, namespace/mount isolation, or
+  OS-level virtualization — restricted-token authority reduction is meaningfully lowered privilege,
+  never described as "sandboxed" or "isolated" in any surfaced copy.
+- Filesystem tracker — still cut, unchanged.
+- Cross-agent container sharing (an external party receiving and acting on a Change's evidence or
+  execution state) — **not implemented, threat-model only.** See
+  `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part B. Do not claim this capability exists,
+  is planned for a specific release, or is "coming soon" in any surfaced copy until Part B's open
+  questions are resolved and a separate, reviewed Part C build plan exists.
 
-Stop and report a scope conflict if work introduces descendant-process observation/control or local-file snapshots/undo. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, constrained Git/provider recovery, the per-Change event/effect journal, trace-only replay, the bounded tool registry (top-level launched executable plus declared manifests only, no MCP/descendant-call interception), top-level agent pause/resume, checkpoint-based Change forking, and incremental (poll-based, TUI-only) live agent output all remain in scope. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the journal/replay/tool-registry boundary and `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, forking, and live-capture boundary.
+Stop and report a scope conflict if work introduces local-file snapshots/undo (filesystem tracker) or any cross-agent/cross-machine access (Part B) without a Part C plan. Do not hide them under alternate names. Git checkpoints, aggregate top-level execution results, environment passports, dependencies, assurance results, provider outcomes, constrained Git/provider recovery, the per-Change event/effect journal, trace-only replay, the bounded tool registry (top-level launched executable plus declared manifests only, no MCP/descendant-call interception), agent pause/resume, real process-tree supervision and descendant attribution, restricted-token authority reduction, checkpoint-based Change forking, incremental (poll-based, TUI-only) live agent output, and signed Passport export all remain in scope. See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the journal/replay/tool-registry boundary, `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, forking, and live-capture boundary, and `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` for the process-tree-supervision and signed-export boundary (Part A) and the cross-agent-sharing threat model (Part B, unimplemented).
 
 ## Git hygiene
 

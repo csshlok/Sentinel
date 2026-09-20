@@ -34,22 +34,44 @@ The repository now targets the retained Change Assurance Runtime from the projec
   pause/resume and incrementally visible (poll-based) output while the agent runs.
 - Git, environment, and dependency checkpoints, including forking a new Change from a captured
   checkpoint to try an alternate model/prompt/parameters without disturbing the original.
+- Real Windows process-tree supervision: every descendant of a launched top-level agent is
+  tracked, attributed back to the Change, and cleaned up (Job Object-based), with restricted-token
+  authority reduction on the launched process. See `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md`
+  Part A.
 - Evidence-selected assurance and contract-deviation analysis.
 - Pull-request, CI, artifact, and deployment continuity where real adapters exist.
-- Approved Git/provider compensation and a final Change Passport.
+- Approved Git/provider compensation and a final Change Passport, optionally cryptographically
+  signed for export.
 
-Process supervision and filesystem tracking are deliberately excluded, with one narrow exception: suspending and resuming the single top-level launched process (not its descendants) is retained, Windows-first, honestly unsupported elsewhere. Capabilities that require descendant-process observation/attribution are not future-sounding claims in this product plan; they are explicit unsupported boundaries unless scope is separately changed. The event/effect journal and tool registry are retained in bounded form: a per-Change hash-chained mutation record with trace-only replay, and a tool registry scoped to the top-level launched executable and explicitly declared manifests (no descendant-call interception). See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for that bounded design and `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, checkpoint-forking, and incremental-capture bounded design — both with their own explicit non-goals.
+Filesystem tracking remains excluded. The process supervisor is no longer cut: real descendant
+-process attribution, orphan cleanup, and restricted-token authority reduction are in scope,
+Windows-first, per `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A — this supersedes the
+earlier top-level-only pause/resume narrowing for process-tree supervision specifically; pause/resume
+itself is unchanged (still top-level-PID-only, per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A).
+Restricted-token authority reduction is disclosed as meaningfully lowered privilege (a Low integrity
+level token), never as a formal sandbox or OS-level isolation boundary — the product's own thesis is
+"native first," explicitly not a Docker replacement (proposal §2, §24.1). A separate, later idea —
+sharing a Change's evidence or execution state with an external party — is threat-modeled only
+(`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part B) and is not implemented; do not claim it
+exists until a reviewed Part C plan does. The event/effect journal and tool registry are retained in
+bounded form: a per-Change hash-chained mutation record with trace-only replay, and a tool registry
+scoped to the top-level launched executable and explicitly declared manifests (no descendant-call
+interception). See `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for that bounded design and
+`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` for the pause/resume, checkpoint-forking, and
+incremental-capture bounded design — both with their own explicit non-goals.
 
 ## Current product scope
 
-The current build implements the proposal without a time-box, except for these two approved cuts:
+The current build implements the proposal without a time-box, except for one approved cut:
 
-- Process supervision and descendant attribution.
 - Filesystem tracking, snapshots, local-file recovery, and undo.
 
-Descendant attribution and cleanup depend on the removed process supervisor. Uncommitted local recovery depends on filesystem tracking. These consequences must remain visible in APIs, UI copy, Passport limitations, and recovery previews.
+Process supervision is no longer an approved cut (see above): descendant attribution and orphan
+cleanup are real, Job Object-backed capabilities. Uncommitted local recovery still depends on the
+still-cut filesystem tracker. These consequences must remain visible in APIs, UI copy, Passport
+limitations, and recovery previews.
 
-The event/effect journal, trace-only replay, and the bounded tool registry are retained (see above and `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`). Their own non-goals still apply: no descendant-process attribution in any replay row, no filesystem-level write timeline, no re-execution of any kind, no cross-Change tamper evidence, no interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope.
+The event/effect journal, trace-only replay, and the bounded tool registry are retained (see above and `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`). Their own non-goals still apply: no descendant-process attribution in any replay row, no filesystem-level write timeline, no re-execution of any kind, no cross-Change tamper evidence, no interception or blocking of a running agent's actual tool/MCP calls, and no sandboxing/enforcement of declared filesystem/network scope beyond the launched top-level process's own restricted-token privilege reduction.
 
 The already implemented Git review backend is the migration foundation, not the final scope. The active phase adds the retained lifecycle, authority, evidence, assurance, outcomes, recovery, scriptable CLI, and interactive terminal UI around it. Browser web UI implementation is deferred until the backend contracts and acceptance suite are stable.
 

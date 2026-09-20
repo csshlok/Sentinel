@@ -2,12 +2,11 @@
 
 ## 1. Authority and outcome
 
-This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. The interactive terminal UI is part of this phase; only the browser-based web UI is deferred. Only these two subsystems are removed from the product architecture:
+This plan implements the backend of `Change_Assurance_Runtime_Project_Proposal (2).pdf` without a two-day deadline. The proposal is the product baseline. The interactive terminal UI is part of this phase; only the browser-based web UI is deferred. One subsystem remains removed from the product architecture:
 
-1. Process supervisor.
-2. Filesystem tracker.
+1. Filesystem tracker.
 
-The event/effect journal and tool registry, originally cut alongside these two, were reversed by explicit user decision and are retained in bounded form — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design, integration surface, and non-goals.
+The event/effect journal and tool registry, originally cut alongside the process supervisor, were reversed by explicit user decision and are retained in bounded form — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` for the full design, integration surface, and non-goals. The process supervisor, also originally cut, was first narrowed to top-level-only pause/resume (`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A) and has since been reversed to its original PDF scope — real Job Object-based process-tree supervision, descendant attribution, orphan cleanup, and restricted-token authority reduction — see `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A.
 
 The result is a local-first Change Assurance control plane that binds intent, actors, authority, Git state, environment and dependency evidence, assurance results, provider outcomes, a per-Change event/effect journal, and a final Change Passport. It must not claim observation, attribution, or recovery that the two removed primitives would have supplied, nor replay/tool-trust capability beyond the bounded forms `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines.
 
@@ -15,8 +14,13 @@ The result is a local-first Change Assurance control plane that binds intent, ac
 
 | Removed subsystem | Removed capability | What remains |
 | --- | --- | --- |
-| Process supervisor | Descendant-process ownership, orphan cleanup, process-tree policy, child-effect attribution | A top-level Agent Launcher that starts or attaches to one invocation and stores a bounded aggregate execution summary |
 | Filesystem tracker | Write interception, before-images, resource versions, uncommitted-file undo, conflict-aware local restoration | Read-only Git state/checkpoints and explicitly approved Git-native recovery on a dedicated Change branch |
+
+Reversed (see `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A):
+
+| Subsystem | Bounded form | Explicit non-goals |
+| --- | --- | --- |
+| Process supervisor | Windows Job Object-based process-tree supervision; every descendant PID attributed to the Change or explicitly marked unattributed with reason; restricted-token (Low integrity) authority reduction on the launched process; process-tree termination on recovery | No formal sandbox/namespace isolation claim; no macOS/Linux; filesystem-level effects still come from Git checkpoints only, not from process-level file-write interception |
 
 Retained (bounded) — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`:
 
@@ -28,10 +32,9 @@ Retained (bounded) — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`:
 
 These cuts also mean:
 
-- Environment drift may be compared between checkpoints, but cannot be causally attributed to a process.
-- Local uncommitted file recovery and environment rollback are unsupported.
-- Recovery is limited to reversible Git commits and supported provider operations.
-- There will be no filesystem-snapshot or process-tree APIs or tables. `/events`, `/replay`, and `/tools` exist in their bounded form (§8).
+- Local uncommitted file recovery and environment rollback are unsupported (filesystem tracker cut).
+- Recovery is limited to reversible Git commits, supported provider operations, and (now) terminating a Change-owned process tree this process instance is still tracking; always requires approval.
+- There will be no filesystem-snapshot APIs or tables. `/events`, `/replay`, and `/tools` exist in their bounded form (§8); process-tree supervision now has real API surface too (§8) since it is no longer cut.
 
 ## 3. Retained product capabilities
 
@@ -57,7 +60,7 @@ These cuts also mean:
 | Change object, contract, lifecycle | Keep | `[SD]` | Durable root, guarded state, freshness and idempotency |
 | Actor/agent identity and delegation | Keep | `[AC]` | Scoped, expiring, revocable authority |
 | Credential broker | Keep | `[AC]` | OS-backed secrets and brokered GitHub operations |
-| Process supervisor | Cut (narrowed) | `[KB]` | Top-level launcher only; no process tree, except top-level-only pause/resume (Windows-first) per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A |
+| Process supervisor | Keep (reversed to PDF scope) | `[KB]` | Windows Job Object process-tree supervision, descendant attribution, orphan cleanup, restricted-token authority reduction; pause/resume stays top-level-PID-only per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A; see `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A |
 | Filesystem tracker | Cut | None | Git checkpoints remain, without filesystem attribution or snapshots |
 | Event/effect journal | Keep (bounded) | `[SD]` infra, `[KB]`/`[AC]` emission | Per-Change hash-chained record of mutations to entities already modeled; see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A |
 | Environment tracker | Keep | `[KB]` | Redacted passports and drift comparison |
@@ -164,7 +167,8 @@ Transitions use optimistic concurrency and idempotency. A new Git checkpoint inv
 ## 8. Versioned API
 
 - `/api/v1/changes`: create, list, retrieve, update contract, transition, cancel.
-- `/api/v1/changes/{id}/runs`: launch, attach metadata, stop, pause, resume top-level invocation if supported, retrieve aggregate result (incrementally visible while running, per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part C).
+- `/api/v1/changes/{id}/runs`: launch, attach metadata, stop, pause, resume top-level invocation if supported, retrieve aggregate result (incrementally visible while running, per `LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part C) with attributed descendant-process list and restricted-token authority-reduction disclosure (`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A).
+- `/api/v1/identity/signing-key`, `/api/v1/changes/{id}/passport/export`: this operator's public signing key, and a signed export of a Change Passport (`PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A.7).
 - `/api/v1/changes/{id}/fork`, `/api/v1/changes/{id}/forks`: fork a new Change from a captured checkpoint; list a Change's forks (`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part B).
 - `/api/v1/changes/{id}/git`: validate, checkpoint, status, diff, compare.
 - `/api/v1/changes/{id}/environment`: capture and compare drift.
@@ -719,7 +723,7 @@ Every work-item commit or handoff states:
 ## 19. Definition of done
 
 1. A user creates a Change Contract, selects an actor/agent, and sees authority before activation.
-2. The app launches or attaches to a top-level run without claiming descendant supervision.
+2. The app launches or attaches to a top-level run, with real descendant-process supervision (Job Object-based attribution, orphan cleanup, restricted-token authority reduction) per `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A; `attach` still claims no supervision, since nothing was launched.
 3. Git, environment, and dependency checkpoints are real, persisted, comparable, and visibly fresh/stale.
 4. Assurance is evidence-selected, bounded, and gates lifecycle transitions.
 5. GitHub credentials remain brokered and never enter agent environment or application data.
@@ -727,7 +731,7 @@ Every work-item commit or handoff states:
 7. The Passport exports real intent, actors, authority, checkpoints, deviations, assurance, outcomes, limitations, and recovery status.
 8. Supported recovery requires preview/approval, is conflict-safe, and is verified.
 9. API, CLI, and interactive terminal UI show real missing, stale, unsupported, denied, failed, and partial states.
-10. Process supervisor and filesystem tracker are absent from code, storage, API, and claims. The event journal, tool registry, and trace replay are present, but strictly in the bounded form `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines: no descendant-process attribution, no filesystem-write timeline, no re-execution, no interception of a running agent's own tool/MCP calls. `test_no_removed_subsystem_endpoints_are_exposed` asserts `/processes`/`/snapshots`-style filesystem/process routes are absent; `test_expected_route_families_are_present` asserts `/events`, `/tools`, `/replay` are present.
+10. The filesystem tracker is absent from code, storage, API, and claims (no filesystem-snapshot routes/tables). The process supervisor is present in its Part A bounded form (real descendant attribution, orphan cleanup, restricted-token authority reduction — never a formal sandbox claim). The event journal, tool registry, and trace replay are present, but strictly in the bounded form `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` defines: no filesystem-write timeline, no re-execution, no interception of a running agent's own tool/MCP calls. `test_no_removed_subsystem_endpoints_are_exposed` asserts `/snapshots`-style filesystem routes are absent; `test_expected_route_families_are_present` asserts `/events`, `/tools`, `/replay`, and the process-supervisor routes are present.
 11. Existing data upgrades successfully and the complete backend release matrix passes.
 12. The terminal UI passes keyboard, resize, no-colour, plain-output, and critical-flow interaction tests.
 13. Browser web UI implementation remains deferred and does not block backend acceptance.
