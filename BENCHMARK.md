@@ -8,6 +8,16 @@ Speed is reassuring, but it isn't the point. The numbers that actually matter fo
 are whether it sees what an agent does and whether its record of that can be trusted — so this
 page leads with correctness and tamper-resistance, and puts latency last.
 
+**On third-party validation, honestly:** every result on this page so far is Sentinel tested by
+its own author, against workloads its own author invented. That's real (nothing here is
+fabricated) but it isn't independent. Section ["Independent analysis"](#independent-analysis)
+below has actual third-party tool results (Semgrep); the stronger comparisons — ground truth from
+Microsoft Sysmon/Process Monitor, standardized behavior from Atomic Red Team/MITRE Caldera, a
+TruffleHog-backed secret corpus, an OpenSSF Scorecard rating, and a genuine independent adversarial
+review by someone who didn't write this code — are named explicitly as not done yet rather than
+implied or faked, with a runbook for the ones that need an isolated environment (see
+[`EXTERNAL_VALIDATION_RUNBOOK.md`](EXTERNAL_VALIDATION_RUNBOOK.md)).
+
 ## Methodology and honest limits
 
 - **One machine, one run.** All numbers below come from a single developer laptop (12th Gen
@@ -197,6 +207,44 @@ code per hour to catch 70–90% of defects
 Reconstructing the equivalent of one review's worth of environment, dependency, and process-tree
 evidence by hand — the part Sentinel automates, not the defect-finding itself — took under 2.5
 seconds against the 20-file repository used above.
+
+## Independent analysis
+
+Static analysis by a tool this project didn't write and whose rules it didn't select:
+
+**[Semgrep](https://semgrep.dev/) 1.177.0, `p/security-audit` + `p/secrets` rulesets (272 community rules):**
+
+- `backend/app/` (105 files): **1 finding.** `python.lang.security.audit.dynamic-urllib-use-detected`
+  in `providers/http_transport.py:53` — `urllib.request.urlopen` called with a `url` parameter,
+  which Semgrep flags generically because `urllib` also accepts `file://` URLs. Reviewed: this
+  transport is the GitHub API client's only caller (`providers/github.py`), which always builds
+  the URL from a fixed `https://api.github.com` base plus internal path segments — not from
+  external input — so this is assessed as a likely false positive rather than a real issue, but
+  it's reported here rather than silently dismissed.
+- `apps/desktop/src/` + `apps/desktop/electron/` (95 files), `p/security-audit` + `p/secrets` +
+  `p/typescript` (125 rules): **0 findings.**
+
+**Not yet done, and explicitly not claimed:** an OpenSSF Scorecard rating, a CodeQL scan, and a
+TruffleHog-backed secret-redaction corpus (500+ synthetic secrets across many providers, compared
+against an established secret-detection tool's own recall — much stronger evidence than the
+10-hand-picked-strings result earlier on this page). All three are safe to run locally without
+touching system security posture and are the natural next addition to this section.
+
+## NIST SSDF control mapping
+
+Not a certification claim — [NIST's Secure Software Development Framework](https://csrc.nist.gov/projects/ssdf)
+is a shared vocabulary, not a certificate, and nothing here has been independently assessed against
+it. This just maps where Sentinel's actual, already-described evidence lands in that vocabulary,
+so an enterprise-minded reader has a faster way to see what's already covered.
+
+| SSDF practice group | Sentinel evidence |
+|---|---|
+| **PO (Prepare the Organization)** | `AGENT_COORDINATION.md`'s exclusive-path ownership and claim/handoff protocol; `THREAT_MODEL_FINDINGS.md` as a living record of a completed attack-surface review |
+| **PS (Protect the Software)** | Restricted-token launch (privilege reduction before agent code runs); tool registry with exact-version/publisher-policy trust and Authenticode signature verification; minimal-environment subprocess execution |
+| **PW (Produce Well-Secured Software)** | Delegation-gated authority for every mutating operation; policy engine with risk classification; 1,022 tests including real-process boundary tests, not just mocks |
+| **RV (Respond to Vulnerabilities)** | The threat-model review itself (16 findings, 15 fixed, 1 accepted-by-design, 0 open) and this project's own pattern of fixing and documenting issues found during later work (see `THREAT_MODEL_FINDINGS.md`'s "KB follow-up" entries) |
+| **Provenance / integrity (cuts across PS/PW)** | Append-only, hash-chained event/effect journal enforced by database triggers *and* independently by replay verification (both layers tested above); signed Change Passport export (Ed25519) |
+| **Recovery (not a named SSDF group, but load-bearing here)** | Previewed, explicitly-approved recovery plans executed on a dedicated branch, never the current one |
 
 ## Reproducing these numbers
 
