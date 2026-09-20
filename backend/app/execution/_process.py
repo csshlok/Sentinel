@@ -32,7 +32,14 @@ class CapturedProcess:
 def minimal_environment(source: Mapping[str, str] | None = None) -> dict[str, str]:
     """Do not inherit credentials, Git overrides, or interpreter injection keys."""
     source = os.environ if source is None else source
-    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}
+    # COMSPEC is not a secret -- it is the path to cmd.exe, the same kind of
+    # fixed OS-location fact as SYSTEMROOT/WINDIR. Without it, npm's own
+    # `run-script` (which spawns a package.json script string via cmd.exe on
+    # Windows) fails silently: node's child_process falls back to trying to
+    # locate a shell without it and the script never actually runs, so an
+    # assurance check like "npm test" reports FAILED with empty output
+    # instead of the real test result.
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "COMSPEC"}
     result = {key.upper(): value for key, value in source.items() if key.upper() in allowed}
     result.update({"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
     return result
