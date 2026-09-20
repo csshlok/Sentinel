@@ -210,6 +210,26 @@ def test_drift_classification(tmp_path):
     assert t.compare(left, right) == drift
 
 
+def test_an_unchanged_non_current_fact_is_not_reported_as_drift(tmp_path):
+    """Regression: a fact present on both sides with the same non-CURRENT
+    status and the same value/fingerprint (e.g. a tool that is UNSUPPORTED
+    identically both times, such as a batch-wrapper-only package manager on
+    Windows) must not show up as "unknown" drift -- nothing about it
+    actually differs between the two captures."""
+    repo = make_repo(tmp_path / "r")
+    unsupported = EnvironmentFact(key="tool.pnpm.version", status=EvidenceStatus.UNSUPPORTED)
+
+    def custom():
+        def _collect_x(context):
+            return [unsupported]
+        return tracker(collectors=[_collect_x])
+
+    left = custom().capture(CHANGE, str(repo))
+    right = custom().capture(CHANGE, str(repo))
+    drift = custom().compare(left, right)
+    assert drift.added == [] and drift.removed == [] and drift.changed == [] and drift.unknown == []
+
+
 def test_invalid_inputs(tmp_path):
     with pytest.raises(ValueError):
         EnvironmentTracker(fingerprint_key=b"short")

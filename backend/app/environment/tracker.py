@@ -165,7 +165,15 @@ class EnvironmentTracker:
             elif new is None:
                 (removed if old.status is EvidenceStatus.CURRENT else unknown).append(old)
             elif old.status is not EvidenceStatus.CURRENT or new.status is not EvidenceStatus.CURRENT:
-                unknown.append(new)
+                # A fact present on both sides with the same non-CURRENT
+                # status and the same value/fingerprint (e.g. a tool that is
+                # UNSUPPORTED in identical ways both times) has not actually
+                # drifted -- only report it when something about it really
+                # differs, so an environment with an UNSUPPORTED/PARTIAL tool
+                # does not show permanent, unavoidable "unknown" drift noise
+                # against itself.
+                if (old.status, old.value, old.fingerprint) != (new.status, new.value, new.fingerprint):
+                    unknown.append(new)
             elif (old.value, old.fingerprint) != (new.value, new.fingerprint):
                 changed.append(new)
         return EnvironmentDrift(
