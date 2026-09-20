@@ -97,18 +97,22 @@ Sentinel doesn't independently observe filesystem writes outside Git. Rather tha
 vague caveats, here's what's actually been measured and what hasn't yet:
 
 - **Process capture across a range of real lifetimes** (1ms–500ms buckets, 30 trials each, on a
-  Sentinel-supervised Job Object polling roughly every 50ms) was run for this page. A first attempt
-  showed 100% capture at every bucket, but that run turned out to be confounded: the interpreter
-  used for the launched processes was itself a Windows-venv launcher stub (see the pause/resume
-  fix earlier in this project's history), which meant each "single child" was actually two or three
-  overlapping processes, making the true single-process capture rate impossible to read off that
-  run honestly. A corrected re-run against an unwrapped interpreter was still in progress at the
-  time this page was written and its result is intentionally left out rather than reported before
-  it's confirmed. What's real and unambiguous either way: Windows Job Object membership queries
-  return every PID ever assigned to the job, including ones that have already exited, which is why
-  a short-lived *direct* child has a real chance of survival even between ~50ms polls; a process
-  nested several levels deep that starts and fully exits inside one polling window is the
-  harder, not-yet-isolated case the documentation's own caveat is actually about.
+  Sentinel-supervised Job Object polling roughly every 50ms). A first attempt was confounded by a
+  Windows-venv launcher-stub artifact (each "single child" was actually two or three overlapping
+  processes); the corrected re-run, against an unwrapped interpreter, confirmed exactly one
+  descendant per trial (390 descendants over 390 trials) and showed **100% capture at every
+  bucket tested, from 1ms up to 500ms** — Windows Job Object membership queries return every PID
+  ever assigned to the job, including ones that already exited, so a short-lived *direct* child
+  survives even between ~50ms polls. But capture and *identification* are different things: of
+  those captured descendants, only **49.5% (193/390) got a fully resolved identity** (executable
+  path, command line, and parent PID all present) — the rest are recorded as real, present, but
+  `attribution_reason: "process exited before identity could be resolved"`, honestly reported as
+  unattributed rather than guessed at. Shorter-lived processes are the likely driver (less time
+  between spawn and exit to open a handle and query it before it's gone), though this run didn't
+  isolate attribution completeness *per lifetime bucket* specifically — that breakdown is real,
+  valuable, not-yet-done follow-up. What's still unmeasured: a process nested several levels deep
+  that both starts and fully exits inside one polling window, with no Job-membership record
+  surviving at all — the harder case the documentation's own caveat is actually about.
 - **Pause/resume reliability across many repeated trials with real nested process trees** was
   attempted for this page but the specific run produced a measurement artifact (inconsistent
   worker-PID identification across trials, not a reliability failure) rather than a clean result,
