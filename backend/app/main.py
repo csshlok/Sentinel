@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +14,9 @@ from fastapi.responses import JSONResponse
 
 from backend.app.assurance.service import EvidenceService
 from backend.app.assurance.store import EvidenceStore, IdempotencyStore
-from backend.app.contracts.models import ErrorDetail, ErrorEnvelope, HealthResponse
+from backend.app.contracts.models import (
+    BackendIdentity, ErrorDetail, ErrorEnvelope, HealthResponse, utc_now,
+)
 from backend.app.contracts.ports import (
     CredentialStorePort,
     GitInspectionPort,
@@ -213,6 +216,17 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(status="ok", api_version=API_VERSION)
 
+    @app.get(
+        "/api/v1/system/backend-identity", response_model=BackendIdentity, tags=["system"]
+    )
+    def backend_identity() -> BackendIdentity:
+        return BackendIdentity(
+            service_name="change-assurance-runtime-backend",
+            api_version=API_VERSION,
+            instance_id=app.state.instance_id,
+            started_at=app.state.started_at,
+        )
+
     app.include_router(
         build_router(service, runtime),
         dependencies=[Depends(require_bearer_token(api_token))],
@@ -222,6 +236,8 @@ def create_app(
     app.state.change_service = service
     app.state.runtime_services = runtime
     app.state.api_token = api_token
+    app.state.instance_id = uuid4()
+    app.state.started_at = utc_now()
     return app
 
 

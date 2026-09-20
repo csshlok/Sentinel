@@ -13,7 +13,9 @@ from backend.app.contracts.models import (
 )
 from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.git.classifier import classify_path
-from backend.app.git.errors import GitCommandError, RepositoryValidationError
+from backend.app.git.errors import (
+    GitCommandError, GitExecutableNotFoundError, RepositoryValidationError,
+)
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -83,15 +85,21 @@ def test_validate_repository_rejects_repository_without_commit(tmp_path: Path) -
 def test_validate_repository_preserves_git_startup_errors(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A genuinely missing Git executable is a distinct, stable 4xx
+    (GIT_EXECUTABLE_NOT_FOUND), not the generic 500 GitCommandError uses for
+    unexpected inspection failures -- this is a client-actionable
+    environment problem (install Git), not a server fault."""
+
     def unavailable(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("git")
 
     monkeypatch.setattr("backend.app.execution._process.subprocess.Popen", unavailable)
 
-    with pytest.raises(GitCommandError) as error:
+    with pytest.raises(GitExecutableNotFoundError) as error:
         GitRepositoryInspector().validate_repository(str(repo))
 
-    assert error.value.code == "GIT_COMMAND_FAILED"
+    assert error.value.code == "GIT_EXECUTABLE_NOT_FOUND"
+    assert error.value.status_code == 424
     assert error.value.details == {}
 
 

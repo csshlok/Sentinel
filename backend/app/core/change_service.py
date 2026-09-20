@@ -33,7 +33,7 @@ from backend.app.core.capabilities import build_capabilities
 from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.config import Settings
 from backend.app.core.errors import change_not_found, policy_denied
-from backend.app.core.lifecycle import validate_transition
+from backend.app.core.lifecycle import allowed_targets, validate_transition
 from backend.app.core.review_service import determine_review_state
 
 
@@ -151,14 +151,16 @@ class ChangeService:
     def forks(self, source_change_id: UUID) -> ChangeListResponse:
         self._get_stored(source_change_id)
         items = [self._to_view(item) for item in self.repository.list_forks(source_change_id)]
-        return ChangeListResponse(items=items, count=len(items))
+        return ChangeListResponse(items=items, count=len(items), total=len(items))
 
     def list(self, *, limit: int, offset: int) -> ChangeListResponse:
         changes = [
             self._to_view(item)
             for item in self.repository.list(limit=limit, offset=offset)
         ]
-        return ChangeListResponse(items=changes, count=len(changes))
+        return ChangeListResponse(
+            items=changes, count=len(changes), total=self.repository.count()
+        )
 
     def get(self, change_id: UUID) -> ChangeView:
         return self._to_view(self._get_stored(change_id))
@@ -364,4 +366,7 @@ class ChangeService:
             last_transition_at=stored.last_transition_at,
             forked_from_change_id=stored.forked_from_change_id,
             forked_from_checkpoint_id=stored.forked_from_checkpoint_id,
+            allowed_next_states=sorted(
+                allowed_targets(stored.lifecycle_state), key=lambda state: state.value
+            ),
         )

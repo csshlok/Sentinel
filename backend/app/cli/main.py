@@ -214,6 +214,15 @@ def actor_show(actor_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOp
     _run(lambda: ApiClient(api_url).get_actor(actor_id), as_json=json_, no_color=no_color)
 
 
+@actor_app.command("list")
+def actor_list(
+    limit: int = 100, offset: int = 0,
+    api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
+) -> None:
+    _run(lambda: ApiClient(api_url).list_actors(limit=limit, offset=offset),
+         as_json=json_, no_color=no_color)
+
+
 @delegation_app.command("create")
 def delegation_create(
     grantor_id: UUID,

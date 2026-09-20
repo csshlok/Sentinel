@@ -118,6 +118,11 @@ class ChangeRepository:
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
+    def count(self) -> int:
+        with self.database.connection() as connection:
+            row = connection.execute("SELECT COUNT(*) AS n FROM changes").fetchone()
+        return int(row["n"])
+
     def list_forks(self, source_change_id: UUID) -> list[StoredChange]:
         with self.database.connection() as connection:
             rows = connection.execute(

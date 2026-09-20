@@ -99,6 +99,35 @@
         "title": "ActorKind",
         "type": "string"
       },
+      "ActorListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "count",
+          "total"
+        ],
+        "title": "ActorListResponse",
+        "type": "object"
+      },
       "AgentAdapterInfo": {
         "additionalProperties": false,
         "properties": {
@@ -852,6 +881,38 @@
         "title": "AssuranceStatus",
         "type": "string"
       },
+      "BackendIdentity": {
+        "additionalProperties": false,
+        "description": "Lets a caller (the desktop app in particular) confirm which backend\nprocess it is actually talking to, not just that some server answered.\n\n``instance_id`` is generated fresh each time the process starts, so a\nstale backend left running behind a killed-and-relaunched desktop app\npresents a different id than the freshly launched one -- a stronger\nsignal than \"health + an authenticated call\" for detecting exactly that\nreap failure.",
+        "properties": {
+          "api_version": {
+            "title": "Api Version",
+            "type": "string"
+          },
+          "instance_id": {
+            "format": "uuid",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "service_name": {
+            "title": "Service Name",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_name",
+          "api_version",
+          "instance_id",
+          "started_at"
+        ],
+        "title": "BackendIdentity",
+        "type": "object"
+      },
       "CapabilitiesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1235,11 +1296,17 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "count"
+          "count",
+          "total"
         ],
         "title": "ChangeListResponse",
         "type": "object"
@@ -1416,6 +1483,14 @@
       "ChangeView": {
         "additionalProperties": false,
         "properties": {
+          "allowed_next_states": {
+            "description": "States the lifecycle state machine permits transitioning to from the current state. This reflects the transition graph only, not whether the target's guard conditions currently pass -- a transition to a listed state can still fail with 409 TRANSITION_GUARD_FAILED (see GET .../assurance/facts and the transition response's missing_requirements for guard detail).",
+            "items": {
+              "$ref": "#/components/schemas/ChangeLifecycleState"
+            },
+            "title": "Allowed Next States",
+            "type": "array"
+          },
           "contract": {
             "$ref": "#/components/schemas/ChangeContract"
           },
@@ -4292,6 +4367,76 @@
   "openapi": "3.1.0",
   "paths": {
     "/api/v1/actors": {
+      "get": {
+        "operationId": "list_actors_api_v1_actors_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActorListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Actors",
+        "tags": [
+          "identity"
+        ]
+      },
       "post": {
         "operationId": "create_actor_api_v1_actors_post",
         "parameters": [
@@ -8235,6 +8380,27 @@
         "summary": "Validate Repository",
         "tags": [
           "repositories"
+        ]
+      }
+    },
+    "/api/v1/system/backend-identity": {
+      "get": {
+        "operationId": "backend_identity_api_v1_system_backend_identity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackendIdentity"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Backend Identity",
+        "tags": [
+          "system"
         ]
       }
     },

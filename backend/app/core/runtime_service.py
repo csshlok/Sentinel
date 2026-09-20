@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 from backend.app.contracts.models import (
     Actor,
     ActorCreateRequest,
+    ActorListResponse,
     ChangePassport,
     ChangeView,
     CredentialGrant,
@@ -111,6 +112,10 @@ class IdentityAdminService:
         if actor is None:
             raise actor_not_found(str(actor_id))
         return actor
+
+    def list_actors(self, *, limit: int, offset: int) -> ActorListResponse:
+        items = self.actors.list(limit=limit, offset=offset)
+        return ActorListResponse(items=items, count=len(items), total=self.actors.count())
 
     def create_delegation(
         self, request: DelegationCreateRequest, *, repository_path: str

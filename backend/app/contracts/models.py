@@ -341,11 +341,23 @@ class ChangeView(ContractModel):
     last_transition_at: AwareDatetime | None = None
     forked_from_change_id: UUID | None = None
     forked_from_checkpoint_id: UUID | None = None
+    allowed_next_states: list[ChangeLifecycleState] = Field(
+        default_factory=list,
+        description=(
+            "States the lifecycle state machine permits transitioning to from "
+            "the current state. This reflects the transition graph only, not "
+            "whether the target's guard conditions currently pass -- a "
+            "transition to a listed state can still fail with 409 "
+            "TRANSITION_GUARD_FAILED (see GET .../assurance/facts and the "
+            "transition response's missing_requirements for guard detail)."
+        ),
+    )
 
 
 class ChangeListResponse(ContractModel):
     items: list[ChangeView]
     count: int = Field(ge=0)
+    total: int = Field(ge=0)
 
 
 class Capability(ContractModel):
@@ -895,6 +907,12 @@ class ActorCreateRequest(ContractModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
 
 
+class ActorListResponse(ContractModel):
+    items: list[Actor]
+    count: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
 class DelegationCreateRequest(ContractModel):
     grantor_id: UUID
     grantee_id: UUID
@@ -1021,6 +1039,23 @@ class AssuranceRunListResponse(ContractModel):
 class HealthResponse(ContractModel):
     status: str
     api_version: str
+
+
+class BackendIdentity(ContractModel):
+    """Lets a caller (the desktop app in particular) confirm which backend
+    process it is actually talking to, not just that some server answered.
+
+    ``instance_id`` is generated fresh each time the process starts, so a
+    stale backend left running behind a killed-and-relaunched desktop app
+    presents a different id than the freshly launched one -- a stronger
+    signal than "health + an authenticated call" for detecting exactly that
+    reap failure.
+    """
+
+    service_name: str
+    api_version: str
+    instance_id: UUID
+    started_at: AwareDatetime
 
 
 class ErrorDetail(ContractModel):

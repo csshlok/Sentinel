@@ -18,6 +18,7 @@ from backend.app.contracts.models import (
     ActorActionRequest,
     Actor,
     ActorCreateRequest,
+    ActorListResponse,
     AgentAdapterListResponse,
     AgentAttachActionRequest,
     AgentLaunchActionRequest,
@@ -233,6 +234,13 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def create_actor(request: ActorCreateRequest) -> Actor:
         return runtime.identity.create_actor(request)
+
+    @router.get("/actors", response_model=ActorListResponse, tags=["identity"])
+    def list_actors(
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> ActorListResponse:
+        return runtime.identity.list_actors(limit=limit, offset=offset)
 
     @router.get("/actors/{actor_id}", response_model=Actor, tags=["identity"])
     def get_actor(actor_id: UUID) -> Actor:

@@ -12,7 +12,9 @@ from backend.app.contracts.models import (
     ChangedPath, ChangedPathStatus, GitSummary, RepositoryInfo, utc_now,
 )
 from backend.app.git.classifier import classify_path
-from backend.app.git.errors import GitCommandError, RepositoryValidationError
+from backend.app.git.errors import (
+    GitCommandError, GitExecutableNotFoundError, RepositoryValidationError,
+)
 from backend.app.execution._process import CapturedProcess, capture, minimal_environment
 
 
@@ -174,7 +176,7 @@ class GitRepositoryInspector:
                 executable = str(resolved)
                 break
         if executable is None:
-            raise GitCommandError("The Git executable could not be located.")
+            raise GitExecutableNotFoundError()
         base = [executable, "--no-optional-locks", "-c", "core.fsmonitor=false",
                 "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
                 "-c", "diff.submodule=short", "-c", "color.ui=false", "-C", root]
@@ -242,7 +244,7 @@ class GitRepositoryInspector:
             completed = capture([*base, *overrides, *args], cwd=root, env=env,
                                 timeout=30, limit=limit, stderr_limit=4096)
         except FileNotFoundError as exc:
-            raise GitCommandError("The Git executable could not be located.") from exc
+            raise GitExecutableNotFoundError() from exc
         except (OSError, UnicodeError, ValueError) as exc:
             raise GitCommandError("Git repository inspection could not start.") from exc
         if completed.timed_out or completed.incomplete:

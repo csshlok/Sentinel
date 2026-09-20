@@ -7,7 +7,9 @@ import pytest
 
 from backend.app.contracts.models import ChangedPathStatus
 from backend.app.git.adapter import GitRepositoryInspector
-from backend.app.git.errors import GitCommandError, RepositoryValidationError
+from backend.app.git.errors import (
+    GitCommandError, GitExecutableNotFoundError, RepositoryValidationError,
+)
 from backend.tests.git.test_git_adapter import repo, git
 
 
@@ -189,8 +191,10 @@ def test_git_executable_resolution_rejects_repository_and_wrappers(tmp_path, mon
     monkeypatch.setenv("PATH", os.pathsep.join([".", str(root), str(external)]))
     for found in (None, str(root / "git.exe"), str(external / "git.cmd")):
         monkeypatch.setattr("backend.app.git.adapter.shutil.which", lambda _, found=found: found)
-        with pytest.raises(GitCommandError, match="could not be located"):
+        with pytest.raises(GitExecutableNotFoundError) as info:
             GitRepositoryInspector._capture_git(str(root), ["status"], 100)
+        assert info.value.status_code == 424
+        assert info.value.code == "GIT_EXECUTABLE_NOT_FOUND"
 
 
 @pytest.mark.parametrize(("stage", "failure"), [

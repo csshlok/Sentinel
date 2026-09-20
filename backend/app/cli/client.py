@@ -181,6 +181,9 @@ class ApiClient:
     def get_actor(self, actor_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/actors/{actor_id}")
 
+    def list_actors(self, *, limit: int = 100, offset: int = 0) -> Any:
+        return self._request("GET", f"/api/v1/actors?limit={limit}&offset={offset}")
+
     def create_delegation(
         self,
         *,

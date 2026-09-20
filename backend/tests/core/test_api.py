@@ -140,3 +140,69 @@ def test_validation_error_does_not_echo_input(tmp_path) -> None:
     assert response.status_code == 422
     assert payload["error"]["code"] == "VALIDATION_ERROR"
     assert "C:\\secret" not in response.text
+
+
+def test_backend_identity_is_stable_per_process_and_unauthenticated(tmp_path) -> None:
+    """HANDOFF.md item SD.3: the desktop app needs a stronger identity signal
+    than health + an authenticated call, to detect a stale reused backend
+    process after a force-kill-and-relaunch."""
+
+    with build_client(tmp_path) as client:
+        first = client.get("/api/v1/system/backend-identity")
+        second = client.get("/api/v1/system/backend-identity")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["service_name"] == "change-assurance-runtime-backend"
+    assert body["api_version"] == "1"
+    # Stable within one process lifetime...
+    assert second.json()["instance_id"] == body["instance_id"]
+    # ...but distinct from a different process (a fresh app == a fresh instance_id).
+    with build_client(tmp_path.parent / (tmp_path.name + "-2")) as other_client:
+        other = other_client.get("/api/v1/system/backend-identity")
+    assert other.json()["instance_id"] != body["instance_id"]
+
+
+def test_list_changes_reports_total_distinct_from_page_count(tmp_path) -> None:
+    """HANDOFF.md item SD.6: `count` was only ever the page length, so the UI
+    could not show "N of M" across pages."""
+
+    with build_client(tmp_path) as client:
+        for i in range(3):
+            client.post("/api/v1/changes", json={
+                "title": f"c{i}", "intent": "i", "repository_path": "C:\\requested repo"})
+        page = client.get("/api/v1/changes?limit=2&offset=0")
+        assert page.status_code == 200
+        assert page.json()["count"] == 2
+        assert page.json()["total"] == 3
+        last_page = client.get("/api/v1/changes?limit=2&offset=2")
+        assert last_page.json()["count"] == 1
+        assert last_page.json()["total"] == 3
+
+
+def test_change_view_exposes_allowed_next_states(tmp_path) -> None:
+    """HANDOFF.md item SD.5: the UI should only offer legal state moves."""
+
+    with build_client(tmp_path) as client:
+        created = client.post("/api/v1/changes", json={
+            "title": "t", "intent": "i", "repository_path": "C:\\requested repo"})
+        assert set(created.json()["allowed_next_states"]) == {"ACTIVE", "CANCELLED"}
+        cancelled = client.post(f"/api/v1/changes/{created.json()['id']}/cancel", json={
+            "expected_revision": created.json()["revision"]})
+        assert cancelled.json()["allowed_next_states"] == []
+
+
+def test_list_actors(tmp_path) -> None:
+    """HANDOFF.md item AC.1: an Authority screen creating delegations needs a
+    real actor list, not only create-by-id and get-by-id."""
+
+    with build_client(tmp_path) as client:
+        empty = client.get("/api/v1/actors")
+        assert empty.status_code == 200
+        assert empty.json() == {"items": [], "count": 0, "total": 0}
+        for name in ("Alice", "Bob", "Carol"):
+            client.post("/api/v1/actors", json={"kind": "HUMAN", "display_name": name})
+        listed = client.get("/api/v1/actors?limit=2&offset=0")
+        assert listed.json()["count"] == 2
+        assert listed.json()["total"] == 3
+        names = {item["display_name"] for item in listed.json()["items"]}
+        assert names <= {"Alice", "Bob", "Carol"}

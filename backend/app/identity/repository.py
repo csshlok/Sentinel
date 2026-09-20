@@ -51,6 +51,19 @@ class ActorRepository:
             ).fetchone()
         return self._from_row(row) if row is not None else None
 
+    def list(self, *, limit: int, offset: int) -> list[Actor]:
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM actors ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def count(self) -> int:
+        with self.database.connection() as connection:
+            row = connection.execute("SELECT COUNT(*) AS n FROM actors").fetchone()
+        return int(row["n"])
+
     @staticmethod
     def _from_row(row: object) -> Actor:
         return Actor(
