@@ -10,7 +10,6 @@ from backend.app.contracts.models import (
 
 
 _REMOVED = {
-    "process_supervisor": "Removed by approved scope; descendant processes are not controlled or attributed.",
     "filesystem_tracker": "Removed by approved scope; file writes and before-images are not observed.",
 }
 
@@ -19,14 +18,15 @@ _RETAINED = {
     "git_inspection": "Read-only Git working-tree inspection.",
     "legacy_verification": "Bounded compatibility verification command execution.",
     "git_checkpoints": "Named Git checkpoint capture and comparison.",
-    "agent_launcher": "Top-level launch/attach summaries without descendant supervision.",
+    "agent_launcher": "Launch/attach summaries; launched Windows runs use Job Object process-tree supervision.",
+    "process_supervisor": "Windows Job Object descendant attribution and cleanup with a restricted token whose maximum privileges are disabled; caller integrity is retained for repository writes; not a sandbox.",
     "environment_passports": "Redacted environment capture and drift comparison.",
     "dependency_tracking": "Supported manifest and lockfile comparison.",
     "assurance": "Evidence-selected checks and coverage reporting.",
     "identity_and_policy": "Actors, delegations, and scoped policy decisions.",
     "credential_broker": "OS-backed provider credential brokering.",
     "provider_outcomes": "GitHub pull-request and CI outcome tracking.",
-    "recovery": "Approved Git commit and provider compensation only.",
+    "recovery": "Approved Git/provider compensation plus termination of process trees still tracked by this daemon instance.",
     "change_passport": "Versioned retained-evidence export.",
     "cli_and_terminal_ui": "Scriptable and interactive terminal experience.",
     "event_journal": "Per-Change hash-chained mutation record covering entities this backend already models.",

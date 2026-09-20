@@ -530,7 +530,7 @@ def agent_stop(
     change_id: UUID, run_id: UUID, actor_id: UUID,
     api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption,
 ) -> None:
-    """Stop the top-level process of a launched run (direct child only)."""
+    """Stop a launched run and its supervised Job Object tree when available."""
     _run(lambda: ApiClient(api_url).stop_agent(change_id, run_id, actor_id=actor_id),
          as_json=json_, no_color=no_color)
 

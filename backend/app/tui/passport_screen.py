@@ -51,6 +51,12 @@ def format_passport(passport: dict[str, Any]) -> str:
     recovery_status = passport.get("recovery_status")
     lines.append("")
     lines.append(f"Recovery status: {recovery_status or 'none'}")
+    lines.append(
+        "Processes: "
+        f"{passport.get('processes_attributed', 0)} attributed / "
+        f"{passport.get('processes_unattributed', 0)} unattributed; "
+        f"{passport.get('processes_terminated', 0)} terminated by recovery"
+    )
 
     limitations = passport.get("limitations", [])
     if limitations:
@@ -133,8 +139,26 @@ class PassportScreen(Screen):
         if self.passport is None:
             status.update("[yellow]Nothing to export yet; build a passport first.[/yellow]")
             return
+        self.run_worker(self._export_signed, thread=True)
+
+    def _export_signed(self) -> None:
+        status = self.query_one("#export_status", Static)
+        try:
+            bundle = self.client.export_signed_passport(self.change_id)
+        except ApiConnectionError as error:
+            self.app.call_from_thread(
+                status.update, f"[red]x Could not reach the API: {error}[/red]"
+            )
+            return
+        except ApiError as error:
+            self.app.call_from_thread(
+                status.update, f"[red]x {error.code}: {error.message}[/red]"
+            )
+            return
         path = export_path(self.change_id, self.export_dir)
         path.write_text(
-            json.dumps(self.passport, sort_keys=True, indent=2), encoding="utf-8"
+            json.dumps(bundle, sort_keys=True, indent=2), encoding="utf-8"
         )
-        status.update(f"[green]Exported to {path}[/green]")
+        self.app.call_from_thread(
+            status.update, f"[green]Signed export written to {path}[/green]"
+        )

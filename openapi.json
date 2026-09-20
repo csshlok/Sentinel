@@ -145,7 +145,6 @@
             "type": "array"
           },
           "descendant_control_available": {
-            "const": false,
             "default": false,
             "title": "Descendant Control Available",
             "type": "boolean"
@@ -156,6 +155,11 @@
             },
             "title": "Executables",
             "type": "object"
+          },
+          "restricted_token_available": {
+            "default": false,
+            "title": "Restricted Token Available",
+            "type": "boolean"
           }
         },
         "required": [
@@ -324,6 +328,18 @@
             "title": "Adapter",
             "type": "string"
           },
+          "authority_reduction": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority Reduction"
+          },
           "change_id": {
             "format": "uuid",
             "title": "Change Id",
@@ -342,10 +358,17 @@
             "title": "Completed At"
           },
           "descendant_control_available": {
-            "const": false,
             "default": false,
             "title": "Descendant Control Available",
             "type": "boolean"
+          },
+          "descendant_processes": {
+            "items": {
+              "$ref": "#/components/schemas/DescendantProcess"
+            },
+            "maxItems": 4096,
+            "title": "Descendant Processes",
+            "type": "array"
           },
           "duration_ms": {
             "anyOf": [
@@ -411,6 +434,11 @@
               }
             ],
             "title": "Paused At"
+          },
+          "restricted_token_applied": {
+            "default": false,
+            "title": "Restricted Token Applied",
+            "type": "boolean"
           },
           "resumed_at": {
             "anyOf": [
@@ -1379,6 +1407,24 @@
             "title": "Outcomes",
             "type": "array"
           },
+          "processes_attributed": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Processes Attributed",
+            "type": "integer"
+          },
+          "processes_terminated": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Processes Terminated",
+            "type": "integer"
+          },
+          "processes_unattributed": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Processes Unattributed",
+            "type": "integer"
+          },
           "recovery_status": {
             "anyOf": [
               {
@@ -2176,6 +2222,104 @@
           "captured_at"
         ],
         "title": "DependencyReport",
+        "type": "object"
+      },
+      "DescendantProcess": {
+        "additionalProperties": false,
+        "description": "One process observed inside a launched run's Windows Job Object.",
+        "properties": {
+          "attributed": {
+            "title": "Attributed",
+            "type": "boolean"
+          },
+          "attribution_reason": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution Reason"
+          },
+          "command_line": {
+            "anyOf": [
+              {
+                "maxLength": 32768,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Line"
+          },
+          "executable_path": {
+            "anyOf": [
+              {
+                "maxLength": 32768,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executable Path"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "parent_pid": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Pid"
+          },
+          "pid": {
+            "minimum": 1.0,
+            "title": "Pid",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "terminated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminated At"
+          }
+        },
+        "required": [
+          "pid",
+          "started_at",
+          "attributed"
+        ],
+        "title": "DescendantProcess",
         "type": "object"
       },
       "DeviationCategory": {
@@ -3058,7 +3202,7 @@
         "type": "object"
       },
       "JournalEventType": {
-        "description": "Closed, namespaced set of mutations this backend can honestly journal.\n\nEvery member corresponds to a mutation of an entity this backend already\nmodels (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no\n`filesystem.write` or `process.spawn` member: the filesystem tracker and\nprocess supervisor stay cut, so those effects are never claimed here.",
+        "description": "Closed, namespaced set of mutations this backend can honestly journal.\n\nEvery member corresponds to a mutation of an entity this backend already\nmodels (see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` Part A). There is no\n`filesystem.write` member because the filesystem tracker stays cut.\nProcess-tree observation is represented only by the bounded descendant\nevent types below; it is not a filesystem or tool-call trace.",
         "enum": [
           "change.created",
           "change.contract_updated",
@@ -3076,6 +3220,9 @@
           "agent.attached",
           "agent.stop_requested",
           "agent.completed",
+          "agent.descendant.observed",
+          "agent.descendant.terminated",
+          "agent.process_tree.terminated",
           "environment.passport.captured",
           "dependency.report.captured",
           "assurance.plan.created",
@@ -3622,6 +3769,12 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "processes_terminated": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Processes Terminated",
+            "type": "integer"
           },
           "source_checkpoint_id": {
             "format": "uuid",

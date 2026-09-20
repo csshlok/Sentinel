@@ -91,6 +91,9 @@ class PassportBuilder:
 
         outcome_ids = self._outcome_ids(change.id)
         recovery_status = self._latest_recovery_status(change.id)
+        processes_attributed, processes_unattributed, processes_terminated = (
+            self._process_summary(change.id)
+        )
         if recovery_status is None:
             limitations.append("No recovery plan has been created for this Change.")
 
@@ -129,6 +132,9 @@ class PassportBuilder:
             "outcomes": sorted(str(outcome_id) for outcome_id in outcome_ids),
             "limitations": sorted(limitations),
             "recovery_status": recovery_status.value if recovery_status else None,
+            "processes_attributed": processes_attributed,
+            "processes_unattributed": processes_unattributed,
+            "processes_terminated": processes_terminated,
             "tool_trust_summary": [
                 {
                     "tool_id": str(entry.tool_id),
@@ -160,6 +166,9 @@ class PassportBuilder:
             outcomes=outcome_ids,
             limitations=sorted(limitations),
             recovery_status=recovery_status,
+            processes_attributed=processes_attributed,
+            processes_unattributed=processes_unattributed,
+            processes_terminated=processes_terminated,
             tool_trust_summary=tool_trust_summary,
             replay_verified=replay_verified,
             replay_checked_events=replay_checked_events,
@@ -224,6 +233,32 @@ class PassportBuilder:
                 (str(change_id),),
             ).fetchone()
         return RecoveryStatus(row["status"]) if row is not None else None
+
+    def _process_summary(self, change_id: UUID) -> tuple[int, int, int]:
+        with self.database.connection() as connection:
+            run_rows = connection.execute(
+                "SELECT payload_json FROM agent_runs WHERE change_id = ?",
+                (str(change_id),),
+            ).fetchall()
+            recovery_row = connection.execute(
+                "SELECT payload_json FROM recovery_plans WHERE change_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (str(change_id),),
+            ).fetchone()
+        attributed = unattributed = 0
+        for row in run_rows:
+            run = json.loads(row["payload_json"])
+            if run.get("top_level_pid") is not None:
+                attributed += 1
+            for process in run.get("descendant_processes", []):
+                if process.get("attributed"):
+                    attributed += 1
+                else:
+                    unattributed += 1
+        terminated = 0
+        if recovery_row is not None:
+            terminated = int(json.loads(recovery_row["payload_json"]).get("processes_terminated", 0))
+        return attributed, unattributed, terminated
 
     def _tool_trust_summary(self, change_id: UUID) -> list[ToolTrustSummaryEntry]:
         manifests = self.tools.list_for_change(change_id)

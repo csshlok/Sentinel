@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+import threading
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -9,6 +11,7 @@ import pytest
 
 from backend.app.contracts.models import (
     ChangeView,
+    AgentLaunchRequest,
     GitCheckpoint,
     GitSummary,
     RecoveryStatus,
@@ -19,6 +22,8 @@ from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.recovery.git_recovery import GitRecoveryEngine
+from backend.app.execution.launcher import AgentLauncher
+from backend.app.execution.process_supervisor import IS_WINDOWS, is_process_running
 
 
 def _run(repo, *args: str) -> str:
@@ -304,6 +309,69 @@ def test_execute_with_no_actions_is_a_trivial_success(tmp_path) -> None:
     result = engine.execute(change, plan, "approval-token-123")
 
     assert result.status is RecoveryStatus.RECOVERED
+
+
+def test_execute_terminates_live_change_process_tree_and_reports_count(tmp_path) -> None:
+    repo, baseline_sha, _ = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, baseline_sha)
+    calls: list[object] = []
+    engine = GitRecoveryEngine(
+        database,
+        process_tree_terminator=lambda change_id: calls.append(change_id) or 3,
+    )
+
+    result = engine.execute(change, engine.plan(change), "approval-token-123")
+
+    assert calls == [change.id]
+    assert result.processes_terminated == 3
+    assert result.status is RecoveryStatus.RECOVERED
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows Job Objects are Windows-only")
+def test_real_recovery_execute_terminates_a_live_supervised_tree(tmp_path) -> None:
+    repo, baseline_sha, _ = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, baseline_sha)
+    launcher = AgentLauncher()
+    holder: dict[str, object] = {}
+    child = "import time; time.sleep(30)"
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+    )
+
+    thread = threading.Thread(target=lambda: holder.setdefault(
+        "run",
+        launcher.launch(
+            change.id, repo,
+            AgentLaunchRequest(
+                adapter="generic", executable="python", args=["-c", parent],
+                timeout_seconds=60,
+            ),
+            10_000,
+        ),
+    ))
+    thread.start()
+    active = None
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with launcher._lock:
+            states = list(launcher._runs.values())
+            active = states[0].record if states else None
+        if active and active.descendant_processes:
+            break
+        time.sleep(0.05)
+    assert active is not None and active.descendant_processes
+    descendant_pid = active.descendant_processes[0].pid
+
+    engine = GitRecoveryEngine(database, process_tree_terminator=launcher.terminate_change)
+    result = engine.execute(change, engine.plan(change), "approval-token-123")
+    thread.join(10)
+
+    assert result.status is RecoveryStatus.RECOVERED
+    assert result.processes_terminated == 2
+    assert not is_process_running(descendant_pid)
 
 
 def test_execute_refuses_a_plan_whose_head_has_moved_since_preview(tmp_path) -> None:

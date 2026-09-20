@@ -594,6 +594,13 @@ class RecoveryService:
         with self.plans.database.connection(immediate=True) as connection:
             updated = self.plans.update_plan(result, connection=connection)
             if self._journal is not None:
+                if updated.processes_terminated:
+                    self._journal.append(
+                        change_id, JournalEventType.AGENT_PROCESS_TREE_TERMINATED,
+                        actor_id=actor_id, subject_type="recovery_plan", subject_id=updated.id,
+                        payload={"processes_terminated": updated.processes_terminated},
+                        connection=connection,
+                    )
                 for action in updated.actions:
                     if not action.provider_reference or not action.reversible_commit:
                         continue
@@ -620,7 +627,8 @@ class RecoveryService:
                 self._journal.append(
                     change_id, JournalEventType.RECOVERY_PLAN_COMPLETED,
                     actor_id=actor_id, subject_type="recovery_plan", subject_id=updated.id,
-                    payload={"status": updated.status.value},
+                    payload={"status": updated.status.value,
+                             "processes_terminated": updated.processes_terminated},
                     connection=connection,
                 )
         return updated

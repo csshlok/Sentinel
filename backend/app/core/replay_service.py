@@ -16,6 +16,7 @@ from backend.app.contracts.models import (
     ChainVerificationResult,
     JournalEffect,
     JournalEvent,
+    JournalEventType,
     ReplayTimeline,
     utc_now,
 )
@@ -25,8 +26,8 @@ from backend.app.core.journal import compute_event_hash, row_to_effect, row_to_e
 LIMITATIONS = (
     "Trace-only replay: no agent command, test, or recovery action is "
     "re-executed.",
-    "No descendant-process attribution; only the top-level launched "
-    "invocation is observed (the process supervisor is out of scope).",
+    "Process-tree evidence is available on AgentRun and in the raw journal, "
+    "but descendant events are excluded from this trace-replay view.",
     "No filesystem-level change tracking beyond Git (the filesystem "
     "tracker is out of scope).",
     "The hash chain is scoped per Change; a verified chain proves this "
@@ -45,9 +46,14 @@ class ReplayService:
     def reconstruct(self, change_id: UUID) -> ReplayTimeline:
         events, effects = self._load(change_id)
         result = self._verify(change_id, events)
+        replay_events = [event for event in events if event.event_type not in {
+            JournalEventType.AGENT_DESCENDANT_OBSERVED,
+            JournalEventType.AGENT_DESCENDANT_TERMINATED,
+            JournalEventType.AGENT_PROCESS_TREE_TERMINATED,
+        }]
         return ReplayTimeline(
             change_id=change_id,
-            events=events,
+            events=replay_events,
             effects=effects,
             chain_verified=result.verified,
             first_break_seq=result.first_break_seq,

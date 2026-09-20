@@ -6,9 +6,10 @@ the target repository. Recovery only ever creates new revert commits;
 it never resets, rewrites, or checks out the user's actual working
 directory. Approval is mandatory and never inferred.
 
-Unsupported (explicit, never silently claimed): uncommitted/ignored
-file changes, and any environment or process-level effect, since the
-filesystem tracker and process supervisor are cut from this product.
+Unsupported (explicit, never silently claimed): uncommitted/ignored file
+changes and environment rollback. A live Change-owned Job Object tree held by
+this daemon instance is terminated during approved execution; trees from before
+a restart cannot be recovered because their OS handles are no longer owned.
 """
 
 from __future__ import annotations
@@ -32,9 +33,9 @@ from backend.app.recovery.errors import recovery_no_checkpoint_evidence, recover
 _UNSUPPORTED_EFFECTS = (
     "Uncommitted or ignored file changes are not restorable; filesystem "
     "tracking is out of scope for this product.",
-    "Environment and process-level effects are not restorable; the "
-    "process supervisor and environment rollback are out of scope for "
-    "this product.",
+    "Environment effects are not restorable; environment rollback is out of scope.",
+    "Only Change-owned process trees still tracked by this daemon instance can be "
+    "terminated; process trees from before a restart cannot be recovered.",
 )
 
 
@@ -50,9 +51,11 @@ class GitRecoveryEngine:
         database: Database,
         *,
         clock: Callable[[], datetime] = _default_clock,
+        process_tree_terminator: Callable[[UUID], int] | None = None,
     ) -> None:
         self.database = database
         self._clock = clock
+        self._process_tree_terminator = process_tree_terminator
 
     def plan(self, change: ChangeView) -> RecoveryPlan:
         now = self._clock()
@@ -125,19 +128,25 @@ class GitRecoveryEngine:
             raise recovery_not_approved()
 
         now = self._clock()
+        processes_terminated = (
+            self._process_tree_terminator(change.id)
+            if self._process_tree_terminator is not None else 0
+        )
         if not plan.actions:
             return plan.model_copy(
                 update={
                     "status": RecoveryStatus.RECOVERED,
                     "approved_at": now,
                     "completed_at": now,
+                    "processes_terminated": processes_terminated,
                 }
             )
 
         action = plan.actions[0]
         if not action.supported or action.reversible_commit is None:
             return plan.model_copy(
-                update={"status": RecoveryStatus.CONFLICTED, "approved_at": now}
+                update={"status": RecoveryStatus.CONFLICTED, "approved_at": now,
+                        "processes_terminated": processes_terminated}
             )
 
         baseline = get_checkpoint_by_id(self.database, plan.source_checkpoint_id)
@@ -163,6 +172,7 @@ class GitRecoveryEngine:
                         "The repository HEAD moved since this plan was previewed; "
                         "re-preview recovery before executing.",
                     ],
+                    "processes_terminated": processes_terminated,
                 }
             )
 
@@ -173,6 +183,7 @@ class GitRecoveryEngine:
                     "status": RecoveryStatus.RECOVERY_FAILED,
                     "approved_at": now,
                     "completed_at": completed_at_on_failure,
+                    "processes_terminated": processes_terminated,
                 }
             )
 
@@ -188,6 +199,7 @@ class GitRecoveryEngine:
                     "approved_at": now,
                     "completed_at": completed_at,
                     "conflicts": [*plan.conflicts, error],
+                    "processes_terminated": processes_terminated,
                 }
             )
 
@@ -200,6 +212,7 @@ class GitRecoveryEngine:
                 "actions": [completed_action],
                 "approved_at": now,
                 "completed_at": completed_at,
+                "processes_terminated": processes_terminated,
             }
         )
 

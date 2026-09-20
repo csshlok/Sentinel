@@ -66,8 +66,8 @@ def format_tools(items: list[dict[str, Any]] | None) -> str:
         lines.append("")
     lines.append("[bold]Limitations[/bold]")
     lines.append(
-        "  ! No descendant-process attribution: only the top-level launched "
-        "executable or a declared manifest is observed."
+        "  ! Process-tree supervision does not intercept descendant tool calls: "
+        "only the top-level launched executable or a declared manifest enters this registry."
     )
     return "\n".join(lines)
 

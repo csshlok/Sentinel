@@ -48,14 +48,9 @@ def test_delegation_requires_a_valid_time_window_and_use_count() -> None:
 
 
 def test_no_removed_subsystem_endpoints_are_exposed() -> None:
-    """The two subsystems that remain cut (`AGENT_COORDINATION.md`: process
-    supervisor, filesystem tracker) must never surface a route, at any path
-    depth. The event/effect journal, replay, and tool registry are no longer
-    forbidden here -- see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md` -- and
-    are asserted present instead, by
-    `test_journal_and_tool_registry_routes_are_present` below. Guards
-    `[SD]`'s own composition in `main.py`/`router.py` against reintroducing
-    a still-cut subsystem as a future route is added."""
+    """Filesystem snapshots remain cut. Process-tree evidence is embedded in
+    AgentRun rather than exposed through a separate arbitrary PID-control route,
+    so a generic `/processes` family remains forbidden as well."""
 
     app = create_app()
     paths = app.openapi()["paths"].keys()

@@ -121,8 +121,9 @@ class EvidenceScreen(Screen):
     screen polls faster, on its own, only while a run is RUNNING/PAUSED --
     no push/streaming transport, matching the operator's own scoping
     decision) and Pause/Resume/Stop actions (Part A: the single top-level
-    process only; a multi-process agent's descendants are never paused
-    along with it, and this is never implied by these controls).
+    process only. Stop terminates the whole supervised Job Object tree when
+    available; the run detail discloses both descendant evidence and the
+    restricted-token boundary.
     """
 
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("r", "refresh", "Refresh")]
@@ -153,7 +154,7 @@ class EvidenceScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#agent_runs", DataTable)
-        table.add_columns("Adapter", "Status", "PID", "Exit", "Duration (ms)")
+        table.add_columns("Adapter", "Status", "PID", "Desc.", "Exit", "Duration (ms)")
         table.cursor_type = "row"
         if not self.actor_id:
             self.query_one("#agent_result", Static).update(
@@ -205,7 +206,8 @@ class EvidenceScreen(Screen):
         for run in runs:
             table.add_row(
                 run.get("adapter", ""), _run_status_label(run.get("status", "")),
-                run.get("top_level_pid") or "-", run.get("exit_code") if run.get("exit_code") is not None else "-",
+                run.get("top_level_pid") or "-", len(run.get("descendant_processes", [])),
+                run.get("exit_code") if run.get("exit_code") is not None else "-",
                 run.get("duration_ms") if run.get("duration_ms") is not None else "-",
             )
         if previous_selection in self._run_ids:
@@ -238,6 +240,16 @@ class EvidenceScreen(Screen):
         text = f"[bold]stdout (last {_OUTPUT_TAIL_LINES} lines)[/bold]\n{stdout_tail}"
         if stderr_tail:
             text += f"\n\n[bold]stderr[/bold]\n{_tail(stderr_tail, _OUTPUT_TAIL_LINES)}"
+        control = "available" if run.get("descendant_control_available") else "unavailable"
+        text += f"\n\n[bold]Process-tree supervision[/bold]: {control}"
+        if run.get("authority_reduction"):
+            text += f"\n{run['authority_reduction']}"
+        descendants = run.get("descendant_processes", [])
+        if descendants:
+            text += "\n[bold]Observed descendants[/bold]"
+            for process in descendants:
+                identity = process.get("executable_path") or process.get("attribution_reason") or "unknown"
+                text += f"\n  - PID {process['pid']} (parent {process.get('parent_pid') or '-'}): {identity}"
         output.update(text)
 
     def _update_run_buttons(self) -> None:

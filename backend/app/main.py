@@ -95,6 +95,7 @@ _DEFAULT_CONFIGURED_CAPABILITIES = {
     "change_passport",
     "git_checkpoints",
     "agent_launcher",
+    "process_supervisor",
     "environment_passports",
     "dependency_tracking",
     "assurance",
@@ -287,7 +288,9 @@ def _build_runtime_services(
         policy=policy, journal=resolved_journal,
     )
 
-    recovery_engine = GitRecoveryEngine(database)
+    recovery_engine = GitRecoveryEngine(
+        database, process_tree_terminator=evidence_service.terminate_process_trees
+    )
     recovery = RecoveryService(
         recovery_engine, policy, service, RecoveryRepository(database),
         journal=resolved_journal,

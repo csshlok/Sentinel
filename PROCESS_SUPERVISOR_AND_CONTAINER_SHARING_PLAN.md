@@ -151,18 +151,17 @@ exactly the failure mode this project's "no safety theater" principle exists to 
 Principle 6; every prior reversal in this codebase has been careful to disclose partial claims
 honestly rather than overstate them).
 
-First-pass scope, stated as a bounded claim: `CreateRestrictedToken` on a duplicate of the
-launching process's own token, lowering the integrity level via
-`SetTokenInformation(TokenIntegrityLevel)` to Low, and launching the top-level process with
-`CreateProcessAsUser` using that token instead of the current plain `subprocess.Popen`. This is
-**meaningfully reduced privilege** (a Low-integrity process cannot write to Medium-or-higher
--integrity objects under Windows Mandatory Integrity Control, cannot inject into non-Low
-processes, and a browser-class attacker researching Windows sandboxing would recognize this as a
-real, load-bearing restriction) but it is **not a full AppContainer** (no capability SIDs, no
-package identity, no per-resource ACL) and **not a sandbox** in the Docker/namespace sense (no
-filesystem or network isolation). Every surface that reports this (API response, CLI/TUI copy)
-must say exactly this — "reduced privilege via a low-integrity restricted token," never
-"sandboxed" or "isolated."
+Implemented bounded claim: `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)` on the launching
+process's token, then `CreateProcessAsUser` instead of plain `subprocess.Popen`. The original draft
+also lowered Mandatory Integrity Control to Low. Real end-to-end testing proved that design
+incompatible with the product's core operation: a Low-integrity process is denied writes to an
+ordinary Medium-integrity selected repository. Mutating every user repository's integrity label,
+or silently retrying unrestricted, would be a larger and less honest security defect. The shipped
+boundary therefore disables maximum token privileges while retaining the caller's integrity level
+so repository edits remain possible. This is real authority reduction, but weaker than the draft's
+Low-integrity boundary and **not a full AppContainer** (no capability SIDs, package identity, or
+per-resource ACL) and **not a sandbox** (no filesystem or network isolation). Every surfaced copy
+states the exact boundary and never says "sandboxed" or "isolated."
 
 Explicit follow-up required before this piece can be called done: **adversarial testing**, per the
 proposal's own §19 test family ("Adversarial tests: Agent attempts to escape supervision or invoke
@@ -250,15 +249,40 @@ cross-agent sharing design)
   both terminate when the top-level is stopped, and the Job Object's `KILL_ON_JOB_CLOSE` guarantee
   actually holds (kill the *launcher process's own reference* and confirm the OS, not our code,
   cleans up).
-- A real restricted-token launch attempting an action a normal child could do but a Low-integrity
-  process cannot (e.g. writing to a Medium-integrity-protected location) — assert it is refused by
-  the OS, not merely "assumed" refused.
+- A real restricted-token launch must prove both sides of the implemented boundary: the token is
+  created through `CreateRestrictedToken` with maximum privileges disabled and no unrestricted
+  fallback, while a real agent command can still edit the selected repository. Surfaced evidence
+  must disclose that the caller's integrity level is retained.
 - Recovery: a real Change with a still-running supervised process tree; call recovery `execute()`;
   assert the tree is actually gone (poll for the PIDs, not just check a return value) and
   `processes_terminated` matches reality.
 - Signed export: sign a real `ChangePassport`, verify it with the correct public key (passes),
   verify it with a different key (fails), tamper one byte of the passport JSON after signing
   (fails) — proving the signature is actually checking content, not just present.
+
+---
+
+### A.12 Implementation status (2026-09-19)
+
+Part A is implemented end to end:
+
+- `execution/process_supervisor.py` owns a kill-on-close Windows Job Object, creates the child
+  suspended, assigns it before resume, polls descendants, resolves PID/parent/image/command-line
+  evidence where Windows permits, and terminates the tree on stop/timeout/cancel/handle close.
+- Launch uses `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)` plus `CreateProcessAsUserW` with no
+  unrestricted retry path. The caller integrity level is retained for the repository-write reason
+  documented in A.5, and every API/CLI/TUI capability description states the weaker exact claim.
+- `AgentRun`, SQLite migration 10, evidence persistence, journal event types, OpenAPI, CLI, TUI,
+  capabilities, and Passport process summaries carry the real process-tree evidence.
+- Approved recovery calls the live launcher-owned Job handles before Git compensation and reports
+  `processes_terminated`; restart-lost handles remain an explicit limitation.
+- Signed Passport export, public-key retrieval, verification, CLI export, and TUI signed-file
+  export are implemented. No recipient key, sharing route, or Part B capability was added.
+
+The deliberate polling limitation remains: a process that both starts and exits between two Job
+Object polls can be absent from the enumerated descendant list. Replacing polling with an I/O
+completion-port notification loop is the documented future accuracy upgrade; the product does not
+claim zero-loss spawn telemetry today.
 
 ---
 

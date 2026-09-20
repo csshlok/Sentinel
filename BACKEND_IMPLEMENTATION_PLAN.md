@@ -20,7 +20,7 @@ Reversed (see `PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md` Part A):
 
 | Subsystem | Bounded form | Explicit non-goals |
 | --- | --- | --- |
-| Process supervisor | Windows Job Object-based process-tree supervision; every descendant PID attributed to the Change or explicitly marked unattributed with reason; restricted-token (Low integrity) authority reduction on the launched process; process-tree termination on recovery | No formal sandbox/namespace isolation claim; no macOS/Linux; filesystem-level effects still come from Git checkpoints only, not from process-level file-write interception |
+| Process supervisor | Windows Job Object-based process-tree supervision; every observed descendant PID attributed to the Change or explicitly marked unattributed with reason; restricted-token authority reduction (maximum privileges disabled, caller integrity retained for repository writes); process-tree termination on recovery | No formal sandbox/namespace isolation claim; no macOS/Linux; polling can miss a process that starts and exits between polls; filesystem-level effects still come from Git checkpoints only, not from process-level file-write interception |
 
 Retained (bounded) — see `EVENT_JOURNAL_AND_TOOL_REGISTRY_PLAN.md`:
 
@@ -101,7 +101,7 @@ Local authenticated API
 SQLite evidence and state store
 ```
 
-No component is renamed to conceal a removed subsystem. `ExecutionSummary` is one aggregate record per invocation, not an event journal, and the Agent Launcher is not a process supervisor.
+No component is renamed to conceal a removed subsystem. `ExecutionSummary` is one aggregate record per invocation, while the Agent Launcher now composes the explicitly named Windows Process Supervisor; it is still not a filesystem tracker or tool-call interceptor.
 
 ## 5. Technology baseline
 
@@ -313,7 +313,7 @@ Before the first claim, each contributor sends `[SD]` a concise comprehension st
 
 - The proposal capabilities owned by their stream.
 - The proposal principles their design must preserve.
-- The two cuts (process supervisor, filesystem tracker) and the limitations those cuts impose on their stream, plus the bounded event-journal/replay/tool-registry non-goals relevant to their stream.
+- The remaining filesystem-tracker cut, the bounded Process Supervisor reversal, and the bounded event-journal/replay/tool-registry non-goals relevant to their stream.
 - The ports/models they consume and provide.
 - The top five failure/security risks in their stream.
 - Any apparent conflict between the PDF, context documents, current code, and this plan.
