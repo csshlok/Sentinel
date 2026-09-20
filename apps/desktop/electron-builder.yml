@@ -1,0 +1,35 @@
+# Local, unsigned packaging for testing. No signing identity, publisher, or credentials are configured.
+appId: com.changeassurance.desktop
+productName: Change Assurance
+copyright: null
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the built renderer, the Electron shell and metadata. Tests, sources, maps and dev files stay out.
+files:
+  - dist/**
+  - electron/**/*.cjs
+  - electron/**/*.html
+  - "!electron/tests/**"
+  - "!**/*.map"
+  - package.json
+
+# The staged Python runtime + backend source live outside the asar so they can execute.
+extraResources:
+  - from: build/backend-stage/python
+    to: backend/python
+  - from: build/backend-stage/src
+    to: backend/src
+
+asar: true
+# Reuse the Electron binary installed by npm instead of downloading another copy.
+electronDist: node_modules/electron/dist
+
+win:
+  target:
+    - dir
+  # Avoids downloading the code-signing toolchain; artifacts are unsigned local test builds.
+  signAndEditExecutable: false
+  forceCodeSigning: false

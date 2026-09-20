@@ -8,3 +8,21 @@ __pycache__/
 .venv/
 htmlcov/
 .coverage
+
+# Local AI-assistant and GSD workflow tooling, plus browser-automation scratch. Not project source.
+/.agent/
+/.agents/
+/.claude/
+/.gemini/
+/.gsd/
+/.playwright-mcp/
+/adapters/
+/scripts/
+/GSD-STYLE.md
+/PROJECT_RULES.md
+/VERSION
+/model_capabilities.yaml
+
+# Desktop app and test artifacts
+node_modules/
+*.log
