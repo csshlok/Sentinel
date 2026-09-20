@@ -72,19 +72,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SBOX-01 | TBD | Pending |
-| SBOX-02 | TBD | Pending |
-| SBOX-03 | TBD | Pending |
-| SBOX-04 | TBD | Pending |
-| SBOX-05 | TBD | Pending |
-| SBOX-06 | TBD | Pending |
-| SBOX-07 | TBD | Pending |
+| SBOX-01 | Phase 1: AppContainer Launch With Preserved Repository Writes | Pending |
+| SBOX-02 | Phase 1: AppContainer Launch With Preserved Repository Writes | Pending |
+| SBOX-03 | Phase 2: Least-Privilege Scoping, Fail-Loud Errors, and Honest Disclosure | Pending |
+| SBOX-04 | Phase 2: Least-Privilege Scoping, Fail-Loud Errors, and Honest Disclosure | Pending |
+| SBOX-05 | Phase 2: Least-Privilege Scoping, Fail-Loud Errors, and Honest Disclosure | Pending |
+| SBOX-06 | Phase 3: Adversarial Verification and Regression Proof | Pending |
+| SBOX-07 | Phase 3: Adversarial Verification and Regression Proof | Pending |
 
 **Coverage:**
 - v1 requirements: 7 total
-- Mapped to phases: 0 (pending roadmap creation)
-- Unmapped: 7 ⚠️
+- Mapped to phases: 7/7 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-20*
-*Last updated: 2026-09-20 after initial definition*
+*Last updated: 2026-09-20 after roadmap creation (3 phases, full coverage)*
