@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Sentinel logo">
+  <title>Sentinel</title>
+  <defs>
+    <style>
+      .sentinel-shield { fill: #1f2937; }
+      .sentinel-mark { stroke: #f8fafc; }
+      @media (prefers-color-scheme: dark) {
+        .sentinel-shield { fill: #f8fafc; }
+        .sentinel-mark { stroke: #111827; }
+      }
+    </style>
+  </defs>
+
+  <!-- Flat shield, no gradient or shadow: a hexagonal shield reads as
+       "oversight" without borrowing a badge/police connotation. -->
+  <path
+    class="sentinel-shield"
+    d="M256 46
+       L426 108
+       C434 111 440 118 440 127
+       L440 244
+       C440 352 368 422 256 464
+       C144 422 72 352 72 244
+       L72 127
+       C72 118 78 111 86 108
+       Z"
+  />
+
+  <!-- A plain checkmark: verified evidence, not a padlock or a policing
+       badge. Stroke-based so the proportions are guaranteed correct. -->
+  <path
+    class="sentinel-mark"
+    d="M182 268 L232 318 L338 196"
+    fill="none"
+    stroke-width="34"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
