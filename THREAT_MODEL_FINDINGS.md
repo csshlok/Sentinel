@@ -127,6 +127,43 @@ up next.
   Dell XPS 15 to see whether it now fails loudly (verification working as intended) or the syscall
   genuinely suspends there too under this build (bug was possibly transient/environmental).
 
+  **KB follow-up #2 -- a real, distinct, reproducible bug found via the TUI's real-worker test
+  suite, root-caused and fixed.** `test_evidence_screen_real_pause_and_resume_a_running_agent`
+  (`backend/tests/tui/test_pilot_real_worker_flows.py`) flaked intermittently: a run's pause would
+  "succeed" (status flipped to `PAUSED`) but the process finished as `PASSED` anyway, as if pause
+  had never been called. Root cause, confirmed with real per-PID `GetProcessTimes` sampling: a
+  Windows Python venv's own `python.exe` is commonly a launcher stub that spawns the real
+  interpreter as a *child* and waits on it -- standard CPython venv behavior on Windows, not
+  specific to any one install or machine. `suspend_process(top_level_pid)` was suspending the
+  already-idle stub while the real work kept running unaffected; the CPU-time verification from
+  the fix above didn't catch it because the stub genuinely wasn't consuming CPU either way. This is
+  a different bug from #1 above (that one is a case where a *single* process's own suspension
+  doesn't take effect on some machine; this one is that the *wrong* process was ever being
+  suspended in the first place) and reproduces on this machine deterministically, not just
+  intermittently -- the earlier flakiness was a race against whichever PID's turn it was.
+
+  Fixed in `AgentLauncher.pause`/`resume` (`execution/launcher.py`): when the run has a supervised
+  Job Object, both now act on every PID Windows currently reports as a member of that job (a live
+  `list_pids(job)` query, not just the historical `descendant_processes` evidence list) instead of
+  `top_level_pid` alone. Falls back to the original top-level-only behavior when there is no
+  supervised Job Object (an attached run, or supervision unavailable) -- there is no reliable way
+  to discover descendants otherwise. Pause rolls back any partial suspension if one PID fails
+  mid-loop; resume tries every PID even if one fails, so a single stuck member can't leave the rest
+  of the tree suspended. Verified directly against the real supervised path (Job Object +
+  restricted token) with a CPU-busy 4-process tree (top-level plus three nested venv-stub layers,
+  since each level of `subprocess.run([sys.executable, ...])` re-triggers the same stub behavior):
+  completely flat CPU time across a 6-second observation window for all four processes while
+  paused, versus continuous growth before the fix.
+
+  Also found and fixed in the same investigation: `evidence_screen.py`'s poll loop only kept
+  re-polling once a run was *already* known `RUNNING`/`PAUSED` -- a run that started after the
+  screen opened but before its first poll observed it was never noticed again without a manual
+  refresh. Made polling unconditional (cheap enough for one open Change's evidence view). Two test
+  fixtures (`test_service_journal.py`, `test_signal_control.py`) asserting exact
+  single-process/no-descendant behavior needed to resolve the real base interpreter
+  (`sys._base_executable`) instead of `"python"`/`sys.executable`, since both silently picked up
+  the same venv-stub artifact. Full backend suite green after all of the above.
+
 ---
 
 ## SD — open, SD's exclusive paths (`contracts/`, `core/`, `main.py`, `migrations/`)
