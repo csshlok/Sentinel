@@ -43,6 +43,46 @@ KB-owned journal-emission points it named as still non-atomic
 `assurance/service.py`, plus `ProviderOperationRepository.create`) have not been revisited since.
 That is real remaining work, just not tracked as its own numbered row here.
 
+**Scoped for KB (investigated, not implemented):** the actual gap is concentrated in
+`assurance/service.py`'s `EvidenceService`, not spread evenly across the five named files. It has
+roughly 10 separate journal-emission call sites (`_journal_checkpoint_captured`,
+`_journal_environment_captured`, `_journal_dependency_report_captured`, plus several direct
+`_journal_append` calls for agent/assurance runs), each paired with a *different* prior write
+through `assurance/store.py`'s `EvidenceStore` (e.g. `save_checkpoint`, `save_environment`). None
+of those `EvidenceStore` methods currently accept an optional `connection`, unlike
+`DelegationRepository.create`/`CredentialGrantRepository.create` etc., which SD's #16 fix already
+threads a shared connection through. Closing this properly means: (1) adding an optional
+`connection: sqlite3.Connection | None = None` parameter to each relevant `EvidenceStore` write
+method (mirroring `Database.connection_or`'s existing pattern), then (2) wrapping each
+write+journal pair in `assurance/service.py` in one `database.connection(immediate=True)` block,
+same shape as `IdentityAdminService.create_delegation`. This is a real multi-method refactor
+across two files, not a one-line fix per call site — sized similarly to SD's original #16 commit,
+just on KB's side of the codebase. `execution/launcher.py`'s only journal-adjacent call
+(`_record_tool_observation`) already defensively swallows persistence exceptions rather than
+raising, so it may not need the same treatment; `git/state.py` and `environment/tracker.py`
+themselves emit no journal events directly (their journaling happens through
+`assurance/service.py`, already covered above) — the five-file list in #16's commit message is a
+slight over-scoping of where the actual call sites live.
+
+---
+
+## Also found while completing the test suite (not threat-model findings, noted here for the record)
+
+- **`execution/signal_control.py`'s `suspend_process`/`resume_process` do not actually suspend the
+  target process on this machine**, despite `NtSuspendProcess`/`NtResumeProcess` both returning
+  `STATUS_SUCCESS` (0x0). Verified three ways: (1) a print-loop child kept producing new output at
+  its normal ~10 lines/sec rate throughout the "paused" window instead of going silent; (2) a
+  CPU-busy-loop child's `TotalProcessorTime` showed no behavior change; (3) ruled out an
+  access-rights cause by retrying with a full `PROCESS_ALL_ACCESS` handle instead of the minimal
+  `PROCESS_SUSPEND_RESUME` one -- identical result. This is a real, physical machine (Dell XPS 15),
+  not a VM/sandbox, so it isn't a virtualization restriction on the syscall either. Root cause is
+  unknown -- possibly a Windows-build-specific change to this undocumented API's behavior, or a
+  Python 3.14 ctypes/`WinDLL` interaction -- and I don't have a verified safe replacement to swap
+  in. `backend/tests/execution/test_signal_control.py::test_suspend_stops_output_growth_and_resume_lets_it_continue`
+  fails deterministically (not flaky) on this box. This is KB's brand-new pause/resume feature
+  (`LIVE_AGENT_CONTROL_AND_BRANCHING_PLAN.md` Part A); needs KB's own environment to reproduce and
+  debug further, or a from-scratch alternative implementation of process suspension.
+
 ---
 
 ## SD — open, SD's exclusive paths (`contracts/`, `core/`, `main.py`, `migrations/`)
