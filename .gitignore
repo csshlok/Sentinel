@@ -37,3 +37,11 @@ node_modules/
 /*.pdf
 /brag-output/
 /image.png
+
+# Local demo work kept out of the tracked tree (2026-09-27). The tracked files
+# apps/desktop/{package.json,src/app/router.tsx,src/lib/nav.ts} carry local demo
+# edits hidden with `git update-index --skip-worktree` (undo: --no-skip-worktree).
+/output/
+/apps/desktop/e2e/demo.spec.ts
+/apps/desktop/scripts/start-demo.ps1
+/apps/desktop/src/features/workspace/DemoPage.tsx
