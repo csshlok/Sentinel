@@ -6,6 +6,15 @@ the target repository. Recovery only ever creates new revert commits;
 it never resets, rewrites, or checks out the user's actual working
 directory. Approval is mandatory and never inferred.
 
+Every Git step runs through `backend.app.git.safe_exec`: hooks, content
+filters, diff/merge drivers and execution-bearing configuration from the
+(agent-writable) repository are neutralized, temporary worktrees are created
+with ``--no-checkout`` and populated by a hardened reset discovered in the
+worktree's own context, and recovery commits are authored and committed by
+the explicit Sentinel identity (``Sentinel Recovery
+<recovery@sentinel.invalid>``), never the user's or the repository's
+configured identity.
+
 Unsupported (explicit, never silently claimed): uncommitted/ignored file
 changes and environment rollback. A live Change-owned Job Object tree held by
 this daemon instance is terminated during approved execution; trees from before
@@ -14,7 +23,6 @@ a restart cannot be recovered because their OS handles are no longer owned.
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -29,7 +37,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.database import Database
 from backend.app.execution._process import CapturedProcess
-from backend.app.git.safe_exec import run_git
+from backend.app.git.safe_exec import RECOVERY_IDENTITY, run_git
 from backend.app.recovery.checkpoints import get_checkpoint_by_id, get_earliest_checkpoint
 from backend.app.recovery.errors import recovery_no_checkpoint_evidence, recovery_not_approved
 
@@ -237,11 +245,8 @@ class GitRecoveryEngine:
 
     @staticmethod
     def _current_head(repository_path: str) -> str | None:
-        result = subprocess.run(
-            ["git", "-C", repository_path, "rev-parse", "HEAD"],
-            capture_output=True, shell=False,
-        )
-        if result.returncode != 0:
+        result = run_git(repository_path, ["rev-parse", "HEAD"])
+        if _failed(result):
             return None
         return result.stdout.decode("utf-8", errors="replace").strip()
 
@@ -326,66 +331,56 @@ class GitRecoveryEngine:
         Runs entirely inside a temporary worktree so the user's actual
         working directory and index are never touched. The branch and
         its new commits live in the shared repository and persist after
-        the temporary worktree is removed.
+        the temporary worktree is removed. The worktree is created with
+        ``--no-checkout`` and populated by a hardened reset discovered in
+        its own context; revert commits carry ``RECOVERY_IDENTITY``.
         """
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            created = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    repository_path,
-                    "worktree",
-                    "add",
-                    "-b",
-                    branch,
-                    temp_dir,
-                    current_sha,
-                ],
-                capture_output=True,
-                shell=False,
+        repository_root = (Path(repository_path),)
+        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-") as temp_dir:
+            created = run_git(
+                repository_path,
+                ["worktree", "add", "--no-checkout", "-b", branch, temp_dir, current_sha],
+                timeout=RECOVERY_TIMEOUT_SECONDS,
             )
-            if created.returncode != 0:
-                return None, (
-                    "Could not create the dedicated recovery branch: "
-                    + created.stderr.decode("utf-8", errors="replace").strip()
-                )
+            if _failed(created):
+                return None, "Could not create the dedicated recovery branch: " + _stderr(created)
 
-            reverted = subprocess.run(
-                ["git", "-C", temp_dir, "revert", "--no-edit", *reversed(commits)],
-                capture_output=True,
-                shell=False,
-            )
             failure: str | None = None
             result_sha: str | None = None
-            if reverted.returncode != 0:
-                subprocess.run(
-                    ["git", "-C", temp_dir, "revert", "--abort"],
-                    capture_output=True,
-                    shell=False,
+            try:
+                populated = run_git(
+                    temp_dir, ["reset", "--quiet", "--hard", "HEAD"],
+                    extra_roots=repository_root, timeout=RECOVERY_TIMEOUT_SECONDS,
                 )
-                failure = (
-                    "Reverting these commits produced a merge conflict: "
-                    + reverted.stderr.decode("utf-8", errors="replace").strip()
+                if _failed(populated):
+                    failure = (
+                        "Could not create the dedicated recovery branch: " + _stderr(populated)
+                    )
+                else:
+                    reverted = run_git(
+                        temp_dir, ["revert", "--no-edit", *reversed(commits)],
+                        identity=RECOVERY_IDENTITY, extra_roots=repository_root,
+                        timeout=RECOVERY_TIMEOUT_SECONDS,
+                    )
+                    if _failed(reverted):
+                        run_git(temp_dir, ["revert", "--abort"], extra_roots=repository_root)
+                        failure = (
+                            "Reverting these commits produced a merge conflict: "
+                            + _stderr(reverted)
+                        )
+                    else:
+                        head = run_git(temp_dir, ["rev-parse", "HEAD"], extra_roots=repository_root)
+                        if _failed(head):
+                            failure = "Could not read the recovery branch head: " + _stderr(head)
+                        else:
+                            result_sha = head.stdout.decode("utf-8", errors="replace").strip()
+            finally:
+                run_git(
+                    repository_path, ["worktree", "remove", "--force", temp_dir],
+                    timeout=RECOVERY_TIMEOUT_SECONDS,
                 )
-            else:
-                head = subprocess.run(
-                    ["git", "-C", temp_dir, "rev-parse", "HEAD"],
-                    capture_output=True,
-                    shell=False,
-                )
-                result_sha = head.stdout.decode("utf-8", errors="replace").strip()
-
-            subprocess.run(
-                ["git", "-C", repository_path, "worktree", "remove", "--force", temp_dir],
-                capture_output=True,
-                shell=False,
-            )
             if failure is not None:
-                subprocess.run(
-                    ["git", "-C", repository_path, "branch", "-D", branch],
-                    capture_output=True,
-                    shell=False,
-                )
+                run_git(repository_path, ["branch", "-D", branch])
                 return None, failure
             return result_sha, None

@@ -264,3 +264,81 @@ def test_file_not_found_maps_to_missing_git(tmp_path, monkeypatch) -> None:
 
 def test_recovery_identity_is_the_sentinel_identity() -> None:
     assert RECOVERY_IDENTITY == GitIdentity(name="Sentinel Recovery", email="recovery@sentinel.invalid")
+
+
+def test_identity_overrides_repository_user_and_committer_config(tmp_path) -> None:
+    repo = _repo(tmp_path / "repo")
+    _plain(repo, "config", "committer.name", "Agent Spoof")
+    _plain(repo, "config", "author.email", "agent@spoof.test")
+
+    result = run_git(repo, ["commit", "-q", "--allow-empty", "-m", "x"], identity=RECOVERY_IDENTITY)
+
+    assert result.returncode == 0, result.stderr
+    assert _plain(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>") == (
+        "Sentinel Recovery <recovery@sentinel.invalid>|Sentinel Recovery <recovery@sentinel.invalid>"
+    )
+
+
+@pytest.mark.parametrize(("name", "email"), [
+    ("Evil\nName", "a@b.c"), ("Name", "a@b.c\n"), ("<Name", "a@b.c"), ("Name", "a@b.c>"),
+    ("", "a@b.c"), ("Name", " "), ("Na\0me", "a@b.c"),
+])
+def test_git_identity_rejects_unsafe_values(name, email) -> None:
+    with pytest.raises(ValueError):
+        GitIdentity(name=name, email=email)
+
+
+def test_planted_hook_forces_a_fresh_empty_hooks_directory(tmp_path) -> None:
+    repo = _repo(tmp_path / "repo")
+    canary = tmp_path / "planted-hook-ran"
+    first = empty_hooks_directory()
+    planted = first / "post-commit"
+    planted.write_bytes(f"#!/bin/sh\necho hit > '{canary.resolve().as_posix()}'\n".encode())
+    try:
+        result = run_git(repo, ["commit", "-q", "--allow-empty", "-m", "x"],
+                         identity=RECOVERY_IDENTITY)
+        assert result.returncode == 0, result.stderr
+        assert not canary.exists()
+        second = empty_hooks_directory()
+        assert second != first
+        assert second.is_dir() and not any(second.iterdir())
+        # Positive control: the planted hook is live if Git is pointed at it.
+        _plain(repo, "-c", f"core.hooksPath={first}", "-c", "user.name=T",
+               "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "y")
+        assert canary.exists()
+    finally:
+        planted.unlink(missing_ok=True)
+
+
+def _merge_driver_repo(root: Path, canary: Path) -> tuple[Path, str]:
+    """A revert of a non-tip commit that needs a real three-way content merge."""
+
+    repo = _repo(root)
+    (repo / "file.txt").write_bytes(b"one\ntwo\nthree\nfour\nfive\n")
+    (repo / ".gitattributes").write_bytes(b"*.txt merge=evil\n")
+    _plain(repo, "add", "-A")
+    _plain(repo, "commit", "-q", "-m", "lines")
+    (repo / "file.txt").write_bytes(b"ONE\ntwo\nthree\nfour\nfive\n")
+    _plain(repo, "commit", "-q", "-am", "edit first line")
+    target = _plain(repo, "rev-parse", "HEAD")
+    (repo / "file.txt").write_bytes(b"ONE\ntwo\nthree\nfour\nFIVE\n")
+    _plain(repo, "commit", "-q", "-am", "edit last line")
+    driver = root.parent / f"{root.name}-driver.sh"
+    driver.write_bytes(f"#!/bin/sh\necho hit > '{canary.resolve().as_posix()}'\nexit 1\n".encode())
+    _plain(repo, "config", "merge.evil.driver", driver.resolve().as_posix())
+    return repo, target
+
+
+def test_merge_driver_is_neutralized_and_fails_closed(tmp_path) -> None:
+    control_canary = tmp_path / "control-driver-ran"
+    control, control_target = _merge_driver_repo(tmp_path / "control", control_canary)
+    subprocess.run(["git", "-C", str(control), "revert", "--no-commit", control_target],
+                   capture_output=True, shell=False)
+    assert control_canary.exists(), "positive control: plain git must run the merge driver"
+
+    canary = tmp_path / "hardened-driver-ran"
+    repo, target = _merge_driver_repo(tmp_path / "hardened", canary)
+    result = run_git(repo, ["revert", "--no-commit", target])
+
+    assert not canary.exists()
+    assert result.returncode != 0

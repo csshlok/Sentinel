@@ -283,6 +283,27 @@ def test_execute_clean_revert_creates_dedicated_branch_and_reverts(tmp_path) -> 
     assert file_at_tip == "base\n"
 
 
+def test_execute_commits_reverts_with_the_sentinel_identity(tmp_path) -> None:
+    # _init_linear_repo configures the repository's own user.name "Test".
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    assert _run(repo, "config", "user.name") == "Test"
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    engine = GitRecoveryEngine(database)
+
+    result = engine.execute(change, engine.plan(change), "approval-token-123")
+
+    assert result.status is RecoveryStatus.RECOVERED
+    identity = _run(
+        repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>",
+        f"change-assurance/recovery/{change.id}",
+    )
+    assert identity == (
+        "Sentinel Recovery <recovery@sentinel.invalid>|"
+        "Sentinel Recovery <recovery@sentinel.invalid>"
+    )
+
+
 def test_execute_conflicting_revert_leaves_target_repository_unchanged(tmp_path) -> None:
     repo, baseline_sha, current_sha = _init_repo_with_merge_commit(tmp_path)
     database = _database(tmp_path)

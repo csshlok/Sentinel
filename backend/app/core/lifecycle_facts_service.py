@@ -22,7 +22,6 @@ through the real API, per this product's "no safety theater" invariant.
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -35,6 +34,8 @@ from backend.app.core.runtime_repositories import (
     ProviderOperationRepository,
     RecoveryRepository,
 )
+from backend.app.git.errors import GitRepositoryError
+from backend.app.git.safe_exec import run_git
 from backend.app.identity.repository import DelegationRepository
 
 _ASSURANCE_TARGETS = frozenset({"LOCALLY_VERIFIED", "REVIEW_READY"})
@@ -161,11 +162,11 @@ class RuntimeLifecycleFacts:
 
     @staticmethod
     def _branch_head_sha(repository_path: str, branch: str) -> str | None:
-        result = subprocess.run(
-            ["git", "-C", repository_path, "rev-parse", "--verify", f"refs/heads/{branch}"],
-            capture_output=True, shell=False,
-        )
-        if result.returncode != 0:
+        try:
+            result = run_git(repository_path, ["rev-parse", "--verify", f"refs/heads/{branch}"])
+        except GitRepositoryError:
+            return None
+        if result.returncode != 0 or result.timed_out or result.incomplete:
             return None
         return result.stdout.decode("utf-8", errors="replace").strip()
 

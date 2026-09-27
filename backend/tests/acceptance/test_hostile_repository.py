@@ -39,6 +39,9 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.contracts.models import RecoveryStatus
+from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
+from backend.app.providers.repository_slug import resolve_github_repository_slug
 from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.tests.recovery.test_git_recovery import (
     _database,
@@ -213,6 +216,30 @@ def test_positive_control_checkout_mechanisms_fire_under_plain_git(tmp_path) -> 
     assert not missing, f"positive control did not fire: {sorted(missing)}; fired={sorted(fired)}"
 
 
+def test_positive_control_commit_mechanisms_fire_under_plain_git(tmp_path) -> None:
+    canary_dir = tmp_path / "canary"
+    repo, _, _ = build_hostile_repository(tmp_path / "repo", canary_dir, filtered_files=False)
+    root = Path(repo)
+
+    # commit.gpgSign=true runs gpg.program (which fails, aborting the commit).
+    plain_git(root, "commit", "--allow-empty", "-m", "signed", check=False)
+    # Unsigned, the commit completes and fires the remaining commit hooks.
+    plain_git(root, "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "unsigned",
+              check=False)
+    # Hooks in .git/hooks fire as soon as the repository stops redirecting hooksPath.
+    plain_git(root, "config", "--unset", "core.hooksPath")
+    plain_git(root, "-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "again",
+              check=False)
+
+    fired = set(canaries(canary_dir))
+    missing = {
+        "gpg-program", "hook-pre-commit", "hook-prepare-commit-msg", "hook-commit-msg",
+        "hook-post-commit", "hook-reference-transaction", "dothook-pre-commit",
+        "dothook-prepare-commit-msg", "dothook-post-commit",
+    } - fired
+    assert not missing, f"positive control did not fire: {sorted(missing)}; fired={sorted(fired)}"
+
+
 # --- recovery preview ----------------------------------------------------------------
 
 
@@ -253,6 +280,42 @@ def test_recovery_preview_conflict_on_hostile_repository_executes_nothing(tmp_pa
     assert plan.actions[0].supported is False
     assert plan.conflicts
     assert _worktrees(repo) == worktrees_before
+
+
+# --- recovery execute, lifecycle facts, repository slug -------------------------------
+
+
+def test_recovery_execute_on_hostile_repository_uses_sentinel_identity_and_executes_nothing(
+    tmp_path,
+) -> None:
+    canary_dir = tmp_path / "canary"
+    repo, baseline, current = build_hostile_repository(tmp_path / "repo", canary_dir)
+    root = Path(repo)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline, current)
+    head_before = plain_git(root, "rev-parse", "HEAD").stdout.strip()
+    branch_before = plain_git(root, "branch", "--show-current").stdout.strip()
+    worktrees_before = _worktrees(repo)
+    engine = GitRecoveryEngine(database)
+
+    result = engine.execute(change, engine.plan(change), "approval-token-123")
+
+    assert_no_canaries(canary_dir)
+    assert result.status is RecoveryStatus.RECOVERED
+    branch = f"change-assurance/recovery/{change.id}"
+    tip = plain_git(root, "rev-parse", "--verify", f"refs/heads/{branch}").stdout.strip()
+    identity = plain_git(root, "log", "-1", "--format=%an <%ae>|%cn <%ce>", tip).stdout.strip()
+    assert identity == ("Sentinel Recovery <recovery@sentinel.invalid>|"
+                        "Sentinel Recovery <recovery@sentinel.invalid>")
+    assert plain_git(root, "show", f"{tip}:app.txt").stdout == "baseline\n"
+    assert plain_git(root, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert plain_git(root, "branch", "--show-current").stdout.strip() == branch_before
+    assert _worktrees(repo) == worktrees_before
+
+    # Lifecycle branch-head lookup and repository-slug lookup on the same repo.
+    assert RuntimeLifecycleFacts._branch_head_sha(repo, branch) == tip
+    assert resolve_github_repository_slug(repo) == "acme/widgets"
+    assert_no_canaries(canary_dir)
 
 
 @pytest.fixture(autouse=True)
