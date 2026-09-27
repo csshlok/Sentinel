@@ -15,6 +15,14 @@ the explicit Sentinel identity (``Sentinel Recovery
 <recovery@sentinel.invalid>``), never the user's or the repository's
 configured identity.
 
+The harness refuses to run Git (``GitRepositoryError``) for some hostile
+configurations, for example a driver name it cannot override. Those refusals
+never escape ``execute``: once the Change's process tree may have been
+terminated, the outcome is always a terminal ``RECOVERY_FAILED`` plan that
+carries ``processes_terminated``, so the caller records the plan and journals
+the termination. The dedicated recovery branch is deleted on every failure
+path, including a refusal inside the temporary worktree.
+
 Unsupported (explicit, never silently claimed): uncommitted/ignored file
 changes and environment rollback. A live Change-owned Job Object tree held by
 this daemon instance is terminated during approved execution; trees from before
@@ -37,6 +45,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.database import Database
 from backend.app.execution._process import CapturedProcess
+from backend.app.git.errors import GitRepositoryError
 from backend.app.git.safe_exec import RECOVERY_IDENTITY, run_git
 from backend.app.recovery.checkpoints import get_checkpoint_by_id, get_earliest_checkpoint
 from backend.app.recovery.errors import recovery_no_checkpoint_evidence, recovery_not_approved
@@ -64,6 +73,10 @@ def _stderr(result: CapturedProcess) -> str:
 
 def _default_clock() -> datetime:
     return datetime.now(UTC)
+
+
+def _refused(exc: GitRepositoryError) -> str:
+    return f"Git refused to run: {exc.message}"
 
 
 class GitRecoveryEngine:
@@ -151,11 +164,22 @@ class GitRecoveryEngine:
             raise recovery_not_approved()
 
         now = self._clock()
+        action = plan.actions[0] if plan.actions else None
+        runnable = (
+            action is not None and action.supported and action.reversible_commit is not None
+        )
+        baseline = None
+        if runnable:
+            # A pure database read: refuse before any effect (process tree
+            # termination) when the plan's baseline evidence is gone.
+            baseline = get_checkpoint_by_id(self.database, plan.source_checkpoint_id)
+            if baseline is None:
+                raise recovery_no_checkpoint_evidence(str(change.id))
         processes_terminated = (
             self._process_tree_terminator(change.id)
             if self._process_tree_terminator is not None else 0
         )
-        if not plan.actions:
+        if action is None:
             return plan.model_copy(
                 update={
                     "status": RecoveryStatus.RECOVERED,
@@ -165,18 +189,43 @@ class GitRecoveryEngine:
                 }
             )
 
-        action = plan.actions[0]
-        if not action.supported or action.reversible_commit is None:
+        if not runnable or baseline is None or action.reversible_commit is None:
             return plan.model_copy(
                 update={"status": RecoveryStatus.CONFLICTED, "approved_at": now,
                         "processes_terminated": processes_terminated}
             )
 
-        baseline = get_checkpoint_by_id(self.database, plan.source_checkpoint_id)
-        if baseline is None:
-            raise recovery_no_checkpoint_evidence(str(change.id))
+        try:
+            return self._execute_revert(
+                change, plan, action, action.reversible_commit, baseline.head_sha,
+                approved_at=now, processes_terminated=processes_terminated,
+            )
+        except GitRepositoryError as exc:
+            # The process tree may already be terminated: always hand back a
+            # terminal plan so the caller records it and journals the
+            # termination, instead of letting the refusal escape.
+            return plan.model_copy(
+                update={
+                    "status": RecoveryStatus.RECOVERY_FAILED,
+                    "approved_at": now,
+                    "completed_at": self._clock(),
+                    "conflicts": [*plan.conflicts, _refused(exc)],
+                    "processes_terminated": processes_terminated,
+                }
+            )
 
-        current_sha = action.reversible_commit
+    def _execute_revert(
+        self,
+        change: ChangeView,
+        plan: RecoveryPlan,
+        action: RecoveryAction,
+        current_sha: str,
+        baseline_sha: str,
+        *,
+        approved_at: datetime,
+        processes_terminated: int,
+    ) -> RecoveryPlan:
+        now = approved_at
         completed_at_on_failure = self._clock()
         real_head = self._current_head(change.repository_path)
         if real_head is None or real_head.lower() != current_sha.lower():
@@ -199,7 +248,7 @@ class GitRecoveryEngine:
                 }
             )
 
-        commits = self._commits_between(change.repository_path, baseline.head_sha, current_sha)
+        commits = self._commits_between(change.repository_path, baseline_sha, current_sha)
         if not commits:
             return plan.model_copy(
                 update={
@@ -312,11 +361,10 @@ class GitRecoveryEngine:
                         + _stderr(reverted)
                     )
                 return None
+            except GitRepositoryError as exc:
+                return _refused(exc)
             finally:
-                run_git(
-                    repository_path, ["worktree", "remove", "--force", temp_dir],
-                    timeout=RECOVERY_TIMEOUT_SECONDS,
-                )
+                cls._remove_worktree(repository_path, temp_dir)
 
     @classmethod
     def _revert_on_dedicated_branch(
@@ -375,12 +423,32 @@ class GitRecoveryEngine:
                             failure = "Could not read the recovery branch head: " + _stderr(head)
                         else:
                             result_sha = head.stdout.decode("utf-8", errors="replace").strip()
+            except GitRepositoryError as exc:
+                failure = _refused(exc)
             finally:
-                run_git(
-                    repository_path, ["worktree", "remove", "--force", temp_dir],
-                    timeout=RECOVERY_TIMEOUT_SECONDS,
-                )
+                cls._remove_worktree(repository_path, temp_dir)
             if failure is not None:
-                run_git(repository_path, ["branch", "-D", branch])
+                try:
+                    deleted = run_git(repository_path, ["branch", "-D", branch])
+                except GitRepositoryError as exc:
+                    failure += f" The recovery branch '{branch}' could not be deleted: {exc.message}"
+                else:
+                    if _failed(deleted):
+                        failure += (
+                            f" The recovery branch '{branch}' could not be deleted: "
+                            + _stderr(deleted)
+                        )
                 return None, failure
             return result_sha, None
+
+    @staticmethod
+    def _remove_worktree(repository_path: str, temp_dir: str) -> None:
+        """Best-effort removal of a temporary worktree; a harness refusal never masks the outcome."""
+
+        try:
+            run_git(
+                repository_path, ["worktree", "remove", "--force", temp_dir],
+                timeout=RECOVERY_TIMEOUT_SECONDS,
+            )
+        except GitRepositoryError:
+            pass

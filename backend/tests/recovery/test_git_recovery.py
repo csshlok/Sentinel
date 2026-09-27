@@ -452,3 +452,104 @@ def test_retrying_execute_on_an_already_recovered_plan_does_not_corrupt_it(tmp_p
     # silently repeating success -- exactly why RecoveryService must not
     # call execute() again once a plan is terminal.
     assert second.status is RecoveryStatus.CONFLICTED
+
+
+def test_execute_turns_a_harness_refusal_into_a_terminal_plan(tmp_path) -> None:
+    """CR-02: a hostile config that makes every run_git raise must not escape
+    execute after the process tree was terminated; the plan is terminal and
+    still carries processes_terminated so the caller journals it."""
+
+    from pathlib import Path
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    engine = GitRecoveryEngine(database, process_tree_terminator=lambda change_id: 3)
+    plan = engine.plan(change)
+    assert plan.actions and plan.actions[0].supported
+    # The agent now plants a driver name the harness cannot override.
+    with (Path(repo) / ".git" / "config").open("a", encoding="utf-8") as config:
+        config.write('[filter "a=b"]\n\tsmudge = x\n')
+
+    result = engine.execute(change, plan, "approval-token-123")
+
+    assert result.status is RecoveryStatus.RECOVERY_FAILED
+    assert result.completed_at is not None
+    assert result.processes_terminated == 3
+    assert any(conflict.startswith("Git refused to run:") for conflict in result.conflicts)
+
+
+def test_a_refusal_inside_the_recovery_worktree_still_deletes_the_branch(
+    tmp_path, monkeypatch
+) -> None:
+    """CR-02: a raise from run_git inside the temporary worktree must not skip
+    worktree removal or `branch -D`, or every later execute would fail."""
+
+    from backend.app.git.errors import GitCommandError
+    from backend.app.recovery import git_recovery
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    engine = GitRecoveryEngine(database)
+    plan = engine.plan(change)
+    real_run_git = git_recovery.run_git
+
+    def refusing_in_worktree(cwd, args, **kwargs):
+        if args and args[0] == "revert":
+            raise GitCommandError("Git configuration uses an unsupported driver name.")
+        return real_run_git(cwd, args, **kwargs)
+
+    monkeypatch.setattr(git_recovery, "run_git", refusing_in_worktree)
+    result = engine.execute(change, plan, "approval-token-123")
+
+    assert result.status is RecoveryStatus.CONFLICTED
+    assert result.completed_at is not None
+    assert any("Git refused to run:" in conflict for conflict in result.conflicts)
+    dedicated = f"change-assurance/recovery/{change.id}"
+    assert dedicated not in _run(repo, "branch", "--list")
+    assert len(_run(repo, "worktree", "list", "--porcelain").split("\n\n")) == 1
+
+    # With the refusal gone, a fresh execute can create the branch again.
+    monkeypatch.setattr(git_recovery, "run_git", real_run_git)
+    retried = engine.execute(change, engine.plan(change), "approval-token-123")
+    assert retried.status is RecoveryStatus.RECOVERED
+
+
+def test_a_preview_refusal_is_reported_as_a_conflict_not_raised(tmp_path, monkeypatch) -> None:
+    from backend.app.git.errors import GitCommandError
+    from backend.app.recovery import git_recovery
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    real_run_git = git_recovery.run_git
+
+    def refusing_in_worktree(cwd, args, **kwargs):
+        if args and args[0] == "reset":
+            raise GitCommandError("Git configuration could not be inspected.")
+        return real_run_git(cwd, args, **kwargs)
+
+    monkeypatch.setattr(git_recovery, "run_git", refusing_in_worktree)
+    plan = GitRecoveryEngine(database).plan(change)
+
+    assert plan.actions and not plan.actions[0].supported
+    assert any("Git refused to run:" in conflict for conflict in plan.conflicts)
+    assert len(_run(repo, "worktree", "list", "--porcelain").split("\n\n")) == 1
+
+
+def test_execute_refuses_a_missing_baseline_before_terminating_anything(tmp_path) -> None:
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    calls: list[object] = []
+    engine = GitRecoveryEngine(
+        database, process_tree_terminator=lambda change_id: calls.append(change_id) or 1,
+    )
+    plan = engine.plan(change)
+    with database.connection() as connection:
+        connection.execute("DELETE FROM git_checkpoints WHERE change_id = ?", (str(change.id),))
+
+    with pytest.raises(AppError):
+        engine.execute(change, plan, "approval-token-123")
+    assert calls == []
