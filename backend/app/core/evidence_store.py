@@ -18,8 +18,12 @@ restriction keeps other local accounts out; it does not keep out processes
 running as the same user.
 
 Moving an existing store is explicit (`sentinel migrate-store`, `migrate_store`
-below). Startup never copies a legacy `.change-assurance` store on its own. It
-only logs a warning that one exists. The migration reads the source through a
+below). Startup never copies a legacy `.change-assurance` store on its own.
+When a legacy store exists in the working directory and the default store has
+not been created yet, startup refuses (`EVIDENCE_STORE_MIGRATION_REQUIRED`)
+instead of creating a fresh default store that would then block the migration
+(`ensure_no_unmigrated_legacy_store`). Otherwise it only logs a warning that a
+legacy store is left behind. The migration reads the source through a
 read-only SQLite connection, copies it with the online backup API, requires
 `PRAGMA integrity_check` to return exactly `ok` on the copy, never overwrites
 an existing target database or token, and leaves the source in place.
@@ -38,6 +42,7 @@ from backend.app.core.auth import TOKEN_FILENAME
 from backend.app.core.errors import (
     evidence_store_inside_repository,
     evidence_store_migration_integrity_failed,
+    evidence_store_migration_required,
     evidence_store_migration_source_missing,
     evidence_store_migration_target_exists,
     evidence_store_unsafe_location,
@@ -101,10 +106,39 @@ def ensure_store_outside_repository(database_path: Path) -> None:
         raise evidence_store_inside_repository(str(database_path), str(root))
 
 
+def ensure_no_unmigrated_legacy_store(
+    database_path: Path,
+    *,
+    cwd: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Refuse to create a fresh default store while a legacy store awaits migration.
+
+    Applies only when `database_path` is the default store and neither its
+    database nor its api_token exists yet (either one makes `migrate-store`
+    refuse the target). An operator-chosen CHANGE_ASSURANCE_DB_PATH, or a
+    default store that already exists (for example after `migrate-store`),
+    is left to `warn_if_legacy_store_present`.
+    """
+
+    target = Path(database_path)
+    legacy = legacy_database_path(cwd)
+    try:
+        if target.resolve() != default_database_path(environ).resolve():
+            return
+        if _exists(target) or _exists(target.parent / TOKEN_FILENAME):
+            return
+        if not legacy.is_file() or legacy.resolve() == target.resolve():
+            return
+    except OSError:
+        return
+    raise evidence_store_migration_required(str(legacy), str(target))
+
+
 def warn_if_legacy_store_present(
     database_path: Path, *, cwd: Path | None = None, logger: logging.Logger
 ) -> None:
-    """Log (never copy, never refuse) when a legacy in-repository store is left behind."""
+    """Log (never copy) when a legacy in-repository store is left behind."""
 
     legacy = legacy_database_path(cwd)
     try:
@@ -115,8 +149,10 @@ def warn_if_legacy_store_present(
     except OSError:
         return
     logger.warning(
-        "A legacy evidence store exists at %s but Sentinel now uses %s. "
-        "Run `sentinel migrate-store` to copy it, then delete the old store.",
+        "A legacy evidence store remains at %s but Sentinel uses %s. If it was "
+        "never migrated, stop Sentinel and run `sentinel migrate-store --to` a "
+        "location that does not exist yet; otherwise delete the old directory "
+        "(it holds a stale API token).",
         legacy,
         database_path,
     )

@@ -168,6 +168,19 @@ def evidence_store_inside_repository(database_path: str, repository_root: str) -
     )
 
 
+def evidence_store_migration_required(legacy_path: str, database_path: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_REQUIRED",
+        "A legacy evidence store exists in this directory and the default store has "
+        "not been created yet. Sentinel refuses to start with a new, empty store. "
+        "Run `sentinel migrate-store` (or `python -m backend.app.cli migrate-store`) "
+        "from this directory to move it first, or set CHANGE_ASSURANCE_DB_PATH to "
+        "choose a store explicitly.",
+        status_code=409,
+        details={"legacy_path": legacy_path, "database_path": database_path},
+    )
+
+
 def evidence_store_unsafe_location(path: str) -> AppError:
     return AppError(
         "EVIDENCE_STORE_UNSAFE_LOCATION",

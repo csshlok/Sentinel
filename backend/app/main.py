@@ -32,6 +32,7 @@ from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
     default_store_directory,
+    ensure_no_unmigrated_legacy_store,
     ensure_store_outside_repository,
     prepare_store_directory,
     warn_if_legacy_store_present,
@@ -126,6 +127,9 @@ def create_app(
     resolved_settings = settings or Settings.from_environment()
     # Refuse an agent-reachable store before anything (token, database) is written.
     ensure_store_outside_repository(resolved_settings.database_path)
+    # A legacy store waiting for `migrate-store` must not be shadowed by a fresh
+    # default store (the migration never overwrites an existing target).
+    ensure_no_unmigrated_legacy_store(resolved_settings.database_path)
     warn_if_legacy_store_present(resolved_settings.database_path, logger=LOGGER)
     default_directory = default_store_directory()
     if resolved_settings.database_path.parent.resolve() == default_directory.resolve():

@@ -202,6 +202,98 @@ def test_no_legacy_warning_without_a_legacy_store_or_when_it_is_the_configured_p
     assert caplog.records == []
 
 
+def _legacy_store(cwd: Path) -> Path:
+    """A real legacy `<cwd>/.change-assurance` store with an api_token beside it."""
+
+    from backend.app.core.auth import load_or_create_api_token
+    from backend.app.core.database import Database
+
+    legacy = cwd / LEGACY_STORE_DIRECTORY / DATABASE_FILENAME
+    legacy.parent.mkdir(parents=True)
+    Database(legacy).initialize()
+    load_or_create_api_token(legacy)
+    return legacy
+
+
+@pytest.fixture
+def default_store_env(tmp_path, monkeypatch) -> tuple[Path, Path]:
+    """No conftest redirect: the real default-location code path under tmp_path."""
+
+    local = tmp_path / "local"
+    local.mkdir()
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.delenv("CHANGE_ASSURANCE_DB_PATH", raising=False)
+    monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.chdir(work)
+    return local, work
+
+
+def test_startup_refuses_a_fresh_default_store_while_a_legacy_store_awaits_migration(
+    default_store_env,
+) -> None:
+    """CR-03 / revised D-05: refuse instead of creating a store that blocks migrate-store."""
+
+    local, work = default_store_env
+    legacy = _legacy_store(work)
+
+    with pytest.raises(AppError) as caught:
+        create_app(credential_store=InMemoryCredentialStore())
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_REQUIRED"
+    assert caught.value.status_code == 409
+    assert "migrate-store" in caught.value.message
+    assert caught.value.details == {
+        "legacy_path": str(legacy),
+        "database_path": str(default_database_path().resolve()),
+    }
+    # Refuse-before-write: no default directory, token or database was created.
+    assert not (local / STORE_DIRECTORY_NAME).exists()
+
+
+def test_the_documented_upgrade_flow_works_after_a_refused_startup(default_store_env) -> None:
+    """Start (refused) -> migrate-store with defaults -> start succeeds on the migrated store."""
+
+    local, work = default_store_env
+    legacy = _legacy_store(work)
+    with pytest.raises(AppError):
+        create_app(credential_store=InMemoryCredentialStore())
+
+    result = evidence_store.migrate_store(source=legacy, target=default_database_path())
+    assert result.target_database == local / STORE_DIRECTORY_NAME / DATABASE_FILENAME
+
+    app = create_app(credential_store=InMemoryCredentialStore())
+    token_path = local / STORE_DIRECTORY_NAME / "api_token"
+    assert token_path.read_text(encoding="utf-8").strip() == app.state.api_token
+    assert legacy.is_file()  # the old store is left in place for the user to delete
+
+
+def test_startup_proceeds_with_a_warning_when_the_default_store_already_exists(
+    default_store_env, caplog
+) -> None:
+    local, work = default_store_env
+    create_app(credential_store=InMemoryCredentialStore())  # default store now exists
+    _legacy_store(work)
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.main"):
+        create_app(credential_store=InMemoryCredentialStore())
+
+    assert any("legacy evidence store" in record.getMessage() for record in caplog.records)
+
+
+def test_an_operator_chosen_store_is_not_refused_for_a_legacy_store(
+    default_store_env, tmp_path
+) -> None:
+    _, work = default_store_env
+    _legacy_store(work)
+    chosen = tmp_path / "chosen" / DATABASE_FILENAME
+
+    create_app(settings=Settings(database_path=chosen), credential_store=InMemoryCredentialStore())
+
+    assert (chosen.parent / "api_token").is_file()
+
+
 def test_module_exports_the_legacy_directory_name_only_here() -> None:
     assert evidence_store.LEGACY_STORE_DIRECTORY == ".change-assurance"
 
@@ -294,6 +386,7 @@ def test_create_app_restricts_the_default_directory_before_the_token_exists(
     monkeypatch.delenv("CHANGE_ASSURANCE_DB_PATH", raising=False)
     monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.chdir(tmp_path)  # no legacy store in the working directory
 
     app = create_app(credential_store=InMemoryCredentialStore())
 
@@ -327,6 +420,7 @@ def test_create_app_default_directory_has_no_inherited_aces(tmp_path, monkeypatc
     monkeypatch.delenv("CHANGE_ASSURANCE_DB_PATH", raising=False)
     monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.chdir(tmp_path)  # no legacy store in the working directory
 
     create_app(credential_store=InMemoryCredentialStore())
 
