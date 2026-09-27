@@ -126,6 +126,11 @@ def create_app(
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
     # Refuse an agent-reachable store before anything (token, database) is written.
+    # The configured (unresolved) path is checked too: a junction inside a
+    # repository that points at an outside directory still leaves the store
+    # reachable through the repository.
+    if resolved_settings.configured_database_path is not None:
+        ensure_store_outside_repository(resolved_settings.configured_database_path)
     ensure_store_outside_repository(resolved_settings.database_path)
     # A legacy store waiting for `migrate-store` must not be shadowed by a fresh
     # default store (the migration never overwrites an existing target).

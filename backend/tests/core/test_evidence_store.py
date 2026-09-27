@@ -171,6 +171,37 @@ def test_create_app_refuses_a_junction_that_points_into_a_repository(tmp_path) -
     assert list((repo / "state").iterdir()) == []
 
 
+def test_create_app_refuses_an_in_repository_junction_to_an_outside_store(
+    tmp_path, monkeypatch
+) -> None:
+    """WR-04: the reverse junction (repository -> outside) is refused on the lexical path."""
+
+    repo = make_repo(tmp_path / "repo")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = repo / ".store"
+    _junction(outside, link)
+    monkeypatch.setenv("CHANGE_ASSURANCE_DB_PATH", str(link / DATABASE_FILENAME))
+    monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
+
+    settings = Settings.from_environment()
+    # The resolved path alone is outside every repository.
+    assert enclosing_git_worktree(settings.database_path) is None
+    assert settings.configured_database_path == link / DATABASE_FILENAME
+
+    with pytest.raises(AppError) as caught:
+        create_app(settings=settings, credential_store=InMemoryCredentialStore())
+    assert caught.value.code == "EVIDENCE_STORE_INSIDE_REPOSITORY"
+    assert list(outside.iterdir()) == []
+
+
+def test_settings_keep_the_unresolved_configured_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHANGE_ASSURANCE_DB_PATH", str(tmp_path / "a" / ".." / "db.sqlite3"))
+    settings = Settings.from_environment()
+    assert settings.database_path == (tmp_path / "db.sqlite3").resolve()
+    assert settings.configured_database_path == tmp_path / "db.sqlite3"
+
+
 # ---- legacy store warning -----------------------------------------------------
 
 

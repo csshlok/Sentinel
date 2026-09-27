@@ -17,15 +17,18 @@ class Settings:
     verification_output_limit_bytes: int = 262_144
     list_limit: int = 100
     api_token: str | None = None
+    # The configured path before junction/symlink resolution. Startup checks
+    # it as well as `database_path`, so an in-repository junction that points
+    # at an outside store is still refused.
+    configured_database_path: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
         configured = os.environ.get("CHANGE_ASSURANCE_DB_PATH")
-        database_path = (
-            Path(configured) if configured else default_database_path(os.environ)
-        ).resolve()
+        unresolved = Path(configured) if configured else default_database_path(os.environ)
         return cls(
-            database_path=database_path,
+            database_path=unresolved.resolve(),
+            configured_database_path=Path(os.path.abspath(unresolved)),
             ui_origin=os.environ.get(
                 "CHANGE_ASSURANCE_UI_ORIGIN", "http://localhost:5173"
             ),
