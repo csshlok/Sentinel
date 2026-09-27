@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from backend.app.contracts.models import (
@@ -27,6 +28,8 @@ from backend.app.contracts.models import (
     RecoveryStatus,
 )
 from backend.app.core.database import Database
+from backend.app.execution._process import CapturedProcess
+from backend.app.git.safe_exec import run_git
 from backend.app.recovery.checkpoints import get_checkpoint_by_id, get_earliest_checkpoint
 from backend.app.recovery.errors import recovery_no_checkpoint_evidence, recovery_not_approved
 
@@ -37,6 +40,18 @@ _UNSUPPORTED_EFFECTS = (
     "Only Change-owned process trees still tracked by this daemon instance can be "
     "terminated; process trees from before a restart cannot be recovered.",
 )
+
+# Worktree creation, population and multi-commit reverts can take longer than a
+# metadata query on a large repository; still bounded.
+RECOVERY_TIMEOUT_SECONDS = 120
+
+
+def _failed(result: CapturedProcess) -> bool:
+    return result.returncode != 0 or result.timed_out or result.incomplete
+
+
+def _stderr(result: CapturedProcess) -> str:
+    return result.stderr.decode("utf-8", errors="replace").strip()
 
 
 def _default_clock() -> datetime:
@@ -234,34 +249,13 @@ class GitRecoveryEngine:
     def _commits_between(
         repository_path: str, baseline_sha: str, current_sha: str
     ) -> list[str] | None:
-        ancestor_check = subprocess.run(
-            [
-                "git",
-                "-C",
-                repository_path,
-                "merge-base",
-                "--is-ancestor",
-                baseline_sha,
-                current_sha,
-            ],
-            capture_output=True,
-            shell=False,
+        ancestor_check = run_git(
+            repository_path, ["merge-base", "--is-ancestor", baseline_sha, current_sha]
         )
-        if ancestor_check.returncode != 0:
+        if _failed(ancestor_check):
             return None
-        listed = subprocess.run(
-            [
-                "git",
-                "-C",
-                repository_path,
-                "rev-list",
-                "--reverse",
-                f"{baseline_sha}..{current_sha}",
-            ],
-            capture_output=True,
-            shell=False,
-        )
-        if listed.returncode != 0:
+        listed = run_git(repository_path, ["rev-list", "--reverse", f"{baseline_sha}..{current_sha}"])
+        if _failed(listed) or listed.truncated:
             return None
         return [
             line
@@ -277,52 +271,47 @@ class GitRecoveryEngine:
         current_sha: str,
         commits: list[str],
     ) -> str | None:
-        """Preview a revert in a throwaway worktree. Never mutates the target repository."""
+        """Preview a revert in a throwaway worktree. Never mutates the target repository.
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            created = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    repository_path,
-                    "worktree",
-                    "add",
-                    "--detach",
-                    temp_dir,
-                    current_sha,
-                ],
-                capture_output=True,
-                shell=False,
+        The worktree is created with ``--no-checkout`` and populated by a
+        hardened ``reset --hard`` whose driver discovery runs against the new
+        worktree itself, so filters defined only through worktree-conditional
+        includes are discovered and neutralized before any content is written.
+        """
+
+        del preview_branch  # never created; the worktree stays detached
+        repository_root = (Path(repository_path),)
+        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-") as temp_dir:
+            created = run_git(
+                repository_path,
+                ["worktree", "add", "--no-checkout", "--detach", temp_dir, current_sha],
+                timeout=RECOVERY_TIMEOUT_SECONDS,
             )
-            if created.returncode != 0:
-                return (
-                    "Could not create a preview worktree: "
-                    + created.stderr.decode("utf-8", errors="replace").strip()
-                )
+            if _failed(created):
+                return "Could not create a preview worktree: " + _stderr(created)
             try:
-                reverted = subprocess.run(
-                    ["git", "-C", temp_dir, "revert", "--no-commit", *reversed(commits)],
-                    capture_output=True,
-                    shell=False,
+                populated = run_git(
+                    temp_dir, ["reset", "--quiet", "--hard", "HEAD"],
+                    extra_roots=repository_root, timeout=RECOVERY_TIMEOUT_SECONDS,
                 )
-                if reverted.returncode != 0:
-                    subprocess.run(
-                        ["git", "-C", temp_dir, "revert", "--abort"],
-                        capture_output=True,
-                        shell=False,
-                    )
+                if _failed(populated):
+                    return "Could not create a preview worktree: " + _stderr(populated)
+                reverted = run_git(
+                    temp_dir, ["revert", "--no-commit", *reversed(commits)],
+                    extra_roots=repository_root, timeout=RECOVERY_TIMEOUT_SECONDS,
+                )
+                if _failed(reverted):
+                    run_git(temp_dir, ["revert", "--abort"], extra_roots=repository_root)
                     return (
                         "Reverting these commits produced a merge conflict: "
-                        + reverted.stderr.decode("utf-8", errors="replace").strip()
+                        + _stderr(reverted)
                     )
                 return None
             finally:
-                subprocess.run(
-                    ["git", "-C", repository_path, "worktree", "remove", "--force", temp_dir],
-                    capture_output=True,
-                    shell=False,
+                run_git(
+                    repository_path, ["worktree", "remove", "--force", temp_dir],
+                    timeout=RECOVERY_TIMEOUT_SECONDS,
                 )
-                del preview_branch  # never created; the worktree stayed detached
 
     @classmethod
     def _revert_on_dedicated_branch(
