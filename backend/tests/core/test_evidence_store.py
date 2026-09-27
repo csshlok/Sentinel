@@ -566,7 +566,7 @@ def quiet_acl(monkeypatch) -> _AclRecorder:
     return fake
 
 
-def test_migrate_store_round_trip_copies_database_and_token_without_touching_the_source(
+def test_migrate_store_round_trip_copies_the_database_and_rotates_the_token(
     tmp_path, quiet_acl
 ) -> None:
     import sqlite3
@@ -582,7 +582,8 @@ def test_migrate_store_round_trip_copies_database_and_token_without_touching_the
 
     assert result.source_database == source.resolve()
     assert result.target_database == target
-    assert result.token_copied is True
+    assert result.target_token == target.parent / "api_token"
+    assert result.token_rotated is True
     assert result.integrity == "ok"
     assert evidence_store._integrity_check(target) == [("ok",)]
     assert Database(target).schema_version() == Database(source).schema_version()
@@ -592,38 +593,88 @@ def test_migrate_store_round_trip_copies_database_and_token_without_touching_the
     finally:
         connection.close()
     assert rows == [("one",), ("two",), ("three",)]
-    assert (target.parent / "api_token").read_text(encoding="utf-8").strip() == token
+    new_token = (target.parent / "api_token").read_text(encoding="utf-8").strip()
+    # Revised D-06: the legacy token is never copied; a fresh one is generated.
+    assert new_token and new_token != token
+    assert len(new_token) >= 40
     assert (target.parent / "api_token", False) in quiet_acl.calls
     assert _sha256(source) == source_hash
     assert _sha256(source_token) == token_hash
 
 
-def test_a_migrated_store_is_accepted_by_create_app_with_the_copied_token(
+def test_a_migrated_store_is_accepted_by_create_app_with_the_rotated_token(
     tmp_path, quiet_acl
 ) -> None:
     source, token = _build_source_store(tmp_path / "old")
     target = tmp_path / "new" / "change_assurance.sqlite3"
-    evidence_store.migrate_store(source=source, target=target)
+    result = evidence_store.migrate_store(source=source, target=target)
 
     app = create_app(
         settings=Settings(database_path=target),
         credential_store=InMemoryCredentialStore(),
     )
 
-    assert app.state.api_token == token
+    assert app.state.api_token == result.target_token.read_text(encoding="utf-8").strip()
+    assert app.state.api_token != token
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code == 200
 
 
-def test_migrate_store_without_a_source_token_copies_only_the_database(tmp_path, quiet_acl) -> None:
+def test_migrate_store_without_a_source_token_still_creates_a_fresh_one(tmp_path, quiet_acl) -> None:
     source, _token = _build_source_store(tmp_path / "old")
     (source.parent / "api_token").unlink()
     target = tmp_path / "new" / "change_assurance.sqlite3"
 
     result = evidence_store.migrate_store(source=source, target=target)
 
-    assert result.token_copied is False
+    assert result.token_rotated is True
+    assert (target.parent / "api_token").read_text(encoding="utf-8").strip()
+
+
+def test_migrate_store_never_reads_the_legacy_token(tmp_path, quiet_acl, monkeypatch) -> None:
+    source, token = _build_source_store(tmp_path / "old")
+    legacy_token = (source.parent / "api_token").resolve()
+    real_read_bytes, real_read_text = Path.read_bytes, Path.read_text
+
+    def guarded_bytes(self):
+        assert self.resolve() != legacy_token, "the legacy token must never be read"
+        return real_read_bytes(self)
+
+    def guarded_text(self, *args, **kwargs):
+        assert self.resolve() != legacy_token, "the legacy token must never be read"
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_bytes)
+    monkeypatch.setattr(Path, "read_text", guarded_text)
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+
+    evidence_store.migrate_store(source=source, target=target)
+
+    monkeypatch.setattr(Path, "read_text", real_read_text)
+    assert (target.parent / "api_token").read_text(encoding="utf-8").strip() != token
+
+
+def test_a_token_that_cannot_be_restricted_fails_and_rolls_back_the_migration(
+    tmp_path, monkeypatch
+) -> None:
+    """Revised D-06: failure to restrict the new token is an error, not ignored."""
+
+    source, _token = _build_source_store(tmp_path / "old")
+    source_hash = _sha256(source)
+    monkeypatch.setattr(
+        evidence_store, "restrict_to_current_user",
+        lambda path, *, directory=False: not Path(path).name == "api_token",
+    )
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_TOKEN_UNPROTECTED"
+    assert caught.value.details == {"path": str(target.parent / "api_token")}
+    assert not target.exists()
     assert not (target.parent / "api_token").exists()
+    assert _sha256(source) == source_hash
 
 
 def test_migrate_store_refuses_an_existing_target_database(tmp_path, quiet_acl) -> None:

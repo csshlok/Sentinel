@@ -57,12 +57,16 @@ def test_migrate_store_json_success(tmp_path, acl_recorder) -> None:
     payload = json.loads(result.stdout)
     assert payload["source"] == str(source.resolve())
     assert payload["target"] == str(target)
-    assert payload["token_copied"] is True
+    assert payload["token_rotated"] is True
+    assert payload["token_path"] == str(target.parent / "api_token")
     assert payload["integrity"] == "ok"
     assert str(source.resolve()) in payload["next_step"]
-    assert "Delete it after verifying" in payload["next_step"]
-    assert (target.parent / "api_token").read_text(encoding="utf-8").strip() == token
+    assert "must re-read it" in payload["next_step"]
+    assert "stale token" in payload["next_step"]
+    new_token = (target.parent / "api_token").read_text(encoding="utf-8").strip()
+    assert new_token and new_token != token
     assert source.is_file()
+    assert (source.parent / "api_token").read_text(encoding="utf-8").strip() == token
 
 
 def test_migrate_store_existing_target_exits_1_with_the_error_payload(tmp_path, acl_recorder) -> None:
@@ -108,7 +112,7 @@ def test_migrate_store_defaults_move_the_legacy_store_to_localappdata(
     expected = tmp_path / "local" / "Sentinel" / "change_assurance.sqlite3"
     assert json.loads(result.stdout)["target"] == str(expected)
     assert expected.is_file()
-    assert (expected.parent / "api_token").read_text(encoding="utf-8").strip() == token
+    assert (expected.parent / "api_token").read_text(encoding="utf-8").strip() != token
     assert acl_recorder.calls[0] == (tmp_path / "local" / "Sentinel", True)
     assert _sha256(legacy_source) == source_hash
 

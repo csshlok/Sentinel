@@ -723,7 +723,8 @@ def migrate_store_command(
 ) -> None:
     """Copy an evidence store to a new location (local; run with the backend stopped).
 
-    Never overwrites an existing target and never changes the source.
+    Never overwrites an existing target and never changes the source. The API
+    token is rotated: the new store gets a fresh token, never the old one.
     """
     console = _console(no_color)
     source = Path(from_path) if from_path else legacy_database_path(Path.cwd())
@@ -743,11 +744,14 @@ def migrate_store_command(
     summary = {
         "source": str(result.source_database),
         "target": str(result.target_database),
-        "token_copied": result.token_copied,
+        "token_rotated": result.token_rotated,
+        "token_path": str(result.target_token),
         "integrity": result.integrity,
         "next_step": (
-            f"The old store was left in place at {result.source_database}. "
-            "Delete it after verifying the new store."
+            f"A new API token was written to {result.target_token}; clients that "
+            "used the old token (desktop app, CLI) must re-read it. The old store "
+            f"was left in place at {result.source_database}. Delete its directory "
+            "(it still holds the stale token) after verifying the new store."
         ),
     }
     if json_:

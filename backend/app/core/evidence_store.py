@@ -34,6 +34,14 @@ legacy store is left behind. The migration reads the source through a
 read-only SQLite connection, copies it with the online backup API, requires
 `PRAGMA integrity_check` to return exactly `ok` on the copy, never overwrites
 an existing target database or token, and leaves the source in place.
+
+The migration rotates the API token (revised D-06): it never copies the
+legacy `api_token`, because that token sat inside a working tree an agent may
+already have read. The new store gets a freshly generated token restricted to
+the current user; if that restriction cannot be applied the migration fails
+and is rolled back. Clients that used the old token must re-read the new one,
+and the old store directory (which still holds the stale token) should be
+deleted after the new store is verified.
 """
 
 from __future__ import annotations
@@ -45,13 +53,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from backend.app.core.auth import TOKEN_FILENAME
+from backend.app.core.auth import TOKEN_FILENAME, new_api_token
 from backend.app.core.errors import (
     evidence_store_inside_repository,
     evidence_store_migration_integrity_failed,
     evidence_store_migration_required,
     evidence_store_migration_source_missing,
     evidence_store_migration_target_exists,
+    evidence_store_migration_token_unprotected,
     evidence_store_unsafe_location,
 )
 from backend.app.execution.acl import restrict_to_current_user
@@ -278,7 +287,8 @@ _SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 class StoreMigrationResult:
     source_database: Path
     target_database: Path
-    token_copied: bool
+    target_token: Path
+    token_rotated: bool
     integrity: str
 
 
@@ -317,11 +327,12 @@ def _remove_created(paths: list[Path]) -> None:
 def migrate_store(
     *, source: Path, target: Path, logger: logging.Logger | None = None
 ) -> StoreMigrationResult:
-    """Copy an evidence store (database + api_token) to a new location.
+    """Copy an evidence store's database to a new location with a fresh API token.
 
-    Never writes to, moves, or deletes the source. Never overwrites an
-    existing target database or token. On failure only the files this call
-    created are removed.
+    Never writes to, moves, or deletes the source, and never reads or copies
+    the source token. Never overwrites an existing target database or token.
+    On failure (including a token that cannot be restricted to the current
+    user) only the files this call created are removed.
     """
 
     log = logger or logging.getLogger(__name__)
@@ -387,29 +398,32 @@ def migrate_store(
                 f"PRAGMA integrity_check returned {rows[:3]!r}"
             )
 
-        token_copied = False
-        source_token = source_db.parent / TOKEN_FILENAME
-        if source_token.is_file():
-            data = source_token.read_bytes()
-            try:
-                descriptor = os.open(
-                    target_token, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY, 0o600
-                )
-            except FileExistsError:
-                raise evidence_store_migration_target_exists(str(target_token)) from None
-            created.append(target_token)
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(data)
-            restrict_to_current_user(target_token)
-            token_copied = True
+        try:
+            descriptor = os.open(
+                target_token, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY, 0o600
+            )
+        except FileExistsError:
+            raise evidence_store_migration_target_exists(str(target_token)) from None
+        created.append(target_token)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(new_api_token().encode("ascii"))
+        if not restrict_to_current_user(target_token):
+            raise evidence_store_migration_token_unprotected(str(target_token))
     except BaseException:
         rollback()
         raise
 
-    log.info("Migrated evidence store %s to %s", source_db, target_db)
+    log.info("Migrated evidence store %s to %s with a new API token", source_db, target_db)
+    log.warning(
+        "The API token was rotated: clients that used the token from %s must re-read "
+        "%s. Delete the old store directory %s (it still holds the stale token) after "
+        "verifying the new store.",
+        source_db.parent, target_token, source_db.parent,
+    )
     return StoreMigrationResult(
         source_database=source_db,
         target_database=target_db,
-        token_copied=token_copied,
+        target_token=target_token,
+        token_rotated=True,
         integrity="ok",
     )

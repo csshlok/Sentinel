@@ -48,6 +48,12 @@ def _restrict_to_current_user(token_path: Path) -> None:
     restrict_to_current_user(token_path)
 
 
+def new_api_token() -> str:
+    """A fresh random API bearer token (the one format every store uses)."""
+
+    return secrets.token_urlsafe(32)
+
+
 def load_or_create_api_token(database_path: Path) -> str:
     """Return the persisted token for this database, generating one if absent."""
 
@@ -58,7 +64,7 @@ def load_or_create_api_token(database_path: Path) -> str:
         if existing:
             _restrict_to_current_user(token_path)
             return existing
-    token = secrets.token_urlsafe(32)
+    token = new_api_token()
     token_path.write_text(token, encoding="utf-8")
     _restrict_to_current_user(token_path)
     return token

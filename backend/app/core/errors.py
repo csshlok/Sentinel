@@ -226,6 +226,16 @@ def evidence_store_migration_target_exists(path: str) -> AppError:
     )
 
 
+def evidence_store_migration_token_unprotected(path: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_TOKEN_UNPROTECTED",
+        "The new API token could not be restricted to the current user, so the "
+        "migration was rolled back. The source store was not changed.",
+        status_code=500,
+        details={"path": path},
+    )
+
+
 def evidence_store_migration_integrity_failed(reason: str) -> AppError:
     return AppError(
         "EVIDENCE_STORE_MIGRATION_INTEGRITY_FAILED",
