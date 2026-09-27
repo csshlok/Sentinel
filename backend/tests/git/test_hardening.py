@@ -260,3 +260,25 @@ def test_submodule_status_is_not_delegated_to_unreviewed_nested_configuration(re
     git(repo, "-c", "protocol.file.allow=always", "submodule", "add", str(nested), "nested")
     with pytest.raises(GitCommandError, match="Submodule inspection"):
         GitRepositoryInspector().inspect(str(repo), 100)
+
+
+def test_core_worktree_decoy_is_refused_instead_of_inspected(repo, tmp_path):
+    """WR-03: an agent-set core.worktree must not redirect evidence to a clean clone."""
+
+    decoy = tmp_path / "decoy"
+    subprocess.run(["git", "clone", "-q", str(repo), str(decoy)], check=True, capture_output=True)
+    (repo / "modify.py").write_text("agent edit\n", encoding="utf-8")
+    git(repo, "config", "core.worktree", str(decoy))
+    # Positive control: plain Git now reports the decoy as the work tree.
+    shown = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
+    assert Path(shown).resolve() == decoy.resolve()
+
+    with pytest.raises(RepositoryValidationError) as caught:
+        GitRepositoryInspector().inspect(str(repo), 1000)
+    assert caught.value.code == "REPOSITORY_WORKTREE_REDIRECTED"
+
+
+def test_a_subdirectory_of_a_repository_is_still_accepted(repo):
+    sub = repo / "pkg"
+    sub.mkdir()
+    assert GitRepositoryInspector().validate_repository(str(sub)).root == str(repo.resolve())

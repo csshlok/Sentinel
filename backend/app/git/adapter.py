@@ -145,7 +145,18 @@ class GitRepositoryInspector:
                 "NOT_A_GIT_REPOSITORY",
                 "The selected path is not inside a Git work tree.",
             ) from exc
-        return str(Path(root).resolve())
+        root_path = Path(root).resolve()
+        if root_path != candidate and root_path not in candidate.parents:
+            # `core.worktree` in the (agent-writable) repository config can point
+            # Git at any directory, for example a clean clone, so inspection would
+            # describe that decoy instead of the tree the agent edited.
+            raise RepositoryValidationError(
+                "REPOSITORY_WORKTREE_REDIRECTED",
+                "The repository's configuration points its work tree outside the "
+                "selected path (core.worktree); Sentinel refuses to inspect it.",
+                details={"work_tree": str(root_path)},
+            )
+        return str(root_path)
 
     @classmethod
     def _run_git(cls, root: str, args: list[str], session: SafeGitSession | None = None) -> str:
