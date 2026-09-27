@@ -176,3 +176,32 @@ def evidence_store_unsafe_location(path: str) -> AppError:
         status_code=409,
         details={"path": path},
     )
+
+
+def evidence_store_migration_source_missing(path: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_SOURCE_MISSING",
+        "There is no evidence store database at the migration source.",
+        status_code=404,
+        details={"path": path},
+    )
+
+
+def evidence_store_migration_target_exists(path: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_TARGET_EXISTS",
+        "The migration target already exists. migrate-store never overwrites an "
+        "existing store or token; choose another --to or remove it yourself.",
+        status_code=409,
+        details={"path": path},
+    )
+
+
+def evidence_store_migration_integrity_failed(reason: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_INTEGRITY_FAILED",
+        "The migrated copy failed its integrity check and was removed. The "
+        "source store was not changed.",
+        status_code=500,
+        details={"reason": reason},
+    )

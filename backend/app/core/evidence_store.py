@@ -17,20 +17,29 @@ directory, or a directory an operator chose with CHANGE_ASSURANCE_DB_PATH. The
 restriction keeps other local accounts out; it does not keep out processes
 running as the same user.
 
-Moving an existing store is explicit (`sentinel migrate-store`). Startup never
-copies a legacy `.change-assurance` store on its own. It only logs a warning
-that one exists.
+Moving an existing store is explicit (`sentinel migrate-store`, `migrate_store`
+below). Startup never copies a legacy `.change-assurance` store on its own. It
+only logs a warning that one exists. The migration reads the source through a
+read-only SQLite connection, copies it with the online backup API, requires
+`PRAGMA integrity_check` to return exactly `ok` on the copy, never overwrites
+an existing target database or token, and leaves the source in place.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
+from backend.app.core.auth import TOKEN_FILENAME
 from backend.app.core.errors import (
     evidence_store_inside_repository,
+    evidence_store_migration_integrity_failed,
+    evidence_store_migration_source_missing,
+    evidence_store_migration_target_exists,
     evidence_store_unsafe_location,
 )
 from backend.app.execution.acl import restrict_to_current_user
@@ -149,3 +158,144 @@ def prepare_store_directory(
         directory,
     )
     return False
+
+
+# ---- explicit migration (D-06) -----------------------------------------------------
+
+_O_BINARY = getattr(os, "O_BINARY", 0)
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+
+
+@dataclass(frozen=True, slots=True)
+class StoreMigrationResult:
+    source_database: Path
+    target_database: Path
+    token_copied: bool
+    integrity: str
+
+
+def _integrity_check(path: Path) -> list[tuple[object, ...]]:
+    connection = sqlite3.connect(path)
+    try:
+        return [tuple(row) for row in connection.execute("PRAGMA integrity_check")]
+    finally:
+        connection.close()
+
+
+def _backup(source_db: Path, target_db: Path) -> None:
+    source_connection = sqlite3.connect(f"{source_db.as_uri()}?mode=ro", uri=True)
+    try:
+        target_connection = sqlite3.connect(target_db)
+        try:
+            source_connection.backup(target_connection)
+        finally:
+            target_connection.close()
+    finally:
+        source_connection.close()
+
+
+def _exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _remove_created(paths: list[Path]) -> None:
+    for path in reversed(paths):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def migrate_store(
+    *, source: Path, target: Path, logger: logging.Logger | None = None
+) -> StoreMigrationResult:
+    """Copy an evidence store (database + api_token) to a new location.
+
+    Never writes to, moves, or deletes the source. Never overwrites an
+    existing target database or token. On failure only the files this call
+    created are removed.
+    """
+
+    log = logger or logging.getLogger(__name__)
+    source_db = Path(source).resolve()
+    if not source_db.is_file():
+        raise evidence_store_migration_source_missing(str(source))
+
+    target_db = Path(os.path.abspath(target))
+    target_token = target_db.parent / TOKEN_FILENAME
+    if _exists(target_db) or target_db.resolve() == source_db:
+        raise evidence_store_migration_target_exists(str(target_db))
+    if _exists(target_token):
+        raise evidence_store_migration_target_exists(str(target_token))
+    ensure_store_outside_repository(target_db)
+
+    parent = target_db.parent
+    if _is_link(parent):
+        raise evidence_store_unsafe_location(str(parent))
+    if parent.resolve() == default_store_directory().resolve():
+        try:
+            prepare_store_directory(parent, logger=log)
+        except ValueError:
+            # Resolves to the default directory under another name: redirected.
+            raise evidence_store_unsafe_location(str(parent)) from None
+    else:
+        parent.mkdir(parents=True, exist_ok=True)
+    if _is_link(parent):
+        raise evidence_store_unsafe_location(str(parent))
+    ensure_store_outside_repository(target_db)
+
+    sidecars = [Path(f"{target_db}{suffix}") for suffix in _SQLITE_SIDECARS]
+    pre_existing_sidecars = {path for path in sidecars if _exists(path)}
+    try:
+        descriptor = os.open(
+            target_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY, 0o600
+        )
+    except FileExistsError:
+        raise evidence_store_migration_target_exists(str(target_db)) from None
+    os.close(descriptor)
+    created: list[Path] = [target_db]
+
+    def rollback() -> None:
+        _remove_created(
+            created + [path for path in sidecars if path not in pre_existing_sidecars]
+        )
+
+    try:
+        try:
+            _backup(source_db, target_db)
+            rows = _integrity_check(target_db)
+        except sqlite3.Error as error:
+            raise evidence_store_migration_integrity_failed(
+                f"SQLite error while copying: {type(error).__name__}"
+            ) from None
+        if rows != [("ok",)]:
+            raise evidence_store_migration_integrity_failed(
+                f"PRAGMA integrity_check returned {rows[:3]!r}"
+            )
+
+        token_copied = False
+        source_token = source_db.parent / TOKEN_FILENAME
+        if source_token.is_file():
+            data = source_token.read_bytes()
+            try:
+                descriptor = os.open(
+                    target_token, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY, 0o600
+                )
+            except FileExistsError:
+                raise evidence_store_migration_target_exists(str(target_token)) from None
+            created.append(target_token)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+            restrict_to_current_user(target_token)
+            token_copied = True
+    except BaseException:
+        rollback()
+        raise
+
+    log.info("Migrated evidence store %s to %s", source_db, target_db)
+    return StoreMigrationResult(
+        source_database=source_db,
+        target_database=target_db,
+        token_copied=token_copied,
+        integrity="ok",
+    )

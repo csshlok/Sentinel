@@ -336,3 +336,223 @@ def test_create_app_default_directory_has_no_inherited_aces(tmp_path, monkeypatc
     block = listing.replace("\r", "").strip().split("\n\n", 1)[0]
     assert "(I)" not in block
     assert "S-1-5-18" in block or "SYSTEM" in block.upper()
+
+
+# ---- migrate_store (Task 3) ---------------------------------------------------------
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _build_source_store(root: Path) -> tuple[Path, str]:
+    """A real initialized store with probe rows and an api_token beside it."""
+
+    import sqlite3
+
+    from backend.app.core.auth import load_or_create_api_token
+    from backend.app.core.database import Database
+
+    database_path = root / "change_assurance.sqlite3"
+    Database(database_path).initialize()
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("CREATE TABLE migration_probe (value TEXT NOT NULL)")
+        connection.executemany(
+            "INSERT INTO migration_probe (value) VALUES (?)", [("one",), ("two",), ("three",)]
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    token = load_or_create_api_token(database_path)
+    return database_path, token
+
+
+@pytest.fixture
+def quiet_acl(monkeypatch) -> _AclRecorder:
+    fake = _AclRecorder()
+    monkeypatch.setattr(evidence_store, "restrict_to_current_user", fake)
+    return fake
+
+
+def test_migrate_store_round_trip_copies_database_and_token_without_touching_the_source(
+    tmp_path, quiet_acl
+) -> None:
+    import sqlite3
+
+    from backend.app.core.database import Database
+
+    source, token = _build_source_store(tmp_path / "old")
+    source_token = source.parent / "api_token"
+    source_hash, token_hash = _sha256(source), _sha256(source_token)
+    target = tmp_path / "new" / "store" / "change_assurance.sqlite3"
+
+    result = evidence_store.migrate_store(source=source, target=target)
+
+    assert result.source_database == source.resolve()
+    assert result.target_database == target
+    assert result.token_copied is True
+    assert result.integrity == "ok"
+    assert evidence_store._integrity_check(target) == [("ok",)]
+    assert Database(target).schema_version() == Database(source).schema_version()
+    connection = sqlite3.connect(target)
+    try:
+        rows = connection.execute("SELECT value FROM migration_probe ORDER BY rowid").fetchall()
+    finally:
+        connection.close()
+    assert rows == [("one",), ("two",), ("three",)]
+    assert (target.parent / "api_token").read_text(encoding="utf-8").strip() == token
+    assert (target.parent / "api_token", False) in quiet_acl.calls
+    assert _sha256(source) == source_hash
+    assert _sha256(source_token) == token_hash
+
+
+def test_a_migrated_store_is_accepted_by_create_app_with_the_copied_token(
+    tmp_path, quiet_acl
+) -> None:
+    source, token = _build_source_store(tmp_path / "old")
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+    evidence_store.migrate_store(source=source, target=target)
+
+    app = create_app(
+        settings=Settings(database_path=target),
+        credential_store=InMemoryCredentialStore(),
+    )
+
+    assert app.state.api_token == token
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").status_code == 200
+
+
+def test_migrate_store_without_a_source_token_copies_only_the_database(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    (source.parent / "api_token").unlink()
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+
+    result = evidence_store.migrate_store(source=source, target=target)
+
+    assert result.token_copied is False
+    assert not (target.parent / "api_token").exists()
+
+
+def test_migrate_store_refuses_an_existing_target_database(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+    target.parent.mkdir()
+    target.write_bytes(b"existing store")
+    before, source_hash = _sha256(target), _sha256(source)
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_TARGET_EXISTS"
+    assert _sha256(target) == before
+    assert _sha256(source) == source_hash
+    assert not (target.parent / "api_token").exists()
+
+
+def test_migrate_store_refuses_an_existing_target_token(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+    target.parent.mkdir()
+    existing_token = target.parent / "api_token"
+    existing_token.write_text("someone else's token", encoding="utf-8")
+    before, source_hash = _sha256(existing_token), _sha256(source)
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_TARGET_EXISTS"
+    assert caught.value.details == {"path": str(existing_token)}
+    assert _sha256(existing_token) == before
+    assert _sha256(source) == source_hash
+    assert not target.exists()
+
+
+def test_migrate_store_refuses_the_source_as_its_own_target(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    source_hash = _sha256(source)
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=source)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_TARGET_EXISTS"
+    assert _sha256(source) == source_hash
+
+
+def test_migrate_store_refuses_a_target_inside_a_repository(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    source_hash = _sha256(source)
+    repo = make_repo(tmp_path / "repo")
+    target = repo / "state" / "change_assurance.sqlite3"
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_INSIDE_REPOSITORY"
+    assert not (repo / "state").exists()
+    assert _sha256(source) == source_hash
+
+
+def test_migrate_store_refuses_a_missing_source(tmp_path, quiet_acl) -> None:
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=tmp_path / "absent.sqlite3", target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_SOURCE_MISSING"
+    assert not target.parent.exists()
+
+
+def test_migrate_store_refuses_a_junction_target_parent(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    source_hash = _sha256(source)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / "linked"
+    _junction(elsewhere, link)
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=link / "change_assurance.sqlite3")
+
+    assert caught.value.code == "EVIDENCE_STORE_UNSAFE_LOCATION"
+    assert list(elsewhere.iterdir()) == []
+    assert _sha256(source) == source_hash
+
+
+def test_an_integrity_failure_removes_only_what_this_call_created(
+    tmp_path, quiet_acl, monkeypatch
+) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    source_hash, token_hash = _sha256(source), _sha256(source.parent / "api_token")
+    target_dir = tmp_path / "new"
+    target_dir.mkdir()
+    bystander = target_dir / "notes.txt"
+    bystander.write_text("keep me", encoding="utf-8")
+    target = target_dir / "change_assurance.sqlite3"
+    monkeypatch.setattr(
+        evidence_store, "_integrity_check", lambda path: [("*** page 3 is corrupt",)]
+    )
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_INTEGRITY_FAILED"
+    assert caught.value.status_code == 500
+    assert sorted(path.name for path in target_dir.iterdir()) == ["notes.txt"]
+    assert bystander.read_text(encoding="utf-8") == "keep me"
+    assert _sha256(source) == source_hash
+    assert _sha256(source.parent / "api_token") == token_hash
+
+
+def test_migrating_into_the_default_directory_restricts_it(tmp_path, quiet_acl, monkeypatch) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    target = default_database_path()
+
+    evidence_store.migrate_store(source=source, target=target)
+
+    assert quiet_acl.calls[0] == (tmp_path / "local" / "Sentinel", True)
+    assert target.is_file()

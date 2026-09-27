@@ -16,6 +16,9 @@ dependencies = [
   "cryptography>=44,<48",
 ]
 
+[project.scripts]
+sentinel = "backend.app.cli.main:main"
+
 [project.optional-dependencies]
 test = [
   "httpx>=0.28,<1",

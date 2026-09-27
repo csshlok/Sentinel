@@ -1,6 +1,7 @@
 """Typer CLI: create/list/show changes, identity, provider, outcome,
 recovery, passport, evidence, agent, and assurance commands, all through
-`ApiClient` only.
+`ApiClient` only -- except `migrate-store`, which never contacts the API and
+operates on local store files while the backend is stopped.
 
 Stable exit codes: 0 success, 1 API error, 2 connection error (Typer's
 own usage errors keep Click's default exit code 2 as well, since they
@@ -14,12 +15,19 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from uuid import UUID
 
 import typer
 from rich.console import Console
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.core.errors import AppError
+from backend.app.core.evidence_store import (
+    default_database_path,
+    legacy_database_path,
+    migrate_store,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 change_app = typer.Typer(no_args_is_help=True)
@@ -698,6 +706,56 @@ def tool_trust(
         ),
         as_json=json_, no_color=no_color,
     )
+
+
+@app.command("migrate-store")
+def migrate_store_command(
+    from_path: str | None = typer.Option(
+        None, "--from",
+        help="Source database. Default: <cwd>/.change-assurance/change_assurance.sqlite3.",
+    ),
+    to_path: str | None = typer.Option(
+        None, "--to",
+        help="Target database. Default: %LOCALAPPDATA%/Sentinel/change_assurance.sqlite3.",
+    ),
+    json_: bool = JsonOption,
+    no_color: bool = NoColorOption,
+) -> None:
+    """Copy an evidence store to a new location (local; run with the backend stopped).
+
+    Never overwrites an existing target and never changes the source.
+    """
+    console = _console(no_color)
+    source = Path(from_path) if from_path else legacy_database_path(Path.cwd())
+    target = Path(to_path) if to_path else default_database_path()
+    try:
+        result = migrate_store(source=source, target=target)
+    except AppError as error:
+        payload = {
+            "error": {"code": error.code, "message": error.message, "details": error.details}
+        }
+        if json_:
+            typer.echo(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+        else:
+            console.print(f"[red]{error.code}[/red]: {error.message}")
+        raise typer.Exit(EXIT_API_ERROR)
+
+    summary = {
+        "source": str(result.source_database),
+        "target": str(result.target_database),
+        "token_copied": result.token_copied,
+        "integrity": result.integrity,
+        "next_step": (
+            f"The old store was left in place at {result.source_database}. "
+            "Delete it after verifying the new store."
+        ),
+    }
+    if json_:
+        typer.echo(json.dumps(summary, separators=(",", ":"), sort_keys=True))
+    else:
+        for key, value in summary.items():
+            console.print(f"{key}: {value}", markup=False, highlight=False)
+    raise typer.Exit(EXIT_OK)
 
 
 def main() -> None:
