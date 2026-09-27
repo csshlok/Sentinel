@@ -21,8 +21,9 @@ neutralizations applied to every invocation:
   transport, submodule recursion, automatic gc/maintenance);
 * every configured ``filter.<name>.{clean,smudge,process}`` emptied and
   ``filter.<name>.required=false``, every ``diff.<name>.{command,textconv}``
-  and ``merge.<name>.driver`` emptied (discovered per invocation from the
-  config Git would actually read for that ``-C`` target);
+  and ``merge.<name>.driver`` emptied (discovered from the config Git would
+  actually read for that ``-C`` target, once per target per logical
+  operation -- see ``SafeGitSession``);
 * Git for Windows' system-scope content semantics (``core.autocrlf`` and the
   other keys in ``CARRIED_SYSTEM_KEYS``) carried forward explicitly, because
   ``GIT_CONFIG_NOSYSTEM`` would otherwise change how files are compared;
@@ -350,6 +351,75 @@ class HardenedGit:
                            limit=limit, stderr_limit=stderr_limit)
         except (OSError, ValueError, UnicodeError) as exc:
             raise _start_failure(exc) from exc
+
+
+class SafeGitSession:
+    """Config discovery shared by the Git calls of ONE logical operation.
+
+    ``HardenedGit.open`` runs one discovery Git process. A single inspection
+    makes about a dozen Git calls against the same ``-C`` target, so the
+    inspector opens one ``SafeGitSession`` per ``inspect()``/capture and reuses
+    the discovered overrides for every call inside it.
+
+    Scope rules (security):
+
+    * A session is created by the caller for one operation and discarded when
+      that operation returns. It is never stored on a long-lived object or
+      module global, so configuration changed between operations (the agent
+      can edit ``.git/config`` at any time) is always rediscovered.
+    * Discovery is keyed by the exact absolute ``-C`` target. Another
+      repository, a subdirectory, or a linked worktree gets its own discovery,
+      so conditional includes such as ``includeIf "gitdir:**/worktrees/**"``
+      are still resolved in the context Git will actually use.
+    * The hooks directory and child cwd are still re-verified on every
+      ``run()`` (``HardenedGit.run``).
+
+    Residual window (accepted): driver keys *added* to the configuration while
+    one operation is in progress are not neutralized for the remainder of that
+    operation. Per-call discovery had the same window between discovery and
+    the command; the session widens it from one call to one operation.
+    Inspection keeps its independent layers for that window: every
+    ``status``/``diff`` call refuses files carrying a filter attribute,
+    ``--no-ext-diff``/``--no-textconv`` disable diff drivers, and the
+    inspection re-reads status and diff and fails if the repository moved.
+    """
+
+    __slots__ = ("_extra_roots", "_identity", "_sessions", "discoveries")
+
+    def __init__(
+        self,
+        *,
+        identity: GitIdentity | None = None,
+        extra_roots: Sequence[str | Path] = (),
+    ) -> None:
+        self._identity = identity
+        self._extra_roots = tuple(extra_roots)
+        self._sessions: dict[str, HardenedGit] = {}
+        self.discoveries = 0
+
+    def git(self, repository: str | Path) -> HardenedGit:
+        """The hardened configuration for ``repository``, discovered on first use."""
+
+        target = os.path.abspath(os.fspath(repository))
+        session = self._sessions.get(target)
+        if session is None:
+            session = HardenedGit.open(target, identity=self._identity,
+                                       extra_roots=self._extra_roots)
+            self._sessions[target] = session
+            self.discoveries += 1
+        return session
+
+    def run(
+        self,
+        repository: str | Path,
+        args: Sequence[str],
+        *,
+        limit: int = METADATA_LIMIT,
+        timeout: float = GIT_TIMEOUT_SECONDS,
+        stderr_limit: int = STDERR_LIMIT,
+    ) -> CapturedProcess:
+        return self.git(repository).run(args, limit=limit, timeout=timeout,
+                                        stderr_limit=stderr_limit)
 
 
 def run_git(

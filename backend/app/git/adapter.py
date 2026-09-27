@@ -5,6 +5,10 @@ Git is reached only through the hardened harness ``backend.app.git.safe_exec``
 filters/drivers/execution-bearing config, bounded capture). ``state.py`` and
 ``reader.py`` reach Git only through ``GitRepositoryInspector._capture_git`` and
 therefore inherit the same hardening.
+
+One ``inspect()`` shares a single ``SafeGitSession`` so configuration is
+discovered once per inspection instead of once per Git command; the session
+never outlives that call, so every new inspection rediscovers configuration.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.git.classifier import classify_path
 from backend.app.git.errors import GitCommandError, RepositoryValidationError
-from backend.app.git.safe_exec import HardenedGit
+from backend.app.git.safe_exec import SafeGitSession
 from backend.app.execution._process import CapturedProcess
 
 
@@ -39,9 +43,12 @@ class GitRepositoryInspector:
     """Concrete implementation of the frozen ``GitInspectionPort``."""
 
     def validate_repository(self, path: str) -> RepositoryInfo:
-        root = self._canonical_root(path)
+        return self._validate(path, SafeGitSession())
+
+    def _validate(self, path: str, session: SafeGitSession) -> RepositoryInfo:
+        root = self._canonical_root(path, session)
         try:
-            head_sha = self._run_git(root, ["rev-parse", "--verify", "HEAD"]).strip()
+            head_sha = self._run_git(root, ["rev-parse", "--verify", "HEAD"], session).strip()
         except GitCommandError as exc:
             if "exit_code" not in exc.details:
                 raise
@@ -49,7 +56,7 @@ class GitRepositoryInspector:
                 "REPOSITORY_HAS_NO_COMMITS",
                 "The repository must contain at least one commit.",
             ) from exc
-        branch = self._run_git(root, ["branch", "--show-current"]).strip() or None
+        branch = self._run_git(root, ["branch", "--show-current"], session).strip() or None
         if not re.fullmatch(r"[0-9a-f]{40}", head_sha) or (branch and len(branch) > 1024):
             raise GitCommandError("The repository identity is unsupported by the current contract.")
         return RepositoryInfo(root=root, branch=branch, head_sha=head_sha)
@@ -57,11 +64,13 @@ class GitRepositoryInspector:
     def inspect(self, path: str, patch_limit_bytes: int) -> GitSummary:
         if type(patch_limit_bytes) is not int or not 0 <= patch_limit_bytes <= PATCH_LIMIT:
             raise GitCommandError("The patch limit must be between zero and one MiB.")
-        repository = self.validate_repository(path)
-        status_output = self._run_git(repository.root, STATUS_ARGS)
+        # One discovery per inspection; never reused by a later inspection.
+        session = SafeGitSession()
+        repository = self._validate(path, session)
+        status_output = self._run_git(repository.root, STATUS_ARGS, session)
         status_entries = self._parse_status(status_output)
         stats_args = [*DIFF_ARGS, "--numstat", "-z", repository.head_sha, "--"]
-        stats_output = self._run_git(repository.root, stats_args)
+        stats_output = self._run_git(repository.root, stats_args, session)
         stats = self._parse_numstat(stats_output)
 
         files: list[ChangedPath] = []
@@ -84,16 +93,17 @@ class GitRepositoryInspector:
             stat.deletions or 0 for stat in stats.values() if not stat.binary
         )
         patch_args = [*DIFF_ARGS, repository.head_sha, "--"]
-        captured = self._capture_git(repository.root, patch_args, patch_limit_bytes)
+        captured = self._capture_git(repository.root, patch_args, patch_limit_bytes,
+                                     session=session)
         raw_patch = captured.stdout.decode("utf-8", errors="replace")
         patch, patch_truncated = self._bound_utf8(raw_patch, patch_limit_bytes)
         patch_truncated |= captured.truncated or raw_patch.encode("utf-8") != captured.stdout
         # This detects observed movement, not an atomic filesystem snapshot.
         # Hash all diff bytes, including bytes beyond the displayed prefix.
-        repeated = self._capture_git(repository.root, patch_args, 0)
-        if (self.validate_repository(repository.root) != repository
-                or self._run_git(repository.root, STATUS_ARGS) != status_output
-                or self._run_git(repository.root, stats_args) != stats_output
+        repeated = self._capture_git(repository.root, patch_args, 0, session=session)
+        if (self._validate(repository.root, session) != repository
+                or self._run_git(repository.root, STATUS_ARGS, session) != status_output
+                or self._run_git(repository.root, stats_args, session) != stats_output
                 or repeated.stdout_digest != captured.stdout_digest):
             raise GitCommandError("The repository changed during inspection; refresh again.")
         untracked_patch_omitted = any(
@@ -113,7 +123,7 @@ class GitRepositoryInspector:
             refreshed_at=utc_now(),
         )
 
-    def _canonical_root(self, path: str) -> str:
+    def _canonical_root(self, path: str, session: SafeGitSession) -> str:
         try:
             candidate = Path(path).expanduser().resolve(strict=True)
             valid = candidate.is_dir()
@@ -126,7 +136,7 @@ class GitRepositoryInspector:
             )
         try:
             root = self._run_git(
-                str(candidate.resolve()), ["rev-parse", "--show-toplevel"]
+                str(candidate.resolve()), ["rev-parse", "--show-toplevel"], session
             ).strip()
         except GitCommandError as exc:
             if "exit_code" not in exc.details:
@@ -138,8 +148,8 @@ class GitRepositoryInspector:
         return str(Path(root).resolve())
 
     @classmethod
-    def _run_git(cls, root: str, args: list[str]) -> str:
-        result = cls._capture_git(root, args, METADATA_LIMIT)
+    def _run_git(cls, root: str, args: list[str], session: SafeGitSession | None = None) -> str:
+        result = cls._capture_git(root, args, METADATA_LIMIT, session=session)
         if result.truncated:
             raise GitCommandError("Git metadata exceeded the inspection limit.")
         try:
@@ -148,15 +158,18 @@ class GitRepositoryInspector:
             raise GitCommandError("Git metadata contains unsupported text encoding.") from exc
 
     @staticmethod
-    def _capture_git(root: str, args: list[str], limit: int) -> CapturedProcess:
-        # One discovery per call: the harness resolves a trusted Git, builds the
-        # hardened environment and overrides every configured filter/driver.
-        session = HardenedGit.open(root)
+    def _capture_git(
+        root: str, args: list[str], limit: int, *, session: SafeGitSession | None = None,
+    ) -> CapturedProcess:
+        # The harness resolves a trusted Git, builds the hardened environment
+        # and overrides every configured filter/driver. Without a caller-owned
+        # session (reader/state one-off reads) discovery is fresh for this call.
+        git = (session or SafeGitSession()).git(root)
         if args[0] in {"status", "diff"}:
             # Turning a clean filter off may change the meaning of a diff
             # (for example LFS). Reject files using filters rather than
             # returning plausible but incorrect raw-byte evidence.
-            tracked = session.run(["ls-files", "--stage", "-z"])
+            tracked = git.run(["ls-files", "--stage", "-z"])
             if (tracked.returncode != 0 or tracked.truncated
                     or tracked.timed_out or tracked.incomplete):
                 raise GitCommandError("Git tracked paths could not be inspected.")
@@ -182,7 +195,7 @@ class GitRepositoryInspector:
             paths = list(dict.fromkeys(paths))
             for path in [*paths, ""]:
                 if batch and (not path or batch_size + len(path) > 12_000):
-                    attributes = session.run(["check-attr", "-z", "filter", "--", *batch])
+                    attributes = git.run(["check-attr", "-z", "filter", "--", *batch])
                     if (attributes.returncode != 0 or attributes.truncated
                             or attributes.timed_out or attributes.incomplete):
                         raise GitCommandError("Git attributes could not be inspected.")
@@ -195,7 +208,7 @@ class GitRepositoryInspector:
                 if path:
                     batch.append(path)
                     batch_size += len(path) + 3
-        completed = session.run(args, limit=limit, timeout=30, stderr_limit=4096)
+        completed = git.run(args, limit=limit, timeout=30, stderr_limit=4096)
         if completed.timed_out or completed.incomplete:
             raise GitCommandError("Git repository inspection timed out.")
         if completed.returncode != 0:

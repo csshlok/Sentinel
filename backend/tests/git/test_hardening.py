@@ -103,13 +103,13 @@ def test_change_beyond_truncated_patch_is_detected(repo, monkeypatch):
     target.write_text("first\n" + "a" * 1000 + "\n", encoding="utf-8")
     original = GitRepositoryInspector._capture_git
     patch_count = 0
-    def moving(root, args, limit):
+    def moving(root, args, limit, **kwargs):
         nonlocal patch_count
         if args[0] == "diff" and "--numstat" not in args:
             patch_count += 1
             if patch_count == 2:
                 target.write_text("first\n" + "b" * 1000 + "\n", encoding="utf-8")
-        return original(root, args, limit)
+        return original(root, args, limit, **kwargs)
     monkeypatch.setattr(GitRepositoryInspector, "_capture_git", staticmethod(moving))
     with pytest.raises(GitCommandError, match="changed during inspection"):
         GitRepositoryInspector().inspect(str(repo), 1)
@@ -157,20 +157,20 @@ def test_metadata_limit_and_invalid_encoding(monkeypatch):
     from backend.app.execution._process import CapturedProcess
     def result(stdout=b"", truncated=False):
         return CapturedProcess(0, stdout, b"", truncated, False, False, "digest")
-    monkeypatch.setattr(GitRepositoryInspector, "_capture_git", staticmethod(lambda *_: result(truncated=True)))
+    monkeypatch.setattr(GitRepositoryInspector, "_capture_git", staticmethod(lambda *_, **__: result(truncated=True)))
     with pytest.raises(GitCommandError, match="metadata exceeded"):
         GitRepositoryInspector._run_git(".", ["status"])
-    monkeypatch.setattr(GitRepositoryInspector, "_capture_git", staticmethod(lambda *_: result(b"\xff")))
+    monkeypatch.setattr(GitRepositoryInspector, "_capture_git", staticmethod(lambda *_, **__: result(b"\xff")))
     with pytest.raises(GitCommandError, match="text encoding"):
         GitRepositoryInspector._run_git(".", ["status"])
 
 
 def test_head_startup_failure_is_not_misreported_as_no_commits(repo, monkeypatch):
     original = GitRepositoryInspector._run_git
-    def fail(root, args):
+    def fail(root, args, session=None):
         if "--verify" in args:
             raise GitCommandError("Synthetic startup failure")
-        return original(root, args)
+        return original(root, args, session)
     monkeypatch.setattr(GitRepositoryInspector, "_run_git", staticmethod(fail))
     with pytest.raises(GitCommandError, match="Synthetic startup"):
         GitRepositoryInspector().validate_repository(str(repo))
@@ -179,7 +179,8 @@ def test_head_startup_failure_is_not_misreported_as_no_commits(repo, monkeypatch
 def test_unsupported_sha_has_domain_error(repo, monkeypatch):
     original = GitRepositoryInspector._run_git
     monkeypatch.setattr(GitRepositoryInspector, "_run_git", staticmethod(
-        lambda root, args: "a" * 64 if "--verify" in args else original(root, args)))
+        lambda root, args, session=None: (
+            "a" * 64 if "--verify" in args else original(root, args, session))))
     with pytest.raises(GitCommandError, match="unsupported"):
         GitRepositoryInspector().validate_repository(str(repo))
 
