@@ -6,9 +6,16 @@ an agent working in that tree can read the token that drives Sentinel's API
 and read or alter the evidence that is supposed to describe the agent. So the
 default store is a per-user directory, `%LOCALAPPDATA%\\Sentinel` (falling back
 to `~/AppData/Local/Sentinel`), and startup refuses any database path that a
-Git working tree encloses. That check walks the path and every parent for a
-`.git` file or directory, on both the lexical path and the junction/symlink
-resolved path.
+Git working tree encloses. That check walks the path and every parent, on both
+the lexical path and the junction/symlink resolved path, for a `.git` entry
+that is a real repository: it must look like one (a directory holding `HEAD`
+and `objects/`, or a gitfile with a `gitdir:` line) and the hardened Git
+harness must confirm it (`rev-parse --absolute-git-dir` run against that Git
+directory reports exactly that directory). An empty or broken `.git` that Git
+itself would not treat as a repository no longer refuses the store, so a
+stray `.git` directory is not a denial of service. When Git cannot be run to
+confirm (not installed, the harness refuses the configuration), a
+structurally real `.git` still refuses: the check fails closed.
 
 The default directory's DACL is restricted to the current user and SYSTEM with
 inheritance removed (`prepare_store_directory`). That call refuses any
@@ -48,10 +55,13 @@ from backend.app.core.errors import (
     evidence_store_unsafe_location,
 )
 from backend.app.execution.acl import restrict_to_current_user
+from backend.app.git.errors import GitRepositoryError
+from backend.app.git.safe_exec import run_git
 
 STORE_DIRECTORY_NAME = "Sentinel"
 DATABASE_FILENAME = "change_assurance.sqlite3"
 LEGACY_STORE_DIRECTORY = ".change-assurance"
+REPOSITORY_CONFIRM_TIMEOUT_SECONDS = 10
 
 
 def default_store_directory(environ: Mapping[str, str] | None = None) -> Path:
@@ -73,20 +83,67 @@ def legacy_database_path(cwd: Path | None = None) -> Path:
     return (cwd or Path.cwd()) / LEGACY_STORE_DIRECTORY / DATABASE_FILENAME
 
 
-def _has_git_entry(directory: Path) -> bool:
+def _git_directory(directory: Path) -> Path | None:
+    """The Git directory a `.git` entry names, if it is structurally a repository.
+
+    A directory must hold `HEAD` and `objects/`; a gitfile must start with a
+    `gitdir:` line (resolved relative to `directory`). Anything else, such as
+    an empty `.git` directory, is not a repository.
+    """
+
     entry = directory / ".git"
     try:
-        return entry.is_dir() or entry.is_file() or entry.is_symlink()
-    except OSError:
+        if entry.is_dir():
+            if (entry / "HEAD").is_file() and (entry / "objects").is_dir():
+                return entry
+            return None
+        if entry.is_file():
+            with entry.open("rb") as handle:
+                first = handle.read(4096).splitlines()[:1]
+            if not first or not first[0].startswith(b"gitdir:"):
+                return None
+            target = Path(first[0][len(b"gitdir:"):].decode("utf-8").strip())
+            return target if target.is_absolute() else directory / target
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return None
+
+
+def _git_confirms_repository(git_dir: Path) -> bool:
+    """Ask the hardened harness whether `git_dir` is a real Git directory.
+
+    Runs against the Git directory itself (never the work tree above it) and
+    requires Git to report exactly that directory, so upward discovery into
+    an unrelated outer repository cannot confirm it. Fails closed: when Git
+    cannot run or answer, the structural evidence stands.
+    """
+
+    try:
+        if not git_dir.is_dir():
+            return False
+        result = run_git(git_dir, ["rev-parse", "--absolute-git-dir"],
+                         timeout=REPOSITORY_CONFIRM_TIMEOUT_SECONDS)
+    except (GitRepositoryError, OSError):
+        return True
+    if result.timed_out or result.incomplete:
+        return True
+    if result.returncode != 0:
         return False
+    try:
+        reported = Path(result.stdout.decode("utf-8").strip())
+    except UnicodeDecodeError:
+        return True
+    return reported.resolve(strict=False) == git_dir.resolve(strict=False)
 
 
 def enclosing_git_worktree(path: Path) -> Path | None:
-    """Return the first directory at or above `path` holding a `.git` entry.
+    """Return the first directory at or above `path` holding a real repository.
 
     Both the lexical absolute path and the resolved path are walked, so a
     junction or symlink that points into a repository is caught as well.
-    The path itself does not need to exist.
+    The path itself does not need to exist. A `.git` entry counts only when
+    it is structurally a repository and the hardened Git harness confirms it
+    (see the module docstring).
     """
 
     candidates = [Path(os.path.abspath(path))]
@@ -95,15 +152,30 @@ def enclosing_git_worktree(path: Path) -> Path | None:
         candidates.append(resolved)
     for candidate in candidates:
         for directory in (candidate, *candidate.parents):
-            if _has_git_entry(directory):
+            git_dir = _git_directory(directory)
+            if git_dir is not None and _git_confirms_repository(git_dir):
                 return directory
     return None
+
+
+def _encloses_user_directories(root: Path) -> bool:
+    """True when `root` is the user profile or encloses LOCALAPPDATA."""
+
+    try:
+        resolved = root.resolve(strict=False)
+        local = default_store_directory().parent.resolve(strict=False)
+        home = Path.home().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    return resolved == home or resolved == local or resolved in local.parents
 
 
 def ensure_store_outside_repository(database_path: Path) -> None:
     root = enclosing_git_worktree(database_path)
     if root is not None:
-        raise evidence_store_inside_repository(str(database_path), str(root))
+        raise evidence_store_inside_repository(
+            str(database_path), str(root), user_directory=_encloses_user_directories(root)
+        )
 
 
 def ensure_no_unmigrated_legacy_store(

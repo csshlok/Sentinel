@@ -86,18 +86,82 @@ def test_settings_honor_the_database_path_override(tmp_path, monkeypatch) -> Non
 # ---- repository detection ------------------------------------------------------
 
 
-def test_enclosing_git_worktree_finds_a_git_directory_above_a_missing_path(tmp_path) -> None:
-    repo = tmp_path / "repo"
-    (repo / ".git").mkdir(parents=True)
+def test_enclosing_git_worktree_finds_a_real_repository_above_a_missing_path(tmp_path) -> None:
+    repo = make_repo(tmp_path / "repo")
     nested = repo / "a" / "b" / "store.sqlite3"
     assert enclosing_git_worktree(nested) == repo
 
 
-def test_enclosing_git_worktree_finds_a_git_file(tmp_path) -> None:
+def test_enclosing_git_worktree_finds_a_linked_worktree_gitfile(tmp_path) -> None:
+    import subprocess
+
+    repo = make_repo(tmp_path / "repo")
     worktree = tmp_path / "linked"
-    worktree.mkdir()
-    (worktree / ".git").write_text("gitdir: C:/somewhere/.git/worktrees/linked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(worktree)],
+                   check=True, capture_output=True)
+    assert (worktree / ".git").is_file()
     assert enclosing_git_worktree(worktree / ".change-assurance" / "db.sqlite3") == worktree
+
+
+def test_an_empty_or_fake_git_entry_does_not_refuse_the_store(tmp_path) -> None:
+    """WR-05: a stray `.git` that Git itself rejects is not a denial of service."""
+
+    empty = tmp_path / "empty"
+    (empty / ".git").mkdir(parents=True)
+    garbage = tmp_path / "garbage"
+    (garbage / ".git" / "objects").mkdir(parents=True)
+    (garbage / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+    dangling = tmp_path / "dangling"
+    dangling.mkdir()
+    (dangling / ".git").write_text(f"gitdir: {tmp_path / 'nowhere'}\n", encoding="utf-8")
+    text_file = tmp_path / "text"
+    text_file.mkdir()
+    (text_file / ".git").write_text("hello\n", encoding="utf-8")
+
+    for root in (empty, garbage, dangling, text_file):
+        assert enclosing_git_worktree(root / "Sentinel" / DATABASE_FILENAME) is None, root
+        ensure_store_outside_repository(root / "Sentinel" / DATABASE_FILENAME)
+
+
+def test_repository_confirmation_fails_closed_when_git_cannot_answer(tmp_path, monkeypatch) -> None:
+    from backend.app.git.errors import GitExecutableNotFoundError
+
+    repo = make_repo(tmp_path / "repo")
+
+    def unavailable(*args, **kwargs):
+        raise GitExecutableNotFoundError()
+
+    monkeypatch.setattr(evidence_store, "run_git", unavailable)
+    assert enclosing_git_worktree(repo / "state" / DATABASE_FILENAME) == repo
+    # Without structural evidence Git is never consulted and nothing is refused.
+    (tmp_path / "plain" / ".git").mkdir(parents=True)
+    assert enclosing_git_worktree(tmp_path / "plain" / DATABASE_FILENAME) is None
+
+
+def test_confirmation_never_accepts_an_outer_repository_found_by_upward_discovery(tmp_path) -> None:
+    outer = make_repo(tmp_path / "outer")
+    inner = outer / "inner"
+    (inner / ".git" / "objects").mkdir(parents=True)
+    (inner / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+
+    # The broken inner `.git` is skipped; the real outer repository still refuses.
+    assert enclosing_git_worktree(inner / "Sentinel" / DATABASE_FILENAME) == outer
+
+
+def test_a_repository_at_the_user_profile_recommends_the_database_path_override(
+    tmp_path, monkeypatch
+) -> None:
+    home = make_repo(tmp_path / "home")
+    local = home / "AppData" / "Local"
+    local.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+    with pytest.raises(AppError) as caught:
+        ensure_store_outside_repository(default_database_path())
+    assert caught.value.code == "EVIDENCE_STORE_INSIDE_REPOSITORY"
+    assert "CHANGE_ASSURANCE_DB_PATH" in caught.value.message
+    assert "user profile" in caught.value.message
 
 
 def test_enclosing_git_worktree_returns_none_outside_repositories(tmp_path) -> None:

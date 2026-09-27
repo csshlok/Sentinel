@@ -156,13 +156,29 @@ def tool_trust_denied(tool_id: str) -> AppError:
     )
 
 
-def evidence_store_inside_repository(database_path: str, repository_root: str) -> AppError:
+def evidence_store_inside_repository(
+    database_path: str, repository_root: str, *, user_directory: bool = False
+) -> AppError:
+    if user_directory:
+        # A repository at the user profile (or above LOCALAPPDATA) also encloses
+        # the default store and migrate-store's default target.
+        message = (
+            "The evidence store is inside a Git working tree that encloses your "
+            "user profile or LOCALAPPDATA, so the default store location cannot be "
+            "used. Set CHANGE_ASSURANCE_DB_PATH to a location outside every "
+            "repository (and pass the same path to `sentinel migrate-store --to` "
+            "if you are moving an existing store)."
+        )
+    else:
+        message = (
+            "The evidence store is inside a Git working tree that an agent could "
+            "reach. Move it with `sentinel migrate-store` (or `python -m "
+            "backend.app.cli migrate-store`), or set CHANGE_ASSURANCE_DB_PATH to a "
+            "location outside every repository."
+        )
     return AppError(
         "EVIDENCE_STORE_INSIDE_REPOSITORY",
-        "The evidence store is inside a Git working tree that an agent could reach. "
-        "Move it with `sentinel migrate-store` (or `python -m backend.app.cli "
-        "migrate-store`), or set CHANGE_ASSURANCE_DB_PATH to a location outside "
-        "every repository.",
+        message,
         status_code=409,
         details={"database_path": database_path, "repository_root": repository_root},
     )
