@@ -45,3 +45,8 @@ node_modules/
 /apps/desktop/e2e/demo.spec.ts
 /apps/desktop/scripts/start-demo.ps1
 /apps/desktop/src/features/workspace/DemoPage.tsx
+
+# GSD runtime state (planning docs are local-only; config.json stays tracked)
+/.planning/milestone.lock
+/.planning/state.json
+/.planning/phases/**/.gitkeep
