@@ -4,10 +4,11 @@ Only the direct child process is supervised. Descendant-process
 attribution and orphan cleanup are out of scope for this runner, per the
 project's documented recovery/environment non-goals.
 
-Uses the same bounded-subprocess primitive as
-``execution.runner.BoundedVerificationRunner`` (``execution._process.capture``)
-rather than ``subprocess.run(capture_output=True)``: the prior implementation
-inherited this process's *entire* environment into the child (any secret or
+Process start lives in ``backend.app.execution.commands``
+(``run_verification_command``), which uses the same bounded-subprocess
+primitive as ``execution.runner.BoundedVerificationRunner``
+(``execution._process.capture``) rather than
+``subprocess.run(capture_output=True)``: the prior implementation inherited this process's *entire* environment into the child (any secret or
 token present in the daemon's own environment was reachable by an arbitrary
 allowlisted command run through the legacy ``/verify`` route) and buffered
 stdout/stderr fully in memory before truncating to the configured limit, so
@@ -18,7 +19,6 @@ and takes an explicit, minimal environment.
 
 from __future__ import annotations
 
-import os
 import time
 from datetime import UTC, datetime
 
@@ -27,7 +27,7 @@ from backend.app.contracts.models import (
     VerificationResult,
     VerificationStatus,
 )
-from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution.commands import run_verification_command
 from backend.app.verification.validation import resolve_executable
 
 
@@ -42,20 +42,12 @@ class SubprocessVerificationRunner:
     ) -> VerificationResult:
         resolved_executable = resolve_executable(request)
         argv = [resolved_executable, *request.args]
-        env = minimal_environment()
-        # Same rationale as BoundedVerificationRunner: without APPDATA,
-        # Python cannot resolve a per-user `pip install --user` site-packages
-        # directory on Windows, so an allowlisted tool like pytest would
-        # falsely report itself missing. Neither variable is a credential.
-        for key in ("APPDATA", "USERPROFILE"):
-            if key in os.environ:
-                env[key] = os.environ[key]
 
         started_at = datetime.now(UTC)
         clock_start = time.monotonic()
         try:
-            result = capture(
-                argv, cwd=repository_path, env=env,
+            result = run_verification_command(
+                argv, cwd=repository_path,
                 timeout=request.timeout_seconds, limit=max(0, output_limit_bytes),
             )
         except OSError:
