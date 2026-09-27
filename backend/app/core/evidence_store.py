@@ -10,6 +10,13 @@ Git working tree encloses. That check walks the path and every parent for a
 `.git` file or directory, on both the lexical path and the junction/symlink
 resolved path.
 
+The default directory's DACL is restricted to the current user and SYSTEM with
+inheritance removed (`prepare_store_directory`). That call refuses any
+directory not named `Sentinel`, so it can never re-ACL LOCALAPPDATA, the home
+directory, or a directory an operator chose with CHANGE_ASSURANCE_DB_PATH. The
+restriction keeps other local accounts out; it does not keep out processes
+running as the same user.
+
 Moving an existing store is explicit (`sentinel migrate-store`). Startup never
 copies a legacy `.change-assurance` store on its own. It only logs a warning
 that one exists.
@@ -22,7 +29,11 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from backend.app.core.errors import evidence_store_inside_repository
+from backend.app.core.errors import (
+    evidence_store_inside_repository,
+    evidence_store_unsafe_location,
+)
+from backend.app.execution.acl import restrict_to_current_user
 
 STORE_DIRECTORY_NAME = "Sentinel"
 DATABASE_FILENAME = "change_assurance.sqlite3"
@@ -100,3 +111,41 @@ def warn_if_legacy_store_present(
         legacy,
         database_path,
     )
+
+
+def _is_link(path: Path) -> bool:
+    try:
+        return path.is_symlink() or path.is_junction()
+    except OSError:
+        return True
+
+
+def prepare_store_directory(
+    directory: Path, *, logger: logging.Logger | None = None
+) -> bool:
+    """Create the Sentinel store directory and restrict it to user + SYSTEM.
+
+    Raises ValueError for a directory not named `Sentinel` and
+    EVIDENCE_STORE_UNSAFE_LOCATION for a junction or symlink. Returns True
+    when the DACL was applied. A failed restriction is logged as a warning
+    and returns False rather than raising, and nothing claims it held.
+    """
+
+    if directory.name.casefold() != STORE_DIRECTORY_NAME.casefold():
+        raise ValueError(
+            f"Refusing to restrict {directory}: only a directory named "
+            f"{STORE_DIRECTORY_NAME!r} is ever re-ACL'd."
+        )
+    if _is_link(directory):
+        raise evidence_store_unsafe_location(str(directory))
+    directory.mkdir(parents=True, exist_ok=True)
+    if _is_link(directory):
+        raise evidence_store_unsafe_location(str(directory))
+    if restrict_to_current_user(directory, directory=True):
+        return True
+    (logger or logging.getLogger(__name__)).warning(
+        "Could not restrict the evidence store directory %s to the current user "
+        "and SYSTEM; it keeps its inherited permissions.",
+        directory,
+    )
+    return False

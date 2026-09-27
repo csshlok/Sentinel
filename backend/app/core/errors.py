@@ -166,3 +166,13 @@ def evidence_store_inside_repository(database_path: str, repository_root: str) -
         status_code=409,
         details={"database_path": database_path, "repository_root": repository_root},
     )
+
+
+def evidence_store_unsafe_location(path: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_UNSAFE_LOCATION",
+        "The evidence store location is a junction or symbolic link. Sentinel "
+        "keeps its store only in a real directory it created.",
+        status_code=409,
+        details={"path": path},
+    )

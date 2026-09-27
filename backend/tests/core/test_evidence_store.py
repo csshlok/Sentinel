@@ -21,6 +21,7 @@ from backend.app.core.evidence_store import (
     enclosing_git_worktree,
     ensure_store_outside_repository,
     legacy_database_path,
+    prepare_store_directory,
     warn_if_legacy_store_present,
 )
 from backend.app.credentials.memory_store import InMemoryCredentialStore
@@ -203,3 +204,135 @@ def test_no_legacy_warning_without_a_legacy_store_or_when_it_is_the_configured_p
 
 def test_module_exports_the_legacy_directory_name_only_here() -> None:
     assert evidence_store.LEGACY_STORE_DIRECTORY == ".change-assurance"
+
+
+# ---- store directory DACL (Task 2) ------------------------------------------------
+
+
+class _AclRecorder:
+    def __init__(self, result: bool = True) -> None:
+        self.calls: list[tuple[Path, bool]] = []
+        self.result = result
+
+    def __call__(self, path: Path, *, directory: bool = False) -> bool:
+        self.calls.append((Path(path), directory))
+        return self.result
+
+
+@pytest.fixture
+def acl_recorder(monkeypatch) -> _AclRecorder:
+    fake = _AclRecorder()
+    monkeypatch.setattr(evidence_store, "restrict_to_current_user", fake)
+    return fake
+
+
+def test_prepare_store_directory_refuses_any_other_directory_name(tmp_path, acl_recorder) -> None:
+    with pytest.raises(ValueError):
+        prepare_store_directory(tmp_path / "NotSentinel")
+    with pytest.raises(ValueError):
+        prepare_store_directory(tmp_path)
+    assert acl_recorder.calls == []
+    assert not (tmp_path / "NotSentinel").exists()
+
+
+def test_prepare_store_directory_creates_and_restricts_the_directory(tmp_path, acl_recorder) -> None:
+    directory = tmp_path / "local" / "Sentinel"
+    assert prepare_store_directory(directory) is True
+    assert directory.is_dir()
+    assert acl_recorder.calls == [(directory, True)]
+
+
+def test_prepare_store_directory_logs_a_warning_when_the_acl_is_not_applied(
+    tmp_path, acl_recorder, caplog
+) -> None:
+    acl_recorder.result = False
+    logger = logging.getLogger("test.evidence_store.acl")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        assert prepare_store_directory(tmp_path / "Sentinel", logger=logger) is False
+    assert len(caplog.records) == 1
+    assert "Could not restrict" in caplog.records[0].getMessage()
+
+
+def test_prepare_store_directory_refuses_a_junction(tmp_path, acl_recorder) -> None:
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    link = tmp_path / "Sentinel"
+    _junction(target, link)
+    with pytest.raises(AppError) as caught:
+        prepare_store_directory(link)
+    assert caught.value.code == "EVIDENCE_STORE_UNSAFE_LOCATION"
+    assert caught.value.details == {"path": str(link)}
+    assert acl_recorder.calls == []
+
+
+def test_prepare_store_directory_refuses_a_symlink(tmp_path, acl_recorder) -> None:
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    link = tmp_path / "Sentinel"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"cannot create a directory symlink here: {error}")
+    with pytest.raises(AppError) as caught:
+        prepare_store_directory(link)
+    assert caught.value.code == "EVIDENCE_STORE_UNSAFE_LOCATION"
+    assert acl_recorder.calls == []
+
+
+def test_create_app_restricts_the_default_directory_before_the_token_exists(
+    tmp_path, monkeypatch
+) -> None:
+    import backend.app.main as main_module
+
+    seen: list[tuple[Path, bool]] = []
+
+    def recording_prepare(directory: Path, *, logger=None) -> bool:
+        seen.append((Path(directory), (Path(directory) / "api_token").exists()))
+        return True
+
+    monkeypatch.setattr(main_module, "prepare_store_directory", recording_prepare)
+    monkeypatch.delenv("CHANGE_ASSURANCE_DB_PATH", raising=False)
+    monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    app = create_app(credential_store=InMemoryCredentialStore())
+
+    assert seen == [(tmp_path / "Sentinel", False)]
+    token_path = tmp_path / "Sentinel" / "api_token"
+    assert token_path.read_text(encoding="utf-8").strip() == app.state.api_token
+
+
+def test_create_app_never_restricts_an_operator_chosen_directory(tmp_path, monkeypatch) -> None:
+    import backend.app.main as main_module
+
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        main_module, "prepare_store_directory",
+        lambda directory, *, logger=None: seen.append(directory) or True,
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    create_app(
+        settings=Settings(database_path=tmp_path / "Sentinel" / "db.sqlite3"),
+        credential_store=InMemoryCredentialStore(),
+    )
+
+    assert seen == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
+def test_create_app_default_directory_has_no_inherited_aces(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.delenv("CHANGE_ASSURANCE_DB_PATH", raising=False)
+    monkeypatch.delenv("CHANGE_ASSURANCE_API_TOKEN", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    create_app(credential_store=InMemoryCredentialStore())
+
+    listing = subprocess.run(
+        ["icacls", str(tmp_path / "Sentinel")], capture_output=True, timeout=30, check=True
+    ).stdout.decode(errors="replace")
+    block = listing.replace("\r", "").strip().split("\n\n", 1)[0]
+    assert "(I)" not in block
+    assert "S-1-5-18" in block or "SYSTEM" in block.upper()

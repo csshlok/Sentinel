@@ -39,7 +39,7 @@ def test_token_creation_invokes_icacls_to_restrict_to_the_current_user(
             returncode = 0
         return _Result()
 
-    monkeypatch.setattr("backend.app.core.auth.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.app.execution.acl.subprocess.run", fake_run)
     monkeypatch.setenv("USERNAME", "test-user")
 
     db_path = tmp_path / "state" / "db.sqlite3"
@@ -56,7 +56,7 @@ def test_a_missing_icacls_does_not_break_token_creation(tmp_path, monkeypatch) -
     def fake_run(argv, **kwargs):
         raise FileNotFoundError("icacls not found")
 
-    monkeypatch.setattr("backend.app.core.auth.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.app.execution.acl.subprocess.run", fake_run)
     monkeypatch.setenv("USERNAME", "test-user")
 
     db_path = tmp_path / "state" / "db.sqlite3"

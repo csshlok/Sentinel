@@ -31,7 +31,9 @@ from backend.app.core.database import Database
 from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
+    default_store_directory,
     ensure_store_outside_repository,
+    prepare_store_directory,
     warn_if_legacy_store_present,
 )
 from backend.app.core.journal import JournalWriter
@@ -125,6 +127,14 @@ def create_app(
     # Refuse an agent-reachable store before anything (token, database) is written.
     ensure_store_outside_repository(resolved_settings.database_path)
     warn_if_legacy_store_present(resolved_settings.database_path, logger=LOGGER)
+    default_directory = default_store_directory()
+    if resolved_settings.database_path.parent.resolve() == default_directory.resolve():
+        # Only the default directory is re-ACL'd, before the token and database
+        # exist so they inherit the restricted DACL. The unresolved default path
+        # is passed so a junction planted there is refused, not followed.
+        # Operator-chosen directories keep their permissions (the token file
+        # is still restricted).
+        prepare_store_directory(default_directory, logger=LOGGER)
     api_token = resolved_settings.api_token or load_or_create_api_token(
         resolved_settings.database_path
     )
