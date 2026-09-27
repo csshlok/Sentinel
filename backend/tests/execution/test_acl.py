@@ -30,6 +30,7 @@ class _Recorder:
 
 
 FAKE_ICACLS = Path(r"C:\Windows\System32\icacls.exe")
+FAKE_SID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def recorder(monkeypatch) -> _Recorder:
     fake = _Recorder()
     monkeypatch.setattr("backend.app.execution.acl.subprocess.run", fake)
     monkeypatch.setattr("backend.app.execution.acl.icacls_executable", lambda: FAKE_ICACLS)
-    monkeypatch.setenv("USERNAME", "test-user")
+    monkeypatch.setattr("backend.app.execution.acl.current_user_sid", lambda: FAKE_SID)
     return fake
 
 
@@ -50,7 +51,7 @@ def test_file_mode_runs_one_icacls_with_the_current_user_only(tmp_path, recorder
 
     assert len(recorder.calls) == 1
     argv, kwargs = recorder.calls[0]
-    assert argv == [str(FAKE_ICACLS), str(target), "/inheritance:r", "/grant:r", "test-user:F"]
+    assert argv == [str(FAKE_ICACLS), str(target), "/inheritance:r", "/grant:r", f"*{FAKE_SID}:F"]
     assert kwargs["shell"] is False
     assert kwargs["capture_output"] is True
     assert kwargs["timeout"] == acl.ICACLS_TIMEOUT_SECONDS
@@ -63,7 +64,7 @@ def test_directory_mode_grants_user_and_system_with_inheritance(tmp_path, record
 
     assert [argv for argv, _ in recorder.calls] == [[
         str(FAKE_ICACLS), str(tmp_path), "/inheritance:r",
-        "/grant:r", "test-user:(OI)(CI)F",
+        "/grant:r", f"*{FAKE_SID}:(OI)(CI)F",
         "/grant:r", "*S-1-5-18:(OI)(CI)F",
     ]]
 
@@ -75,10 +76,36 @@ def test_a_non_zero_exit_is_reported_as_not_applied(tmp_path, recorder) -> None:
 
 
 @windows_only
-def test_a_missing_username_is_not_applied_and_runs_nothing(tmp_path, recorder, monkeypatch) -> None:
-    monkeypatch.delenv("USERNAME", raising=False)
+def test_an_unreadable_token_sid_is_not_applied_and_runs_nothing(
+    tmp_path, recorder, monkeypatch
+) -> None:
+    monkeypatch.setattr("backend.app.execution.acl.current_user_sid", lambda: None)
     assert restrict_to_current_user(tmp_path) is False
     assert recorder.calls == []
+
+
+@windows_only
+def test_the_grant_ignores_a_caller_controlled_username(tmp_path, recorder, monkeypatch) -> None:
+    """WR-06: USERNAME never names the principal."""
+
+    monkeypatch.setenv("USERNAME", "Administrator")
+    assert restrict_to_current_user(tmp_path, directory=True) is True
+    argv, _ = recorder.calls[0]
+    assert not any("Administrator" in token for token in argv)
+    assert f"*{FAKE_SID}:(OI)(CI)F" in argv
+
+
+@windows_only
+def test_current_user_sid_matches_the_process_token() -> None:
+    sid = acl.current_user_sid()
+    assert sid is not None and sid.startswith("S-1-5-")
+    system_directory = acl.windows_system_directory()
+    assert system_directory is not None
+    whoami = subprocess.run(
+        [str(system_directory / "whoami.exe"), "/user", "/fo", "csv", "/nh"],
+        capture_output=True, shell=False, timeout=30, check=True, cwd=system_directory,
+    ).stdout.decode(errors="replace")
+    assert sid in whoami
 
 
 @windows_only
@@ -160,7 +187,7 @@ def test_real_icacls_leaves_only_the_user_and_system_without_inheritance(tmp_pat
     if acl.icacls_executable() is None:
         pytest.fail("icacls is part of Windows and must be available")
     username = os.environ.get("USERNAME")
-    assert username, "USERNAME must be set on Windows"
+    assert username, "USERNAME must be set on Windows (only used to read icacls output)"
     directory = tmp_path / "Sentinel"
     directory.mkdir()
 

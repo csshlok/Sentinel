@@ -41,7 +41,7 @@ def test_token_creation_invokes_icacls_to_restrict_to_the_current_user(
         return _Result()
 
     monkeypatch.setattr("backend.app.execution.acl.subprocess.run", fake_run)
-    monkeypatch.setenv("USERNAME", "test-user")
+    monkeypatch.setattr("backend.app.execution.acl.current_user_sid", lambda: "S-1-5-21-1-2-3-1001")
 
     db_path = tmp_path / "state" / "db.sqlite3"
     load_or_create_api_token(db_path)
@@ -51,7 +51,7 @@ def test_token_creation_invokes_icacls_to_restrict_to_the_current_user(
     assert Path(argv[0]).is_absolute()
     assert Path(argv[0]).name.lower() == "icacls.exe"
     assert "/inheritance:r" in argv
-    assert "test-user:F" in argv
+    assert "*S-1-5-21-1-2-3-1001:F" in argv
 
 
 def test_a_missing_icacls_does_not_break_token_creation(tmp_path, monkeypatch) -> None:
