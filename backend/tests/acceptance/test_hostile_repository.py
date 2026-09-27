@@ -43,6 +43,7 @@ import pytest
 from backend.app.contracts.models import RecoveryStatus
 from backend.app.contracts.models import ChangedPathStatus
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
+from backend.app.environment.tracker import EnvironmentTracker
 from backend.app.git.adapter import GitRepositoryInspector
 from backend.app.git.errors import GitCommandError
 from backend.app.git.state import GitStateTracker
@@ -368,6 +369,44 @@ def test_inspection_refuses_content_filtered_hostile_repository(tmp_path) -> Non
         GitRepositoryInspector().inspect(repo, 100_000)
 
     assert_no_canaries(canary_dir)
+
+
+# --- environment capture (tool probes, repository Git configuration) ------------------
+
+
+def test_environment_capture_on_hostile_repository_executes_nothing(tmp_path) -> None:
+    """Environment capture reads Git config through the harness and probes outside the repo.
+
+    Repository-local tool-configuration vectors (``.npmrc``, ``global.json``,
+    ``rust-toolchain.toml``, ``go.mod`` ``toolchain``, ``.yarnrc.yml``
+    ``yarnPath``, corepack ``packageManager``) are closed by construction: no
+    probe runs inside the repository, which the cwd-printing probe proves. No
+    tool-specific positive control is claimed because those tools may not be
+    installed on the test machine.
+    """
+
+    canary_dir = tmp_path / "canary"
+    repo, _, _ = build_hostile_repository(tmp_path / "repo", canary_dir)
+    root = Path(repo).resolve()
+    # Planted tool configuration; any probe honoring it would show up in cwd evidence.
+    _write(root, ".npmrc", "script-shell=evil\n")
+    _write(root, "global.json", '{"sdk": {"version": "0.0.0-evil"}}\n')
+    _write(root, "rust-toolchain.toml", '[toolchain]\nchannel = "evil"\n')
+
+    tracker = EnvironmentTracker(tools={
+        "python": ["-c", "import os; print(os.getcwd())"],
+        "git": ["--version"],
+    })
+    passport = tracker.capture(uuid4(), repo)
+
+    assert_no_canaries(canary_dir)
+    facts = {fact.key: fact for fact in passport.facts}
+    assert facts["git.remote.origin.host"].value == "github.com"
+    assert facts["git.remote.origin"].sensitive
+    assert facts["tool.git.version"].value.startswith("git version")
+    probe_cwd = Path(facts["tool.python.version"].value).resolve()
+    assert probe_cwd != root and root not in probe_cwd.parents
+    assert probe_cwd.name.startswith("sentinel-probe-")
 
 
 @pytest.fixture(autouse=True)

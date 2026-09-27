@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -169,6 +170,49 @@ def test_repository_configuration_is_read_from_real_git(tmp_path):
     assert got["git.core.autocrlf"].value == "input"
     assert got["git.remote.origin.host"].value == "example.test"
     assert "org/repo" not in json.dumps([f.model_dump(mode="json") for f in got.values()])
+
+
+def test_default_runner_probes_outside_the_repository(tmp_path):
+    repo = make_repo(tmp_path / "r")
+    t = EnvironmentTracker(environ={"PATH": os.environ["PATH"]},
+                           tools={"python": ["-c", "import os; print(os.getcwd())"]})
+    got = facts(t.capture(CHANGE, str(repo)))
+    reported = Path(got["tool.python.version"].value)
+    root = repo.resolve()
+    assert reported.is_absolute()
+    assert reported.resolve() != root and root not in reported.resolve().parents
+    assert reported.name.startswith("sentinel-probe-")
+
+
+def test_git_config_reads_bypass_the_runner_and_use_the_harness(tmp_path):
+    repo = make_repo(tmp_path / "r")
+    git(repo, "config", "core.autocrlf", "input")
+    git(repo, "remote", "add", "origin", "https://example.test/org/repo.git")
+    seen: list[list[str]] = []
+
+    def recording(argv, cwd):
+        seen.append(list(argv))
+        return 0, "1.2.3\n"
+
+    t = EnvironmentTracker(environ={"PATH": os.environ["PATH"]},
+                           tools={"git": ["--version"]}, runner=recording)
+    got = facts(t.capture(CHANGE, str(repo)))
+    assert seen and not any("config" in argv for argv in seen)
+    assert got["git.core.autocrlf"].value == "input"
+    assert got["git.remote.origin.host"].value == "example.test"
+
+
+def test_harness_failure_is_reported_as_git_unavailable(tmp_path, monkeypatch):
+    from backend.app.git.errors import GitExecutableNotFoundError
+
+    def missing(*args, **kwargs):
+        raise GitExecutableNotFoundError()
+
+    monkeypatch.setattr("backend.app.environment.tracker.run_git", missing)
+    repo = make_repo(tmp_path / "r")
+    passport = tracker(tools={}).capture(CHANGE, str(repo))
+    assert any("Git is unavailable" in item for item in passport.limitations)
+    assert "repo.manifests" in facts(passport)
 
 
 def test_missing_git_is_reported(tmp_path):

@@ -5,6 +5,13 @@ observed at capture time: operating system, interpreter, tool versions, a small
 allowlist of configuration variables and repository configuration. Raw secrets
 never enter it: sensitive facts carry only a keyed fingerprint. Comparison
 reports differences between two snapshots and never claims what caused them.
+
+Tool version probes run outside the repository: the executable is resolved from
+PATH directories outside it (``execution/resolve.py``) and started by
+``execution/tool_probe.run_tool_probe`` with a fresh Sentinel-owned temporary
+working directory, so repository-local tool configuration never applies.
+Repository Git configuration is read through the hardened Git harness
+(``git/safe_exec.run_git``), never with a plain ``git`` invocation.
 """
 
 from __future__ import annotations
@@ -26,8 +33,11 @@ from backend.app.contracts.models import (
     EnvironmentDrift, EnvironmentFact, EnvironmentPassport, EvidenceStatus, utc_now,
 )
 from backend.app.core.errors import AppError
-from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution._process import minimal_environment
 from backend.app.execution.resolve import resolve_argv, safe_path_entries
+from backend.app.execution.tool_probe import run_tool_probe
+from backend.app.git.errors import GitRepositoryError
+from backend.app.git.safe_exec import run_git
 
 DEFAULT_FINGERPRINT_KEY = b"change-assurance/environment-passport/v1"
 MAX_VALUE = 512
@@ -62,20 +72,14 @@ class CollectionContext:
 
 
 Collector = Callable[[CollectionContext], list[EnvironmentFact]]
+# ``runner(argv, repository_root) -> (returncode or None, stdout)``. The second
+# argument is the repository root, used ONLY to exclude repository directories
+# from PATH; it is never the probe's working directory.
 CommandRunner = Callable[[list[str], Path], tuple[int | None, str]]
 
 
-def _default_runner(argv: list[str], cwd: Path) -> tuple[int | None, str]:
-    env = minimal_environment()
-    env["PATH"] = os.pathsep.join(str(p) for p in safe_path_entries(env, cwd))
-    for key in ("HOME", "USERPROFILE"):  # read-only config lookups need the user's Git config
-        if key in os.environ:
-            env[key] = os.environ[key]
-    result = capture(argv, cwd=cwd, env=env, timeout=TOOL_TIMEOUT_SECONDS,
-                     limit=TOOL_OUTPUT_LIMIT)
-    if result.timed_out or result.incomplete:
-        return None, ""
-    return result.returncode, result.stdout.decode("utf-8", errors="replace")
+def _probe_runner(argv: list[str], root: Path) -> tuple[int | None, str]:
+    return run_tool_probe(argv, exclude_root=root)
 
 
 def passport_digest(passport: EnvironmentPassport) -> str:
@@ -118,7 +122,7 @@ class EnvironmentTracker:
         self._tools = dict(DEFAULT_TOOLS if tools is None else tools)
         self._config_keys = config_keys
         self._sensitive_keys = {k.upper() for k in sensitive_keys}
-        self._runner = runner or _default_runner
+        self._runner = runner or _probe_runner
         self._environ = os.environ if environ is None else environ
         self._collectors = collectors if collectors is not None else [
             self._collect_os, self._collect_python, self._collect_tools,
@@ -278,17 +282,27 @@ class EnvironmentTracker:
         root = context.repository_path
         facts = [self.plain("repo.manifests", ",".join(
             name for name in MANIFEST_NAMES if (root / name).is_file()) or "(none)")]
+        unavailable = "Git is unavailable; repository configuration is missing."
         try:
-            argv = resolve_argv("git", {"PATH": os.pathsep.join(
+            # Availability is judged against the injected environment.
+            resolve_argv("git", {"PATH": os.pathsep.join(
                 str(p) for p in safe_path_entries(minimal_environment(self._environ), root))}, root)
         except AppError:
-            context.limitations.append("Git is unavailable; repository configuration is missing.")
+            context.limitations.append(unavailable)
             return facts
         for key, fact_key in (("core.autocrlf", "git.core.autocrlf"),
                               ("remote.origin.url", "git.remote.origin")):
-            code, output = self._runner([*argv, "-C", str(root), "config", "--get", key], root)
-            value = output.strip()
-            if code != 0 or not value:
+            try:
+                result = run_git(str(root), ["config", "--get", key],
+                                 limit=TOOL_OUTPUT_LIMIT, timeout=TOOL_TIMEOUT_SECONDS)
+            except GitRepositoryError:
+                context.limitations.append(unavailable)
+                return facts
+            if (result.returncode != 0 or result.timed_out or result.incomplete
+                    or result.truncated):
+                continue
+            value = result.stdout.decode("utf-8", errors="replace").strip()
+            if not value:
                 continue
             if key == "remote.origin.url":
                 facts.append(self.secret(fact_key, value))
