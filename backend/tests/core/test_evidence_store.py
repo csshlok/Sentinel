@@ -745,3 +745,24 @@ def test_migrating_into_the_default_directory_restricts_it(tmp_path, quiet_acl, 
 
     assert quiet_acl.calls[0] == (tmp_path / "local" / "Sentinel", True)
     assert target.is_file()
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_migrate_store_treats_an_existing_sidecar_as_an_existing_target(
+    tmp_path, suffix
+) -> None:
+    """WR-07: a planted WAL must never be replayed onto the migrated copy."""
+
+    source, _ = _build_source_store(tmp_path / "old")
+    target = tmp_path / "new" / DATABASE_FILENAME
+    target.parent.mkdir()
+    planted = Path(f"{target}{suffix}")
+    planted.write_bytes(b"planted")
+
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_TARGET_EXISTS"
+    assert caught.value.details == {"path": str(planted)}
+    assert not target.exists()
+    assert planted.read_bytes() == b"planted"

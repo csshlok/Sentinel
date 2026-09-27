@@ -331,10 +331,16 @@ def migrate_store(
 
     target_db = Path(os.path.abspath(target))
     target_token = target_db.parent / TOKEN_FILENAME
+    sidecars = [Path(f"{target_db}{suffix}") for suffix in _SQLITE_SIDECARS]
     if _exists(target_db) or target_db.resolve() == source_db:
         raise evidence_store_migration_target_exists(str(target_db))
     if _exists(target_token):
         raise evidence_store_migration_target_exists(str(target_token))
+    # A leftover or planted -wal/-shm/-journal would be replayed onto the copy
+    # by the next connection, so any of them makes the target "existing".
+    for sidecar in sidecars:
+        if _exists(sidecar):
+            raise evidence_store_migration_target_exists(str(sidecar))
     ensure_store_outside_repository(target_db)
 
     parent = target_db.parent
@@ -352,8 +358,9 @@ def migrate_store(
         raise evidence_store_unsafe_location(str(parent))
     ensure_store_outside_repository(target_db)
 
-    sidecars = [Path(f"{target_db}{suffix}") for suffix in _SQLITE_SIDECARS]
-    pre_existing_sidecars = {path for path in sidecars if _exists(path)}
+    for sidecar in sidecars:
+        if _exists(sidecar):
+            raise evidence_store_migration_target_exists(str(sidecar))
     try:
         descriptor = os.open(
             target_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY, 0o600
@@ -364,9 +371,8 @@ def migrate_store(
     created: list[Path] = [target_db]
 
     def rollback() -> None:
-        _remove_created(
-            created + [path for path in sidecars if path not in pre_existing_sidecars]
-        )
+        # No sidecar existed before this call (checked above), so every one is ours.
+        _remove_created(created + sidecars)
 
     try:
         try:
