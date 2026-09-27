@@ -553,3 +553,29 @@ def test_execute_refuses_a_missing_baseline_before_terminating_anything(tmp_path
     with pytest.raises(AppError):
         engine.execute(change, plan, "approval-token-123")
     assert calls == []
+
+
+def test_recovery_worktrees_are_refused_inside_a_repository_that_encloses_temp(
+    tmp_path, monkeypatch
+) -> None:
+    """WR-02: preview reports a refusal instead of creating a worktree in the repo."""
+
+    import tempfile
+    from pathlib import Path
+
+    from backend.app.git.safe_exec import hooks_placeholder
+
+    repo, baseline_sha, current_sha = _init_linear_repo(tmp_path)
+    database = _database(tmp_path)
+    change = _seed_change_and_checkpoint(database, repo, baseline_sha, current_sha)
+    hooks_placeholder()  # the harness runtime directory already exists outside the repo
+    temp = Path(repo) / "tmp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+
+    plan = GitRecoveryEngine(database).plan(change)
+
+    assert plan.actions and not plan.actions[0].supported
+    assert any("Git refused to run:" in conflict for conflict in plan.conflicts)
+    assert list(temp.iterdir()) == []
+    assert len(_run(repo, "worktree", "list", "--porcelain").split("\n\n")) == 1

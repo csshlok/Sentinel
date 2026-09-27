@@ -384,3 +384,22 @@ def test_merge_driver_is_neutralized_and_fails_closed(tmp_path) -> None:
 
     assert not canary.exists()
     assert result.returncode != 0
+
+
+def test_a_repository_enclosing_the_runtime_directory_is_refused(tmp_path, monkeypatch) -> None:
+    """WR-02: Git's cwd and hooks placeholder never sit inside the repository."""
+
+    outer = _repo(tmp_path / "home")
+    temp = outer / "AppData" / "Local" / "Temp"
+    temp.mkdir(parents=True)
+    monkeypatch.setattr(safe_exec.tempfile, "tempdir", str(temp))
+    monkeypatch.setattr(safe_exec, "_hooks_placeholder", None)
+    monkeypatch.setattr(safe_exec, "_hooks_handle", None)
+    try:
+        with pytest.raises(GitCommandError) as caught:
+            run_git(outer, ["rev-parse", "HEAD"])
+        assert "TEMP" in caught.value.message
+    finally:
+        handle = safe_exec._hooks_handle
+        if handle is not None:
+            os.close(handle)

@@ -32,7 +32,9 @@ neutralizations applied to every invocation:
 * an explicit committer identity when a caller commits;
 * bounded capture (``execution._process.capture``) with timeouts, never a
   shell, and a Sentinel-owned runtime directory as the child's working
-  directory so the repository is never the process cwd.
+  directory so the repository is never the process cwd (refused when a
+  repository Git is pointed at encloses that directory, for example a
+  repository at ``%USERPROFILE%`` that contains ``%TEMP%``).
 
 This is a hardening harness, not a sandbox: Git still runs with the user's
 token and can read and write whatever the user can. It removes the ways a
@@ -61,6 +63,7 @@ from pathlib import Path
 
 from backend.app.execution._process import CapturedProcess, capture, minimal_environment
 from backend.app.execution.resolve import safe_path_entries
+from backend.app.execution.workdir import WorkdirInsideRepositoryError, ensure_outside
 from backend.app.git.errors import GitCommandError, GitExecutableNotFoundError
 
 GIT_TIMEOUT_SECONDS = 30
@@ -318,6 +321,15 @@ def _static_arguments() -> list[str]:
     return arguments
 
 
+def _runtime_directory_outside(hooks: Path, roots: Sequence[str]) -> None:
+    """Refuse a runtime directory (Git's cwd and hooks placeholder) inside a root."""
+
+    try:
+        ensure_outside(hooks.parent, roots)
+    except WorkdirInsideRepositoryError as exc:
+        raise GitCommandError(str(exc)) from exc
+
+
 def _start_failure(exc: BaseException) -> GitCommandError | GitExecutableNotFoundError:
     if isinstance(exc, FileNotFoundError):
         return GitExecutableNotFoundError()
@@ -338,6 +350,7 @@ class HardenedGit:
     repository: str
     env: Mapping[str, str]
     prefix: tuple[str, ...]
+    roots: tuple[str, ...] = ()
 
     @classmethod
     def open(
@@ -351,7 +364,9 @@ class HardenedGit:
         executable = resolve_trusted_git(target, extra_roots=extra_roots)
         env = hardened_environment([Path(target), *(Path(root) for root in extra_roots)])
         discovery_env = {key: value for key, value in env.items() if key != "GIT_CONFIG_NOSYSTEM"}
+        roots = (target, *(os.path.abspath(os.fspath(root)) for root in extra_roots))
         hooks = hooks_placeholder()
+        _runtime_directory_outside(hooks, roots)
         static = _static_arguments()
         try:
             # Reading configuration executes nothing; the system scope must be
@@ -372,7 +387,8 @@ class HardenedGit:
         records = _parse_config_records(discovered.stdout)
         prefix = (*static, *_overrides_for(records),
                   *(identity.config_arguments() if identity is not None else ()))
-        return cls(executable=executable, repository=target, env=env, prefix=tuple(prefix))
+        return cls(executable=executable, repository=target, env=env, prefix=tuple(prefix),
+                   roots=roots)
 
     def run(
         self,
@@ -383,6 +399,7 @@ class HardenedGit:
         stderr_limit: int = STDERR_LIMIT,
     ) -> CapturedProcess:
         hooks = hooks_placeholder()
+        _runtime_directory_outside(hooks, self.roots or (self.repository,))
         argv = [self.executable, *GLOBAL_FLAGS, "-c", f"core.hooksPath={hooks}",
                 *self.prefix, "-C", self.repository, *args]
         try:

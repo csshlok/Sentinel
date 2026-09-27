@@ -45,7 +45,8 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.database import Database
 from backend.app.execution._process import CapturedProcess
-from backend.app.git.errors import GitRepositoryError
+from backend.app.execution.workdir import WorkdirInsideRepositoryError, temporary_base
+from backend.app.git.errors import GitCommandError, GitRepositoryError
 from backend.app.git.safe_exec import RECOVERY_IDENTITY, run_git
 from backend.app.recovery.checkpoints import get_checkpoint_by_id, get_earliest_checkpoint
 from backend.app.recovery.errors import recovery_no_checkpoint_evidence, recovery_not_approved
@@ -77,6 +78,15 @@ def _default_clock() -> datetime:
 
 def _refused(exc: GitRepositoryError) -> str:
     return f"Git refused to run: {exc.message}"
+
+
+def _worktree_base(repository_path: str) -> Path:
+    """Where temporary recovery worktrees go; never inside the repository."""
+
+    try:
+        return temporary_base([repository_path])
+    except WorkdirInsideRepositoryError as exc:
+        raise GitCommandError(str(exc)) from exc
 
 
 class GitRecoveryEngine:
@@ -335,7 +345,11 @@ class GitRecoveryEngine:
 
         del preview_branch  # never created; the worktree stays detached
         repository_root = (Path(repository_path),)
-        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-") as temp_dir:
+        try:
+            base = _worktree_base(repository_path)
+        except GitRepositoryError as exc:
+            return _refused(exc)
+        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-", dir=base) as temp_dir:
             created = run_git(
                 repository_path,
                 ["worktree", "add", "--no-checkout", "--detach", temp_dir, current_sha],
@@ -385,7 +399,8 @@ class GitRecoveryEngine:
         """
 
         repository_root = (Path(repository_path),)
-        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-") as temp_dir:
+        base = _worktree_base(repository_path)
+        with tempfile.TemporaryDirectory(prefix="sentinel-recovery-", dir=base) as temp_dir:
             created = run_git(
                 repository_path,
                 ["worktree", "add", "--no-checkout", "-b", branch, temp_dir, current_sha],

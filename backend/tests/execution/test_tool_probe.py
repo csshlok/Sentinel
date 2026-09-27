@@ -108,3 +108,23 @@ def test_undecodable_output_is_replaced(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(tool_probe, "capture",
                         _fake_capture([], _result(returncode=3, stdout=b"v\xff\n")))
     assert run_tool_probe(["tool"], exclude_root=tmp_path) == (3, "v�\n")
+
+
+def test_a_repository_enclosing_temp_refuses_the_probe_and_runs_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    """WR-02: never fall back to a probe cwd inside the repository."""
+
+    from backend.app.execution.workdir import WorkdirInsideRepositoryError
+
+    repo = tmp_path / "home"
+    temp = repo / "AppData" / "Local" / "Temp"
+    temp.mkdir(parents=True)
+    monkeypatch.setattr(tool_probe.tempfile, "tempdir", str(temp))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(tool_probe, "capture", lambda argv, **kwargs: calls.append(argv))
+
+    with pytest.raises(WorkdirInsideRepositoryError):
+        run_tool_probe(CWD_PROBE, exclude_root=repo)
+    assert calls == []
+    assert list(temp.iterdir()) == []
