@@ -117,6 +117,29 @@ def test_migrate_store_defaults_move_the_legacy_store_to_localappdata(
     assert _sha256(legacy_source) == source_hash
 
 
+def test_migrate_store_file_system_errors_use_the_json_error_envelope(
+    tmp_path, acl_recorder, monkeypatch
+) -> None:
+    """WR-09: no raw traceback; the stable exit code and envelope."""
+
+    source, _token = _store(tmp_path / "old")
+    target = tmp_path / "new" / "change_assurance.sqlite3"
+
+    def failing_mkdir(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", failing_mkdir)
+    result = runner.invoke(
+        cli_main.app, ["migrate-store", "--from", str(source), "--to", str(target), "--json"]
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "EVIDENCE_STORE_MIGRATION_IO_FAILED"
+    assert payload["error"]["details"]["error"] == "PermissionError"
+
+
 def test_pyproject_declares_the_sentinel_console_script() -> None:
     with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as handle:
         project = tomllib.load(handle)["project"]

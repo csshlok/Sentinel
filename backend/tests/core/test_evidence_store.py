@@ -817,3 +817,31 @@ def test_migrate_store_treats_an_existing_sidecar_as_an_existing_target(
     assert caught.value.details == {"path": str(planted)}
     assert not target.exists()
     assert planted.read_bytes() == b"planted"
+
+
+def test_a_file_system_error_becomes_a_stable_error_and_rolls_back(
+    tmp_path, quiet_acl, monkeypatch
+) -> None:
+    """WR-09: OSError never escapes migrate_store as a raw exception."""
+
+    source, _token = _build_source_store(tmp_path / "old")
+    target = tmp_path / "new" / DATABASE_FILENAME
+
+    def failing_backup(source_db, target_db):
+        raise PermissionError(13, "Access is denied", str(target_db))
+
+    monkeypatch.setattr(evidence_store, "_backup", failing_backup)
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=target)
+
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_IO_FAILED"
+    assert caught.value.details == {"error": "PermissionError", "path": str(target)}
+    assert not target.exists()
+
+
+def test_an_unusable_target_path_becomes_a_stable_error(tmp_path, quiet_acl) -> None:
+    source, _token = _build_source_store(tmp_path / "old")
+    with pytest.raises(AppError) as caught:
+        evidence_store.migrate_store(source=source, target=tmp_path / "bad\0name.sqlite3")
+    assert caught.value.code == "EVIDENCE_STORE_MIGRATION_IO_FAILED"
+    assert caught.value.details["error"] == "ValueError"

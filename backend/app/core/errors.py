@@ -236,6 +236,16 @@ def evidence_store_migration_token_unprotected(path: str) -> AppError:
     )
 
 
+def evidence_store_migration_io_failed(error_type: str, path: str | None) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_MIGRATION_IO_FAILED",
+        "The migration could not read or write a file. Anything it created was "
+        "removed and the source store was not changed.",
+        status_code=500,
+        details={"error": error_type, "path": path},
+    )
+
+
 def evidence_store_migration_integrity_failed(reason: str) -> AppError:
     return AppError(
         "EVIDENCE_STORE_MIGRATION_INTEGRITY_FAILED",

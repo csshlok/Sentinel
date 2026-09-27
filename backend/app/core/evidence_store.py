@@ -57,6 +57,7 @@ from backend.app.core.auth import TOKEN_FILENAME, new_api_token
 from backend.app.core.errors import (
     evidence_store_inside_repository,
     evidence_store_migration_integrity_failed,
+    evidence_store_migration_io_failed,
     evidence_store_migration_required,
     evidence_store_migration_source_missing,
     evidence_store_migration_target_exists,
@@ -332,9 +333,23 @@ def migrate_store(
     Never writes to, moves, or deletes the source, and never reads or copies
     the source token. Never overwrites an existing target database or token.
     On failure (including a token that cannot be restricted to the current
-    user) only the files this call created are removed.
+    user) only the files this call created are removed. Every failure is a
+    stable `AppError`: file-system errors (`OSError`, or `ValueError` for an
+    unusable path) become EVIDENCE_STORE_MIGRATION_IO_FAILED.
     """
 
+    try:
+        return _migrate_store(source=source, target=target, logger=logger)
+    except (OSError, ValueError) as error:
+        path = getattr(error, "filename", None)
+        raise evidence_store_migration_io_failed(
+            type(error).__name__, None if path is None else str(path)
+        ) from None
+
+
+def _migrate_store(
+    *, source: Path, target: Path, logger: logging.Logger | None
+) -> StoreMigrationResult:
     log = logger or logging.getLogger(__name__)
     source_db = Path(source).resolve()
     if not source_db.is_file():
