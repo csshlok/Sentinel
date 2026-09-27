@@ -13,10 +13,19 @@ must not break startup. It returns False instead, and callers log that
 rather than claiming the restriction was applied. Every process spawn lives
 under `backend/app/execution/` (D-04), so `core.auth` and
 `core.evidence_store` call this helper instead of running `icacls` themselves.
+
+`icacls` is started by its absolute path in the Windows system directory
+(`GetSystemDirectoryW`, not the caller-controlled `SystemRoot` variable) with
+that directory as the working directory. A bare `icacls` would let
+CreateProcess pick up an `icacls.exe` planted in the backend or CLI process's
+current directory (searched before System32 by default), which is the
+agent-writable working tree when `sentinel migrate-store` runs from the
+legacy store location.
 """
 
 from __future__ import annotations
 
+import ctypes
 import os
 import stat
 import subprocess
@@ -26,14 +35,42 @@ ICACLS_TIMEOUT_SECONDS = 10
 SYSTEM_SID = "*S-1-5-18"
 
 
-def _icacls_arguments(path: Path, username: str, *, directory: bool) -> list[str]:
+def windows_system_directory() -> Path | None:
+    """The Windows system directory from `GetSystemDirectoryW`; None if unavailable."""
+
+    if os.name != "nt":
+        return None
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    except (AttributeError, OSError):
+        return None
+    if not length or length >= len(buffer):
+        return None
+    directory = Path(buffer.value)
+    return directory if directory.is_absolute() and directory.is_dir() else None
+
+
+def icacls_executable() -> Path | None:
+    """Absolute path of System32's `icacls.exe`; None if it is missing."""
+
+    system_directory = windows_system_directory()
+    if system_directory is None:
+        return None
+    candidate = system_directory / "icacls.exe"
+    return candidate if candidate.is_file() else None
+
+
+def _icacls_arguments(
+    icacls: Path, path: Path, username: str, *, directory: bool
+) -> list[str]:
     if directory:
         return [
-            "icacls", str(path), "/inheritance:r",
+            str(icacls), str(path), "/inheritance:r",
             "/grant:r", f"{username}:(OI)(CI)F",
             "/grant:r", f"{SYSTEM_SID}:(OI)(CI)F",
         ]
-    return ["icacls", str(path), "/inheritance:r", "/grant:r", f"{username}:F"]
+    return [str(icacls), str(path), "/inheritance:r", "/grant:r", f"{username}:F"]
 
 
 def restrict_to_current_user(path: Path, *, directory: bool = False) -> bool:
@@ -53,12 +90,16 @@ def restrict_to_current_user(path: Path, *, directory: bool = False) -> bool:
     username = os.environ.get("USERNAME")
     if not username:
         return False
+    icacls = icacls_executable()
+    if icacls is None:
+        return False
     try:
         completed = subprocess.run(
-            _icacls_arguments(path, username, directory=directory),
+            _icacls_arguments(icacls, Path(path).absolute(), username, directory=directory),
             capture_output=True,
             shell=False,
             timeout=ICACLS_TIMEOUT_SECONDS,
+            cwd=icacls.parent,
         )
     except (OSError, subprocess.SubprocessError):
         return False

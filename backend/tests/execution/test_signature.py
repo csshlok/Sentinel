@@ -13,11 +13,23 @@ is not.
 from __future__ import annotations
 
 import os
+import shutil
+from pathlib import Path
 
 import pytest
 
+from backend.app.execution import acl
 from backend.app.execution import signature as sig_mod
 from backend.app.execution._process import CapturedProcess
+
+
+@pytest.fixture(autouse=True)
+def _portable_system_directory(monkeypatch, tmp_path_factory):
+    """Faked-capture tests must not depend on a real Windows system directory."""
+
+    if acl.windows_system_directory() is None:
+        fake = tmp_path_factory.mktemp("system32")
+        monkeypatch.setattr(sig_mod, "windows_system_directory", lambda: fake)
 
 
 def _fake_capture(returncode, *, stdout=b"", stderr=b"", timed_out=False, cancelled=False):
@@ -120,3 +132,75 @@ def test_real_signtool_against_a_genuinely_unsigned_binary(tmp_path) -> None:
     target = tmp_path / "definitely-unsigned.exe"
     target.write_bytes(os.urandom(4096))
     assert sig_mod.check_signature(str(target)) == "unsigned"
+
+
+def _plant(directory: Path, name: str) -> Path:
+    system_directory = acl.windows_system_directory()
+    assert system_directory is not None
+    planted = directory / name
+    shutil.copyfile(system_directory / "hostname.exe", planted)
+    return planted
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows executable search order")
+def test_a_signtool_planted_in_the_current_directory_is_never_located_or_run(
+    monkeypatch, tmp_path
+) -> None:
+    """Verifier gap: signtool resolves only from absolute PATH entries, never cwd."""
+
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    planted = _plant(cwd, "signtool.exe")
+    _plant(cwd, "signtool.cmd")
+    (cwd / "tools").mkdir()
+    _plant(cwd / "tools", "signtool.exe")
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
+    system_directory = acl.windows_system_directory()
+    monkeypatch.setenv("PATH", os.pathsep.join([".", "tools", str(system_directory)]))
+    # Positive control: shutil.which (the old lookup) finds the planted binary.
+    found = shutil.which("signtool.exe")
+    assert found is not None and Path(found).resolve() == planted.resolve()
+
+    assert sig_mod._locate_signtool() is None
+
+    calls: list[list[str]] = []
+
+    def spy(argv, **kwargs):
+        calls.append(list(argv))
+        raise AssertionError("no signtool may run")
+
+    monkeypatch.setattr(sig_mod, "capture", spy)
+    target = tmp_path / "x.exe"
+    target.write_bytes(b"x")
+    assert sig_mod.check_signature(str(target)) == "unknown"
+    assert calls == []
+
+
+def test_signtool_in_an_absolute_path_directory_runs_from_the_system_directory(
+    monkeypatch, tmp_path
+) -> None:
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "signtool.exe").write_bytes(b"MZ")
+    monkeypatch.setenv("PATH", os.pathsep.join(["relative-dir", str(kit)]))
+    monkeypatch.setattr(sig_mod.platform, "system", lambda: "Windows")
+    located = sig_mod._locate_signtool()
+    assert located == str(kit / "signtool.exe")
+
+    seen: list[tuple[list[str], dict]] = []
+
+    def fake(argv, **kwargs):
+        seen.append((list(argv), kwargs))
+        return _fake_capture(0)(argv, **kwargs)
+
+    monkeypatch.setattr(sig_mod, "capture", fake)
+    target = tmp_path / "repo" / "tool.exe"
+    target.parent.mkdir()
+    target.write_bytes(b"x")
+
+    assert sig_mod.check_signature(str(target)) == "valid"
+    argv, kwargs = seen[0]
+    assert argv[0] == located
+    assert Path(kwargs["cwd"]) == sig_mod.windows_system_directory()
+    assert Path(kwargs["cwd"]) != target.parent

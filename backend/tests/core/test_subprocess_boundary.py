@@ -21,6 +21,18 @@ module object from ``execution._process``; calling ``_process.capture``;
 string literal. ``minimal_environment``/``CapturedProcess`` imports and
 unrelated ``.capture()`` method calls (``self._git.capture``) are allowed.
 
+A second rule applies inside the allowlist itself: a process is never started
+by a bare executable name. On Windows, CreateProcess and ``shutil.which``
+search the parent's current directory before System32, so ``["icacls", ...]``
+or ``shutil.which("signtool.exe")`` would run a look-alike planted in the
+backend or CLI working directory (review CR-01). The scan flags any
+``run``/``Popen``/``check_output``/``check_call``/``call``/``capture`` whose
+argv literal starts with a non-absolute string constant, and any
+``shutil.which`` of a string constant. An argv built in a helper and passed by
+variable is out of reach of this scan; the behavioral planted-binary tests in
+``backend/tests/execution/test_acl.py`` and ``test_signature.py`` cover the
+two Windows tools Sentinel starts outside the resolver (icacls, signtool).
+
 Limit: non-literal dynamic imports (``importlib.import_module(name)`` with a
 computed name, ``getattr(os, "sys" + "tem")``) are out of reach of static
 analysis and are left to code review.
@@ -29,7 +41,7 @@ analysis and are left to code review.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -193,6 +205,75 @@ BENIGN_SOURCES = {
 @pytest.mark.parametrize("form", sorted(BENIGN_SOURCES))
 def test_scanner_allows_benign_forms(form: str) -> None:
     assert find_process_spawn_violations(BENIGN_SOURCES[form], filename="benign.py") == []
+
+
+_SPAWN_CALLS = frozenset({"run", "Popen", "check_output", "check_call", "call", "capture"})
+
+
+def find_bare_executable_violations(source: str, *, filename: str) -> list[str]:
+    """Process starts (or lookups) by a bare, non-absolute executable name."""
+
+    tree = ast.parse(source, filename=filename)
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        base, attribute = _call_target(node.func)
+        first = node.args[0]
+        if base == "shutil" and attribute == "which":
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                found.append(f"{filename}:{node.lineno}: shutil.which({first.value!r})")
+            continue
+        if attribute not in _SPAWN_CALLS or not isinstance(first, (ast.List, ast.Tuple)):
+            continue
+        if not first.elts:
+            continue
+        head = first.elts[0]
+        if (isinstance(head, ast.Constant) and isinstance(head.value, str)
+                and not PureWindowsPath(head.value).is_absolute()):
+            found.append(f"{filename}:{node.lineno}: bare executable {head.value!r}")
+    return found
+
+
+def _allowlisted_files() -> list[Path]:
+    return sorted([*EXECUTION_DIR.rglob("*.py"), SAFE_EXEC])
+
+
+def test_allowlisted_modules_never_start_a_bare_executable_name() -> None:
+    violations: list[str] = []
+    for path in _allowlisted_files():
+        relative = path.relative_to(APP_ROOT.parents[1]).as_posix()
+        violations.extend(
+            find_bare_executable_violations(path.read_text(encoding="utf-8"), filename=relative))
+    assert not violations, (
+        "Executables must be started by an absolute, trusted path:\n" + "\n".join(violations))
+
+
+BARE_EXECUTABLE_SOURCES = {
+    "subprocess.run bare": "subprocess.run(['icacls', 'x'], shell=False)\n",
+    "subprocess.Popen bare": "subprocess.Popen(('tool', '--version'))\n",
+    "capture bare": "capture(['git', 'status'], cwd='.', env={}, timeout=1, limit=1)\n",
+    "shutil.which literal": "import shutil\nshutil.which('signtool.exe')\n",
+    "relative path head": "subprocess.run([r'bin\\tool.exe'])\n",
+}
+
+
+@pytest.mark.parametrize("form", sorted(BARE_EXECUTABLE_SOURCES))
+def test_bare_executable_scanner_detects_each_form(form: str) -> None:
+    assert find_bare_executable_violations(BARE_EXECUTABLE_SOURCES[form], filename="s.py")
+
+
+ABSOLUTE_EXECUTABLE_SOURCES = {
+    "resolved variable": "subprocess.run([str(icacls), 'x'], cwd=icacls.parent)\n",
+    "absolute literal": "subprocess.run([r'C:\\Windows\\System32\\icacls.exe', 'x'])\n",
+    "which of a joined path": "import shutil\nshutil.which(str(directory / name))\n",
+    "argv variable": "capture(argv, cwd=cwd, env=env, timeout=1, limit=1)\n",
+}
+
+
+@pytest.mark.parametrize("form", sorted(ABSOLUTE_EXECUTABLE_SOURCES))
+def test_bare_executable_scanner_allows_absolute_forms(form: str) -> None:
+    assert find_bare_executable_violations(ABSOLUTE_EXECUTABLE_SOURCES[form], filename="s.py") == []
 
 
 def test_allowlist_entries_exist() -> None:

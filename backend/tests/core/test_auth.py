@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -47,7 +48,8 @@ def test_token_creation_invokes_icacls_to_restrict_to_the_current_user(
 
     assert len(calls) == 1
     argv = calls[0]
-    assert argv[0] == "icacls"
+    assert Path(argv[0]).is_absolute()
+    assert Path(argv[0]).name.lower() == "icacls.exe"
     assert "/inheritance:r" in argv
     assert "test-user:F" in argv
 
