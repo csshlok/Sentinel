@@ -190,7 +190,7 @@ def test_git_executable_resolution_rejects_repository_and_wrappers(tmp_path, mon
     external = tmp_path / "external"
     monkeypatch.setenv("PATH", os.pathsep.join([".", str(root), str(external)]))
     for found in (None, str(root / "git.exe"), str(external / "git.cmd")):
-        monkeypatch.setattr("backend.app.git.adapter.shutil.which", lambda _, found=found: found)
+        monkeypatch.setattr("backend.app.git.safe_exec.shutil.which", lambda _, found=found: found)
         with pytest.raises(GitExecutableNotFoundError) as info:
             GitRepositoryInspector._capture_git(str(root), ["status"], 100)
         assert info.value.status_code == 424
@@ -209,10 +209,12 @@ def test_git_boundary_failures_are_stable_and_safe(tmp_path, monkeypatch, stage,
     from dataclasses import replace
     from backend.app.execution._process import CapturedProcess
     baseline = CapturedProcess(0, b"", b"", False, False, False, "digest")
-    monkeypatch.setattr("backend.app.git.adapter.shutil.which", lambda _: str(tmp_path / "git.exe"))
+    monkeypatch.setattr("backend.app.git.safe_exec.shutil.which", lambda _: str(tmp_path / "git.exe"))
     monkeypatch.setenv("PATH", str(tmp_path))
+    seen: list[str] = []
     def fake(argv, **_):
         command = argv[argv.index("-C") + 2]
+        seen.append(command)
         result = baseline
         if command == "ls-files":
             result = replace(result, stdout=b"100644 " + b"a" * 40 + b" 0\tfile.py\0")
@@ -228,10 +230,14 @@ def test_git_boundary_failures_are_stable_and_safe(tmp_path, monkeypatch, stage,
                 "record": {"stdout": b"bad\0"},
             }[failure])
         return result
-    monkeypatch.setattr("backend.app.git.adapter.capture", fake)
+    monkeypatch.setattr("backend.app.git.safe_exec.capture", fake)
     with pytest.raises(GitCommandError) as error:
         GitRepositoryInspector._capture_git(str(tmp_path / "repo"), ["status"], 100)
     assert "sensitive-path-canary" not in str(error.value)
+    # The parametrized stage was actually reached (and was the last one run), so
+    # a failure raised earlier cannot satisfy this test vacuously.
+    assert stage in seen
+    assert seen[-1] == stage
 
 
 def test_status_unknown_record_and_ordinary_conflict():

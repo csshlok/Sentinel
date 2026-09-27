@@ -36,11 +36,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from backend.app.contracts.models import RecoveryStatus
+from backend.app.contracts.models import ChangedPathStatus
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
+from backend.app.git.adapter import GitRepositoryInspector
+from backend.app.git.errors import GitCommandError
+from backend.app.git.state import GitStateTracker
 from backend.app.providers.repository_slug import resolve_github_repository_slug
 from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.tests.recovery.test_git_recovery import (
@@ -240,6 +245,24 @@ def test_positive_control_commit_mechanisms_fire_under_plain_git(tmp_path) -> No
     assert not missing, f"positive control did not fire: {sorted(missing)}; fired={sorted(fired)}"
 
 
+def test_positive_control_inspection_mechanisms_fire_under_plain_git(tmp_path) -> None:
+    canary_dir = tmp_path / "canary"
+    repo, _, _ = build_hostile_repository(tmp_path / "repo", canary_dir, filtered_files=False)
+    root = Path(repo)
+    (root / "app.txt").write_bytes(b"agent edit\n")
+    (root / ".gitattributes").write_bytes(
+        b"*.dat filter=evil\n*.wt filter=wt\n*.txt diff=evil merge=evil\n# edited\n"
+    )
+
+    plain_git(root, "status", "--porcelain", check=False)      # core.fsmonitor
+    plain_git(root, "diff", check=False)                       # diff.external / diff.evil.command
+    plain_git(root, "diff", "--no-ext-diff", check=False)      # diff.evil.textconv
+
+    fired = set(canaries(canary_dir))
+    missing = {"fsmonitor", "diff-external", "diff-command", "diff-textconv"} - fired
+    assert not missing, f"positive control did not fire: {sorted(missing)}; fired={sorted(fired)}"
+
+
 # --- recovery preview ----------------------------------------------------------------
 
 
@@ -315,6 +338,35 @@ def test_recovery_execute_on_hostile_repository_uses_sentinel_identity_and_execu
     # Lifecycle branch-head lookup and repository-slug lookup on the same repo.
     assert RuntimeLifecycleFacts._branch_head_sha(repo, branch) == tip
     assert resolve_github_repository_slug(repo) == "acme/widgets"
+    assert_no_canaries(canary_dir)
+
+
+# --- inspection (adapter, checkpoints) ------------------------------------------------
+
+
+def test_inspection_and_checkpoint_on_hostile_repository_execute_nothing(tmp_path) -> None:
+    canary_dir = tmp_path / "canary"
+    repo, _, _ = build_hostile_repository(tmp_path / "repo", canary_dir, filtered_files=False)
+    (Path(repo) / "app.txt").write_bytes(b"inspected edit\n")
+
+    summary = GitRepositoryInspector().inspect(repo, 100_000)
+    checkpoint = GitStateTracker().capture(uuid4(), "hostile", repo, 1, 100_000)
+
+    assert_no_canaries(canary_dir)
+    changed = {item.path: item.status for item in summary.files}
+    assert changed == {"app.txt": ChangedPathStatus.MODIFIED}
+    assert "+inspected edit" in summary.patch
+    assert checkpoint.summary.files == summary.files
+
+
+def test_inspection_refuses_content_filtered_hostile_repository(tmp_path) -> None:
+    canary_dir = tmp_path / "canary"
+    repo, _, _ = build_hostile_repository(tmp_path / "repo", canary_dir)
+    (Path(repo) / "app.txt").write_bytes(b"inspected edit\n")
+
+    with pytest.raises(GitCommandError, match="content filters are unsupported"):
+        GitRepositoryInspector().inspect(repo, 100_000)
+
     assert_no_canaries(canary_dir)
 
 

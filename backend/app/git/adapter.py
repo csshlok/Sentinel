@@ -1,10 +1,15 @@
-"""Read-only, contract-conforming Git repository inspection."""
+"""Read-only, contract-conforming Git repository inspection.
+
+Git is reached only through the hardened harness ``backend.app.git.safe_exec``
+(trusted executable, minimal environment, empty hooks directory, neutralized
+filters/drivers/execution-bearing config, bounded capture). ``state.py`` and
+``reader.py`` reach Git only through ``GitRepositoryInspector._capture_git`` and
+therefore inherit the same hardening.
+"""
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,10 +17,9 @@ from backend.app.contracts.models import (
     ChangedPath, ChangedPathStatus, GitSummary, RepositoryInfo, utc_now,
 )
 from backend.app.git.classifier import classify_path
-from backend.app.git.errors import (
-    GitCommandError, GitExecutableNotFoundError, RepositoryValidationError,
-)
-from backend.app.execution._process import CapturedProcess, capture, minimal_environment
+from backend.app.git.errors import GitCommandError, RepositoryValidationError
+from backend.app.git.safe_exec import HardenedGit
+from backend.app.execution._process import CapturedProcess
 
 
 METADATA_LIMIT = 8 * 1_048_576
@@ -145,108 +149,53 @@ class GitRepositoryInspector:
 
     @staticmethod
     def _capture_git(root: str, args: list[str], limit: int) -> CapturedProcess:
-        env = minimal_environment()
-        env.update({
-            "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0",
-            "GIT_NO_REPLACE_OBJECTS": "1", "GIT_NO_LAZY_FETCH": "1",
-            "GIT_ATTR_NOSYSTEM": "1",
-        })
-        # Preserve normal Git configuration such as autocrlf. Suppressing it can
-        # fabricate changes in an otherwise clean Windows checkout. Commands
-        # from that configuration are neutralized separately below.
-        for key in ("HOME", "USERPROFILE"):
-            if key in os.environ:
-                env[key] = os.environ[key]
-        # Resolve an absolute executable outside the selected repository. Passing
-        # a fully qualified name to which also avoids Windows cwd precedence.
-        executable = None
-        root_path = Path(root).resolve()
-        for entry in env.get("PATH", "").split(os.pathsep):
-            directory = Path(entry)
-            if not entry or not directory.is_absolute():
-                continue
-            directory = directory.resolve()
-            if directory == root_path or root_path in directory.parents:
-                continue
-            found = shutil.which(str(directory / "git"))
-            if found:
-                resolved = Path(found).resolve()
-                if root_path in resolved.parents or resolved.suffix.lower() in {".cmd", ".bat"}:
-                    continue
-                executable = str(resolved)
-                break
-        if executable is None:
-            raise GitExecutableNotFoundError()
-        base = [executable, "--no-optional-locks", "-c", "core.fsmonitor=false",
-                "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
-                "-c", "diff.submodule=short", "-c", "color.ui=false", "-C", root]
-        try:
-            # Git may invoke clean/process filters when comparing working files.
-            # Read only their names and override every configured filter command.
-            filters = capture(
-                [*base, "config", "--null", "--name-only", "--get-regexp",
-                 r"^filter\..*\.(clean|smudge|process|required)$"],
-                cwd=root, env=env, timeout=30, limit=METADATA_LIMIT,
-            )
-            if filters.timed_out or filters.incomplete or filters.truncated:
-                raise GitCommandError("Git filter configuration could not be inspected.")
-            if filters.returncode not in {0, 1}:
-                raise GitCommandError(details={"exit_code": filters.returncode})
-            overrides = []
-            for raw_key in filters.stdout.split(b"\0"):
-                if raw_key:
-                    key = raw_key.decode("utf-8")
-                    overrides.extend(["-c", key + ("=false" if key.endswith(".required") else "=")])
-            if args[0] in {"status", "diff"}:
-                # Turning a clean filter off may change the meaning of a diff
-                # (for example LFS). Reject files using filters rather than
-                # returning plausible but incorrect raw-byte evidence.
-                tracked = capture([*base, *overrides, "ls-files", "--stage", "-z"],
-                                  cwd=root, env=env, timeout=30, limit=METADATA_LIMIT)
-                if (tracked.returncode != 0 or tracked.truncated
-                        or tracked.timed_out or tracked.incomplete):
-                    raise GitCommandError("Git tracked paths could not be inspected.")
-                batch: list[str] = []
-                batch_size = 0
-                paths = []
+        # One discovery per call: the harness resolves a trusted Git, builds the
+        # hardened environment and overrides every configured filter/driver.
+        session = HardenedGit.open(root)
+        if args[0] in {"status", "diff"}:
+            # Turning a clean filter off may change the meaning of a diff
+            # (for example LFS). Reject files using filters rather than
+            # returning plausible but incorrect raw-byte evidence.
+            tracked = session.run(["ls-files", "--stage", "-z"])
+            if (tracked.returncode != 0 or tracked.truncated
+                    or tracked.timed_out or tracked.incomplete):
+                raise GitCommandError("Git tracked paths could not be inspected.")
+            batch: list[str] = []
+            batch_size = 0
+            paths = []
+            try:
                 raw_paths = tracked.stdout.decode("utf-8")
-                if raw_paths and not raw_paths.endswith("\0"):
-                    raise GitCommandError("Git returned truncated tracked paths.")
-                for record in raw_paths.split("\0")[:-1]:
-                    match = re.fullmatch(r"([0-7]{6}) [a-f0-9]{40} [0-3]\t(.+)", record, re.DOTALL)
-                    if match is None:
-                        raise GitCommandError("Git returned invalid tracked paths.")
-                    if match[1] == "160000":
-                        # Submodule status may invoke commands from the nested
-                        # repository's independent configuration. The old port
-                        # cannot express incomplete nested worktree evidence.
-                        raise GitCommandError("Submodule inspection requires a dedicated supported adapter.")
-                    paths.append(GitRepositoryInspector._normalize_path(match[2]))
-                paths = list(dict.fromkeys(paths))
-                for path in [*paths, ""]:
-                    if batch and (not path or batch_size + len(path) > 12_000):
-                        attributes = capture(
-                            [*base, *overrides, "check-attr", "-z", "filter", "--", *batch],
-                            cwd=root, env=env, timeout=30, limit=METADATA_LIMIT,
-                        )
-                        if (attributes.returncode != 0 or attributes.truncated
-                                or attributes.timed_out or attributes.incomplete):
-                            raise GitCommandError("Git attributes could not be inspected.")
-                        fields = attributes.stdout.split(b"\0")
-                        if fields[-1] or (len(fields) - 1) % 3:
-                            raise GitCommandError("Git returned invalid attributes.")
-                        if any(value not in {b"unspecified", b"unset"} for value in fields[2:-1:3]):
-                            raise GitCommandError("Files using Git content filters are unsupported for inspection.")
-                        batch, batch_size = [], 0
-                    if path:
-                        batch.append(path)
-                        batch_size += len(path) + 3
-            completed = capture([*base, *overrides, *args], cwd=root, env=env,
-                                timeout=30, limit=limit, stderr_limit=4096)
-        except FileNotFoundError as exc:
-            raise GitExecutableNotFoundError() from exc
-        except (OSError, UnicodeError, ValueError) as exc:
-            raise GitCommandError("Git repository inspection could not start.") from exc
+            except UnicodeDecodeError as exc:
+                raise GitCommandError("Git returned invalid tracked paths.") from exc
+            if raw_paths and not raw_paths.endswith("\0"):
+                raise GitCommandError("Git returned truncated tracked paths.")
+            for record in raw_paths.split("\0")[:-1]:
+                match = re.fullmatch(r"([0-7]{6}) [a-f0-9]{40} [0-3]\t(.+)", record, re.DOTALL)
+                if match is None:
+                    raise GitCommandError("Git returned invalid tracked paths.")
+                if match[1] == "160000":
+                    # Submodule status may invoke commands from the nested
+                    # repository's independent configuration. The old port
+                    # cannot express incomplete nested worktree evidence.
+                    raise GitCommandError("Submodule inspection requires a dedicated supported adapter.")
+                paths.append(GitRepositoryInspector._normalize_path(match[2]))
+            paths = list(dict.fromkeys(paths))
+            for path in [*paths, ""]:
+                if batch and (not path or batch_size + len(path) > 12_000):
+                    attributes = session.run(["check-attr", "-z", "filter", "--", *batch])
+                    if (attributes.returncode != 0 or attributes.truncated
+                            or attributes.timed_out or attributes.incomplete):
+                        raise GitCommandError("Git attributes could not be inspected.")
+                    fields = attributes.stdout.split(b"\0")
+                    if fields[-1] or (len(fields) - 1) % 3:
+                        raise GitCommandError("Git returned invalid attributes.")
+                    if any(value not in {b"unspecified", b"unset"} for value in fields[2:-1:3]):
+                        raise GitCommandError("Files using Git content filters are unsupported for inspection.")
+                    batch, batch_size = [], 0
+                if path:
+                    batch.append(path)
+                    batch_size += len(path) + 3
+        completed = session.run(args, limit=limit, timeout=30, stderr_limit=4096)
         if completed.timed_out or completed.incomplete:
             raise GitCommandError("Git repository inspection timed out.")
         if completed.returncode != 0:
