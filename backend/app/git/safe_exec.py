@@ -57,6 +57,7 @@ import shutil
 import stat
 import tempfile
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -359,6 +360,7 @@ class HardenedGit:
         *,
         identity: GitIdentity | None = None,
         extra_roots: Sequence[str | Path] = (),
+        discovery_timeout: float = GIT_TIMEOUT_SECONDS,
     ) -> HardenedGit:
         target = os.path.abspath(os.fspath(repository))
         executable = resolve_trusted_git(target, extra_roots=extra_roots)
@@ -375,7 +377,8 @@ class HardenedGit:
                 [executable, *GLOBAL_FLAGS, "-c", f"core.hooksPath={hooks}", *static,
                  "-C", target, "config", "--null", "--show-scope", "--get-regexp",
                  _DISCOVERY_PATTERN],
-                cwd=hooks.parent, env=discovery_env, timeout=GIT_TIMEOUT_SECONDS,
+                cwd=hooks.parent, env=discovery_env,
+                timeout=min(discovery_timeout, GIT_TIMEOUT_SECONDS),
                 limit=METADATA_LIMIT, stderr_limit=STDERR_LIMIT,
             )
         except (OSError, ValueError, UnicodeError) as exc:
@@ -494,7 +497,18 @@ def run_git(
     identity: GitIdentity | None = None,
     extra_roots: Sequence[str | Path] = (),
 ) -> CapturedProcess:
-    """Run one hardened Git command with fresh discovery for its ``-C`` target."""
+    """Run one hardened Git command with fresh discovery for its ``-C`` target.
 
-    session = HardenedGit.open(repository, identity=identity, extra_roots=extra_roots)
-    return session.run(args, limit=limit, timeout=timeout, stderr_limit=stderr_limit)
+    ``timeout`` bounds discovery and the command together: discovery gets at
+    most ``timeout`` (capped at ``GIT_TIMEOUT_SECONDS``) and the command gets
+    whatever remains, so a caller's short limit is never exceeded by the
+    discovery step.
+    """
+
+    deadline = time.monotonic() + timeout
+    session = HardenedGit.open(repository, identity=identity, extra_roots=extra_roots,
+                               discovery_timeout=timeout)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise GitCommandError("Git configuration discovery used the whole time budget.")
+    return session.run(args, limit=limit, timeout=remaining, stderr_limit=stderr_limit)

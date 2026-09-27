@@ -403,3 +403,36 @@ def test_a_repository_enclosing_the_runtime_directory_is_refused(tmp_path, monke
         handle = safe_exec._hooks_handle
         if handle is not None:
             os.close(handle)
+
+
+def test_the_callers_timeout_bounds_discovery_and_the_command_together(
+    tmp_path, monkeypatch
+) -> None:
+    """WR-10: a 5 s lookup is never stretched by a 30 s discovery."""
+
+    repo = _repo(tmp_path / "repo")
+    seen: list[tuple[str, float]] = []
+    real_capture = safe_exec.capture
+
+    def recording(argv, **kwargs):
+        seen.append((argv[argv.index("-C") + 2], kwargs["timeout"]))
+        return real_capture(argv, **kwargs)
+
+    monkeypatch.setattr(safe_exec, "capture", recording)
+    assert run_git(repo, ["rev-parse", "HEAD"], timeout=5).returncode == 0
+
+    (discovery, discovery_timeout), (command, command_timeout) = seen
+    assert (discovery, command) == ("config", "rev-parse")
+    assert discovery_timeout == 5
+    assert 0 < command_timeout <= 5
+
+
+def test_a_discovery_that_uses_the_whole_budget_fails_closed(tmp_path, monkeypatch) -> None:
+    repo = _repo(tmp_path / "repo")
+    import types
+
+    clock = iter([100.0, 106.0])
+    monkeypatch.setattr(safe_exec, "time", types.SimpleNamespace(monotonic=lambda: next(clock)))
+
+    with pytest.raises(GitCommandError):
+        run_git(repo, ["rev-parse", "HEAD"], timeout=5)
