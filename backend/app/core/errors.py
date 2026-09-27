@@ -154,3 +154,15 @@ def tool_trust_denied(tool_id: str) -> AppError:
         status_code=403,
         details={"tool_id": tool_id},
     )
+
+
+def evidence_store_inside_repository(database_path: str, repository_root: str) -> AppError:
+    return AppError(
+        "EVIDENCE_STORE_INSIDE_REPOSITORY",
+        "The evidence store is inside a Git working tree that an agent could reach. "
+        "Move it with `sentinel migrate-store` (or `python -m backend.app.cli "
+        "migrate-store`), or set CHANGE_ASSURANCE_DB_PATH to a location outside "
+        "every repository.",
+        status_code=409,
+        details={"database_path": database_path, "repository_root": repository_root},
+    )

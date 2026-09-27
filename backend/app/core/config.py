@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from backend.app.core.evidence_store import default_database_path
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -18,11 +20,9 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        database_path = Path(
-            os.environ.get(
-                "CHANGE_ASSURANCE_DB_PATH",
-                str(Path.cwd() / ".change-assurance" / "change_assurance.sqlite3"),
-            )
+        configured = os.environ.get("CHANGE_ASSURANCE_DB_PATH")
+        database_path = (
+            Path(configured) if configured else default_database_path(os.environ)
         ).resolve()
         return cls(
             database_path=database_path,

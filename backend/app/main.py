@@ -30,6 +30,10 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.core.errors import AppError
+from backend.app.core.evidence_store import (
+    ensure_store_outside_repository,
+    warn_if_legacy_store_present,
+)
 from backend.app.core.journal import JournalWriter
 from backend.app.core.lifecycle_facts_service import RuntimeLifecycleFacts
 from backend.app.core.replay_service import ReplayService
@@ -118,6 +122,9 @@ def create_app(
     evidence: EvidenceService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
+    # Refuse an agent-reachable store before anything (token, database) is written.
+    ensure_store_outside_repository(resolved_settings.database_path)
+    warn_if_legacy_store_present(resolved_settings.database_path, logger=LOGGER)
     api_token = resolved_settings.api_token or load_or_create_api_token(
         resolved_settings.database_path
     )
