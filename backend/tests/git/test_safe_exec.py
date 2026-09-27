@@ -16,7 +16,7 @@ from backend.app.git.safe_exec import (
     RECOVERY_IDENTITY,
     STATIC_CONFIG_OVERRIDES,
     GitIdentity,
-    empty_hooks_directory,
+    hooks_placeholder,
     run_git,
 )
 
@@ -88,8 +88,10 @@ def test_argv_environment_and_cwd_are_hardened(tmp_path, monkeypatch) -> None:
     values = _config_values(argv)
     hooks = [value for value in values if value.startswith("core.hooksPath=")]
     assert len(hooks) == 1
-    hooks_dir = Path(hooks[0].split("=", 1)[1])
-    assert hooks_dir.is_dir() and not any(hooks_dir.iterdir())
+    placeholder = Path(hooks[0].split("=", 1)[1])
+    assert placeholder.is_file() and not placeholder.is_symlink()
+    assert placeholder.name == safe_exec.HOOKS_PLACEHOLDER_NAME
+    assert kwargs["cwd"] == placeholder.parent
     for override in STATIC_CONFIG_OVERRIDES:
         assert override in values
     assert Path(argv[0]).is_absolute() and Path(argv[0]).suffix.lower() not in {".cmd", ".bat"}
@@ -106,7 +108,7 @@ def test_argv_environment_and_cwd_are_hardened(tmp_path, monkeypatch) -> None:
         assert resolved_repo != Path(entry) and resolved_repo not in Path(entry).parents
     cwd = Path(kwargs["cwd"]).resolve()
     assert cwd != resolved_repo and resolved_repo not in cwd.parents
-    assert cwd == hooks_dir.parent.resolve()
+    assert cwd == placeholder.parent.resolve()
 
 
 def test_discovery_reads_system_scope_but_commands_ignore_it(tmp_path, monkeypatch) -> None:
@@ -288,26 +290,66 @@ def test_git_identity_rejects_unsafe_values(name, email) -> None:
         GitIdentity(name=name, email=email)
 
 
-def test_planted_hook_forces_a_fresh_empty_hooks_directory(tmp_path) -> None:
+def test_hooks_path_is_a_regular_file_so_no_hook_can_be_planted_below_it(tmp_path) -> None:
+    """WR-01: there is no hooks directory to race a hook into."""
+
     repo = _repo(tmp_path / "repo")
-    canary = tmp_path / "planted-hook-ran"
-    first = empty_hooks_directory()
-    planted = first / "post-commit"
-    planted.write_bytes(f"#!/bin/sh\necho hit > '{canary.resolve().as_posix()}'\n".encode())
-    try:
-        result = run_git(repo, ["commit", "-q", "--allow-empty", "-m", "x"],
-                         identity=RECOVERY_IDENTITY)
-        assert result.returncode == 0, result.stderr
-        assert not canary.exists()
-        second = empty_hooks_directory()
-        assert second != first
-        assert second.is_dir() and not any(second.iterdir())
-        # Positive control: the planted hook is live if Git is pointed at it.
-        _plain(repo, "-c", f"core.hooksPath={first}", "-c", "user.name=T",
-               "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "y")
-        assert canary.exists()
-    finally:
-        planted.unlink(missing_ok=True)
+    placeholder = hooks_placeholder()
+    assert placeholder.is_file()
+    with pytest.raises(OSError):
+        (placeholder / "post-commit").write_bytes(b"#!/bin/sh\n")
+    canary = tmp_path / "repo-hook-ran"
+    hook = repo / ".git" / "hooks" / "post-commit"
+    hook.write_bytes(f"#!/bin/sh\necho hit > '{canary.resolve().as_posix()}'\n".encode())
+
+    result = run_git(repo, ["commit", "-q", "--allow-empty", "-m", "x"], identity=RECOVERY_IDENTITY)
+
+    assert result.returncode == 0, result.stderr
+    assert not canary.exists()
+    assert hooks_placeholder() == placeholder
+    # Positive control: the repository hook is live under plain Git.
+    _plain(repo, "commit", "-q", "--allow-empty", "-m", "y")
+    assert canary.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows sharing modes block delete/rename")
+def test_the_placeholder_cannot_be_deleted_or_renamed_while_sentinel_holds_it() -> None:
+    placeholder = hooks_placeholder()
+    for attempt in (
+        placeholder.unlink,
+        lambda: placeholder.rename(placeholder.with_name("moved")),
+        lambda: placeholder.parent.rename(placeholder.parent.with_name(placeholder.parent.name + "-x")),
+    ):
+        with pytest.raises(PermissionError):
+            attempt()
+    assert hooks_placeholder() == placeholder
+
+
+def test_a_placeholder_replaced_during_a_call_fails_it_and_is_never_reused(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    first = hooks_placeholder()
+    real_capture = safe_exec.capture
+    decoy = tmp_path / "decoy"
+    decoy.write_bytes(b"")
+
+    def swapping(argv, **kwargs):
+        result = real_capture(argv, **kwargs)
+        if argv[argv.index("-C") + 2] != "config":
+            # Simulate the file being replaced: Sentinel's handle no longer matches it.
+            safe_exec._hooks_handle = os.open(decoy, os.O_RDONLY)
+        return result
+
+    monkeypatch.setattr(safe_exec, "capture", swapping)
+    with pytest.raises(GitCommandError):
+        run_git(repo, ["rev-parse", "HEAD"])
+    monkeypatch.setattr(safe_exec, "capture", real_capture)
+
+    second = hooks_placeholder()
+    assert second != first
+    assert second.is_file()
+    assert run_git(repo, ["rev-parse", "HEAD"]).returncode == 0
 
 
 def _merge_driver_repo(root: Path, canary: Path) -> tuple[Path, str]:

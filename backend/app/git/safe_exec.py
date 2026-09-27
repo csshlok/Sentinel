@@ -13,8 +13,10 @@ neutralizations applied to every invocation:
   ``GIT_NO_REPLACE_OBJECTS=1``, ``GIT_NO_LAZY_FETCH=1`` and
   ``GIT_ATTR_NOSYSTEM=1``; PATH is rewritten to absolute directories outside
   the repository (and any worktree) Git is pointed at;
-* ``-c core.hooksPath=<a verified-empty Sentinel-owned directory>`` so no hook
-  from ``.git/hooks`` or a repository-configured hooks directory can run;
+* ``-c core.hooksPath=<a Sentinel-owned 0-byte regular file>`` so no hook
+  from ``.git/hooks`` or a repository-configured hooks directory can run: Git
+  looks a hook up as ``<hooksPath>/<name>``, which never exists below a regular
+  file (see ``hooks_placeholder`` for the same-user residual risk);
 * the static execution-bearing overrides in ``STATIC_CONFIG_OVERRIDES``
   (fsmonitor, untracked cache, ssh command, pager, editors, askpass,
   credential helper, gpg programs and signing, external diff, ``ext::``
@@ -50,6 +52,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import tempfile
 import threading
 from collections.abc import Mapping, Sequence
@@ -168,34 +171,69 @@ def resolve_trusted_git(repository: str | Path, *, extra_roots: Sequence[str | P
     raise GitExecutableNotFoundError()
 
 
+HOOKS_PLACEHOLDER_NAME = "no-hooks"
+_O_BINARY = getattr(os, "O_BINARY", 0)
 _HOOKS_LOCK = threading.Lock()
-_hooks_directory: Path | None = None
+_hooks_placeholder: Path | None = None
+_hooks_handle: int | None = None
 
 
-def _is_empty_directory(path: Path) -> bool:
+def _placeholder_intact(path: Path, handle: int | None) -> bool:
+    """``path`` is still the regular file Sentinel created and holds open."""
+
+    if handle is None:
+        return False
     try:
-        if path.is_symlink() or not path.is_dir():
-            return False
-        with os.scandir(path) as entries:
-            return next(entries, None) is None
+        current = os.lstat(path)
+        held = os.fstat(handle)
     except OSError:
         return False
+    return (stat.S_ISREG(current.st_mode)
+            and (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino))
 
 
-def empty_hooks_directory() -> Path:
-    """A Sentinel-owned, verified-empty hooks directory (fresh if tampered with)."""
-
-    global _hooks_directory
+def hooks_placeholder_intact(path: Path) -> bool:
     with _HOOKS_LOCK:
-        current = _hooks_directory
-        if current is not None and _is_empty_directory(current):
+        return path == _hooks_placeholder and _placeholder_intact(path, _hooks_handle)
+
+
+def hooks_placeholder() -> Path:
+    """The Sentinel-owned regular file that ``core.hooksPath`` points at.
+
+    Git resolves a hook as ``<core.hooksPath>/<name>``; below a regular file
+    that path can never exist, so no hook runs, and there is no directory
+    for anyone to drop a hook into. Sentinel keeps the file open for the
+    life of the process. On Windows that handle (opened without delete
+    sharing) makes deleting or renaming the file, or any directory above it,
+    fail, which is what turning it into a hooks directory would require.
+    Every call re-checks the file before and after Git runs
+    (``HardenedGit.run``); a replaced placeholder is never reused.
+
+    Residual risk (same user, until the AppContainer phase): the supervised
+    agent still runs as the user's SID, so it can in principle close
+    Sentinel's handle from outside (``DuplicateHandle`` with
+    ``DUPLICATE_CLOSE_SOURCE``) and race a replacement in during a Git call.
+    The after-call check detects that and fails the call, but it cannot undo
+    a hook that already ran. On POSIX an open descriptor does not block
+    unlink, so there only the before/after identity check applies.
+    """
+
+    global _hooks_handle, _hooks_placeholder
+    with _HOOKS_LOCK:
+        current = _hooks_placeholder
+        if current is not None and _placeholder_intact(current, _hooks_handle):
             return current
-        # Never reuse or delete a directory someone planted files into.
+        # Never reuse a replaced placeholder; start over in a fresh directory.
         runtime = Path(tempfile.mkdtemp(prefix="sentinel-git-"))
-        hooks = runtime / "hooks"
-        hooks.mkdir()
-        _hooks_directory = hooks
-        return hooks
+        placeholder = runtime / HOOKS_PLACEHOLDER_NAME
+        handle = os.open(placeholder, os.O_CREAT | os.O_EXCL | os.O_RDONLY | _O_BINARY, 0o400)
+        previous, _hooks_handle, _hooks_placeholder = _hooks_handle, handle, placeholder
+        if previous is not None:
+            try:
+                os.close(previous)
+            except OSError:
+                pass
+        return placeholder
 
 
 def hardened_environment(roots: Sequence[Path]) -> dict[str, str]:
@@ -290,9 +328,10 @@ def _start_failure(exc: BaseException) -> GitCommandError | GitExecutableNotFoun
 class HardenedGit:
     """One discovered, hardened Git configuration for a single ``-C`` target.
 
-    ``prefix`` holds every ``-c`` override after the per-call hooks directory:
+    ``prefix`` holds every ``-c`` override after the per-call hooks placeholder:
     static overrides, discovered driver overrides, carried system keys and the
-    optional identity. ``run`` re-verifies the hooks directory before each call.
+    optional identity. ``run`` re-verifies the hooks placeholder before and
+    after each call.
     """
 
     executable: str
@@ -312,7 +351,7 @@ class HardenedGit:
         executable = resolve_trusted_git(target, extra_roots=extra_roots)
         env = hardened_environment([Path(target), *(Path(root) for root in extra_roots)])
         discovery_env = {key: value for key, value in env.items() if key != "GIT_CONFIG_NOSYSTEM"}
-        hooks = empty_hooks_directory()
+        hooks = hooks_placeholder()
         static = _static_arguments()
         try:
             # Reading configuration executes nothing; the system scope must be
@@ -343,14 +382,20 @@ class HardenedGit:
         timeout: float = GIT_TIMEOUT_SECONDS,
         stderr_limit: int = STDERR_LIMIT,
     ) -> CapturedProcess:
-        hooks = empty_hooks_directory()
+        hooks = hooks_placeholder()
         argv = [self.executable, *GLOBAL_FLAGS, "-c", f"core.hooksPath={hooks}",
                 *self.prefix, "-C", self.repository, *args]
         try:
-            return capture(argv, cwd=hooks.parent, env=self.env, timeout=timeout,
-                           limit=limit, stderr_limit=stderr_limit)
+            result = capture(argv, cwd=hooks.parent, env=self.env, timeout=timeout,
+                             limit=limit, stderr_limit=stderr_limit)
         except (OSError, ValueError, UnicodeError) as exc:
             raise _start_failure(exc) from exc
+        if not hooks_placeholder_intact(hooks):
+            raise GitCommandError(
+                "Sentinel's hooks placeholder was replaced while Git ran; "
+                "the result is not trusted."
+            )
+        return result
 
 
 class SafeGitSession:
@@ -371,7 +416,7 @@ class SafeGitSession:
       repository, a subdirectory, or a linked worktree gets its own discovery,
       so conditional includes such as ``includeIf "gitdir:**/worktrees/**"``
       are still resolved in the context Git will actually use.
-    * The hooks directory and child cwd are still re-verified on every
+    * The hooks placeholder and child cwd are still re-verified on every
       ``run()`` (``HardenedGit.run``).
 
     Residual window (accepted): driver keys *added* to the configuration while

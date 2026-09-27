@@ -1,7 +1,7 @@
 """Read-only, contract-conforming Git repository inspection.
 
 Git is reached only through the hardened harness ``backend.app.git.safe_exec``
-(trusted executable, minimal environment, empty hooks directory, neutralized
+(trusted executable, minimal environment, hooks path that is a regular file, neutralized
 filters/drivers/execution-bearing config, bounded capture). ``state.py`` and
 ``reader.py`` reach Git only through ``GitRepositoryInspector._capture_git`` and
 therefore inherit the same hardening.

@@ -140,18 +140,18 @@ def test_run_git_one_off_calls_stay_fresh(tmp_path, recorded) -> None:
     assert _discoveries(recorded) == 2
 
 
-def test_hooks_directory_is_reverified_on_every_session_run(tmp_path, monkeypatch) -> None:
+def test_hooks_placeholder_is_reverified_on_every_session_run(tmp_path, monkeypatch) -> None:
     root = _init(tmp_path / "hooks")
     session = SafeGitSession()
     session.run(root, ["rev-parse", "HEAD"])
     verified: list[Path] = []
-    original = safe_exec.empty_hooks_directory
+    original = safe_exec.hooks_placeholder
 
     def counting() -> Path:
         verified.append(original())
         return verified[-1]
 
-    monkeypatch.setattr(safe_exec, "empty_hooks_directory", counting)
+    monkeypatch.setattr(safe_exec, "hooks_placeholder", counting)
     session.run(root, ["rev-parse", "HEAD"])
     session.run(root, ["status", "--porcelain"])
     assert len(verified) == 2
