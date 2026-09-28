@@ -67,6 +67,11 @@ def test_required_zero_threshold_is_rejected() -> None:
         DiffCoverageRule(required=True, minimum_percent=0)
 
 
+def test_required_rule_rejects_collection_only_selection() -> None:
+    with pytest.raises(ValidationError, match="full pytest selection"):
+        DiffCoverageRule(required=True, minimum_percent=80, test_args=["--collect-only"])
+
+
 def test_v1_contract_digest_remains_compatible(tmp_path: Path) -> None:
     _, change, _ = _fixture(tmp_path)
     old = change.model_copy(update={"contract": ChangeContract()})

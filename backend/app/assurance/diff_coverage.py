@@ -82,7 +82,7 @@ def evaluate_report(
             for f in measured
         )
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
-    gate = (state == "PASS") if rule.rule.required else None
+    gate = (state == "PASS" and result.checks_passed is True) if rule.rule.required else None
     return result.model_copy(update={
         "files": measured, "excluded": excluded, "diff_exercised": state,
         "measured_percent": (100.0 * executed_total / total) if total else None,
@@ -99,8 +99,9 @@ def collect_diff_coverage(
 
     started = utc_now()
     root = Path(tested.repository_root)
-    interpreter = request.interpreter_path or sys.executable
-    command = [interpreter, "-m", "coverage", "run", "-m", "pytest", *request.test_args]
+    interpreter = (request.rule.interpreter_path or sys.executable) if request.rule.required else (request.interpreter_path or sys.executable)
+    test_args = request.rule.test_args if request.rule.required else request.test_args
+    command = [interpreter, "-m", "coverage", "run", "-m", "pytest", *test_args]
     result = DiffCoverageResult(
         change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
         head_sha=tested.head_sha, status_digest=tested.status_digest,
@@ -142,7 +143,7 @@ def collect_diff_coverage(
         artifact = evidence / "coverage.json"
         config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
         argv = [interpreter, "-m", "coverage", "run", "--rcfile", str(config),
-                "--data-file", str(data), "-m", "pytest", *request.test_args]
+                "--data-file", str(data), "-m", "pytest", *test_args]
         result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
         try:
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)

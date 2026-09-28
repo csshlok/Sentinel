@@ -1143,11 +1143,15 @@ class DiffCoverageRule(ContractModel):
     minimum_percent: float = Field(default=0, ge=0, le=100)
     per_file: bool = False
     policy_version: ShortText = "diff-coverage-v1"
+    interpreter_path: RepositoryPath | None = None
+    test_args: list[ShortText] = Field(default_factory=lambda: ["-q"], max_length=4)
 
     @model_validator(mode="after")
     def required_threshold_is_positive(self) -> DiffCoverageRule:
         if self.required and self.minimum_percent <= 0:
             raise ValueError("required diff coverage needs minimum_percent > 0")
+        if self.required and any(arg not in {"-q", "--quiet"} for arg in self.test_args):
+            raise ValueError("required diff coverage runs the full pytest selection")
         return self
 
 

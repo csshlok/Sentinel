@@ -2731,6 +2731,19 @@
         "additionalProperties": false,
         "description": "Opt-in versioned threshold supplied with a measurement request.",
         "properties": {
+          "interpreter_path": {
+            "anyOf": [
+              {
+                "maxLength": 32767,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interpreter Path"
+          },
           "minimum_percent": {
             "default": 0,
             "maximum": 100.0,
@@ -2760,6 +2773,16 @@
             "default": 1,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "test_args": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Test Args",
+            "type": "array"
           }
         },
         "title": "DiffCoverageRule",

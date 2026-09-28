@@ -42,12 +42,13 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
             "baseline_checkpoint_id": baseline.json()["checkpoint"]["id"],
             "tested_checkpoint_id": tested.json()["checkpoint"]["id"],
             "interpreter_path": sys.executable,
-            "test_args": ["-q"],
+            "test_args": ["--collect-only"],
             "rule": {"required": True, "minimum_percent": 1},
         })
         assert measured.status_code == 200, measured.text
         body = measured.json()
         assert body["threshold"] == 100
+        assert "--collect-only" not in body["command"]
         assert body["diff_exercised"] == "FAIL"
         assert body["gate_satisfied"] is False
         stored = EvidenceStore(Database(database)).latest_diff_coverage(change_id)

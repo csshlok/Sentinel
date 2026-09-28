@@ -81,6 +81,18 @@ def test_executed_without_assertion_is_not_verified(tmp_path: Path) -> None:
     assert result.caveat == "executed ≠ verified"
 
 
+def test_failed_pytest_can_measure_execution_but_never_open_required_gate(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "tests/test_old.py", "from module import new\n\ndef test_failure():\n"
+          "    assert new() == 999\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is False
+    assert result.executed_changed_lines and result.executed_changed_lines > 0
+    assert result.gate_satisfied is False
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")
