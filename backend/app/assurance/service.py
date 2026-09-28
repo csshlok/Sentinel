@@ -369,11 +369,10 @@ class EvidenceService:
     def stop_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
         """Stop a run started by this process; persist whatever state results."""
 
-        self._journal_append(
-            change_id, JournalEventType.AGENT_STOP_REQUESTED,
-            subject_type="agent_run", subject_id=run_id, payload={},
-        )
         stored = self._store.get_agent_run(run_id)
+        if stored is not None and stored.status.value in {
+                "PASSED", "FAILED", "TIMED_OUT", "CANCELLED", "ERROR"}:
+            return stored  # already terminal; no stop was requested or performed
         try:
             run = self._launcher.stop(run_id)
         except AppError:
@@ -383,6 +382,10 @@ class EvidenceService:
             run = stored if note in stored.limitations else stored.model_copy(
                 update={"limitations": [*stored.limitations, note]})
         self._store.save_agent_run(run)
+        self._journal_append(
+            change_id, JournalEventType.AGENT_STOP_REQUESTED,
+            subject_type="agent_run", subject_id=run_id, payload={},
+        )
         return run
 
     def pause_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
