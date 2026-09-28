@@ -1,4 +1,4 @@
-"""Offline Portable Passport verifier: no sender database or API imports."""
+"""Offline Portable Passport verifier; a sender database is never opened."""
 
 from __future__ import annotations
 
