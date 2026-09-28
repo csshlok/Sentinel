@@ -30,3 +30,21 @@ def provider_secret_not_configured(provider: str) -> AppError:
         status_code=409,
         details={"provider": provider},
     )
+
+
+def agent_credential_unsupported(kind: str) -> AppError:
+    return AppError(
+        "AGENT_CREDENTIAL_UNSUPPORTED",
+        "This agent credential kind is not supported.",
+        status_code=400,
+        details={"kind": kind},
+    )
+
+
+def agent_credential_staging_failed(reason: str) -> AppError:
+    return AppError(
+        "AGENT_CREDENTIAL_STAGING_FAILED",
+        "The agent credential could not be staged.",
+        status_code=500,
+        details={"reason": reason},
+    )

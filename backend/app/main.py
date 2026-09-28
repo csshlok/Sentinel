@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.assurance.service import EvidenceService
+from backend.app.assurance.service import BASELINE, EvidenceService
 from backend.app.assurance.store import EvidenceStore, IdempotencyStore
 from backend.app.contracts.models import (
     BackendIdentity, ErrorDetail, ErrorEnvelope, HealthResponse, utc_now,
@@ -73,6 +73,7 @@ from backend.app.providers.http_transport import HttpTransport, UrllibHttpTransp
 from backend.app.providers.provider_port import GitHubProviderAdapter
 from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.app.verification.runner import SubprocessVerificationRunner
+from backend.app.workspace.manager import WorkspaceManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -153,9 +154,30 @@ def create_app(
     tool_registry = ToolRegistryService(
         database, journal=journal, signature_checker=check_signature
     )
+    resolved_credential_store = credential_store or WindowsCredentialStore()
+    # ONE broker: it backs the credential/provider services and is the only
+    # code that stages (and deletes) an agent's model credential (D-06).
+    broker = CredentialBroker(
+        resolved_credential_store, journal=journal,
+        grant_lookup=CredentialGrantRepository(database).get,
+    )
+    evidence_store = EvidenceStore(database)
+
+    def baseline_head(change_id):
+        checkpoint = evidence_store.named_checkpoint(change_id, BASELINE)
+        return checkpoint.head_sha if checkpoint is not None else None
+
+    workspace_manager = WorkspaceManager(
+        database, baseline_head=baseline_head,
+        credential_purger=broker.purge_staged_credentials,
+    )
+    # claude resolves to the AppContainer profile: it launches only inside
+    # this manager's workspace, with the broker's staged credential.
+    agent_launcher = AgentLauncher(
+        tool_registry=tool_registry, workspaces=workspace_manager, credentials=broker,
+    )
     evidence_service = evidence or EvidenceService(
-        EvidenceStore(database), journal=journal,
-        launcher=AgentLauncher(tool_registry=tool_registry),
+        evidence_store, journal=journal, launcher=agent_launcher,
     )
     change_delegations = DelegationRepository(database)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
@@ -178,11 +200,12 @@ def create_app(
     runtime = _build_runtime_services(
         database,
         service,
-        credential_store or WindowsCredentialStore(),
+        resolved_credential_store,
         http_transport or UrllibHttpTransport(),
         evidence_service,
         journal,
         tool_registry,
+        broker=broker,
     )
 
     @asynccontextmanager
@@ -263,6 +286,9 @@ def create_app(
     app.state.database = database
     app.state.change_service = service
     app.state.runtime_services = runtime
+    app.state.workspace_manager = workspace_manager
+    app.state.agent_launcher = agent_launcher
+    app.state.credential_broker = broker
     app.state.api_token = api_token
     app.state.instance_id = uuid4()
     app.state.started_at = utc_now()
@@ -277,6 +303,8 @@ def _build_runtime_services(
     evidence_service: EvidenceService,
     journal: JournalWriter | None = None,
     tool_registry: ToolRegistryService | None = None,
+    *,
+    broker: CredentialBroker | None = None,
 ) -> RuntimeServices:
     """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
     passport adapters into request-scoped use-case services (Gate 3 composition)."""
@@ -289,7 +317,7 @@ def _build_runtime_services(
     policy = DelegationPolicyEngine(delegations)
 
     credential_grants = CredentialGrantRepository(database)
-    broker = CredentialBroker(
+    broker = broker or CredentialBroker(
         credential_store, journal=resolved_journal, grant_lookup=credential_grants.get
     )
     credentials = CredentialAdminService(

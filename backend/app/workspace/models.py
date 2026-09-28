@@ -102,6 +102,8 @@ class WorkspaceRecord:
     runs: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     limitations: tuple[str, ...] = field(default_factory=tuple)
     cleaned_at: datetime | None = None
+    # Digest-only fingerprints of credentials staged for runs (never the secret).
+    credential_fingerprints: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -127,6 +129,7 @@ class WorkspaceRecord:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "cleaned_at": self.cleaned_at.isoformat() if self.cleaned_at else None,
+            "credential_fingerprints": [dict(item) for item in self.credential_fingerprints],
         }
 
     def to_json(self) -> str:
@@ -157,6 +160,8 @@ class WorkspaceRecord:
             created_at=datetime.fromisoformat(payload["created_at"]),
             updated_at=datetime.fromisoformat(payload["updated_at"]),
             cleaned_at=_time(payload.get("cleaned_at")),
+            credential_fingerprints=tuple(
+                dict(item) for item in payload.get("credential_fingerprints") or ()),
         )
 
     @classmethod

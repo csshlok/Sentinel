@@ -44,6 +44,7 @@ from backend.app.contracts.models import WorkspaceState, utc_now
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.execution._process import CapturedProcess
+from backend.app.execution.agent_ports import CredentialFingerprint
 from backend.app.execution.appcontainer import (
     delete_profile,
     ensure_profile,
@@ -464,6 +465,23 @@ class WorkspaceManager:
         self.repository.end_run(workspace_id, key, updated_at=self._clock())
         self._live_runs.discard(key)
         LOGGER.info("workspace %s released by run %s (%s)", workspace_id, run_id, status)
+
+    def record_credential(
+        self, workspace_id: UUID, fingerprint: CredentialFingerprint,
+    ) -> None:
+        """Remember a staged credential's digest-only fingerprint (for the diff scan).
+
+        Stored once per distinct file digest; the payload holds Git blob ids and
+        SHA-256 digests only, never the credential or its tokens.
+        """
+
+        payload = fingerprint.to_payload()
+        record = self.get(workspace_id)
+        if any(item.get("file_sha256") == payload["file_sha256"]
+               for item in record.credential_fingerprints):
+            return
+        self._save(record, record.state,
+                   credential_fingerprints=record.credential_fingerprints + (payload,))
 
     # ------------------------------------------------------------------ .git validation
 
