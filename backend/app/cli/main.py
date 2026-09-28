@@ -22,6 +22,7 @@ import typer
 from rich.console import Console
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.cli.passport_commands import trust_app
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
     default_database_path,
@@ -51,6 +52,7 @@ app.add_typer(github_app, name="github")
 app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(passport_app, name="passport")
+app.add_typer(trust_app, name="trust")
 app.add_typer(identity_app, name="identity")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(agent_app, name="agent")
