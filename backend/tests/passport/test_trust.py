@@ -40,6 +40,16 @@ def test_add_list_remove_and_revoke(tmp_path: Path) -> None:
         registry.add(spki=spki, label="Lab")
 
 
+def test_registry_display_cannot_override_actual_fingerprint(tmp_path: Path) -> None:
+    path = tmp_path / "trusted_keys.json"
+    registry = TrustRegistry(path)
+    key = registry.add(spki=_spki(), label="Lab")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["keys"][key]["fingerprint"] = "SPOOFED"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert registry.list()[0]["fingerprint"] == key
+
+
 def test_wrong_fingerprint_and_malformed_registry_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "trusted_keys.json"
     registry = TrustRegistry(path)

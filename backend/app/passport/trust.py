@@ -238,7 +238,7 @@ class TrustRegistry:
         keys = data["keys"]
         revoked = data["revoked"]
         assert isinstance(keys, dict) and isinstance(revoked, dict)
-        return [{"fingerprint": key, **value, "revoked": key in revoked}
+        return [{**value, "fingerprint": key, "revoked": key in revoked}
                 for key, value in sorted(keys.items()) if isinstance(value, dict)]
 
     @_locked_mutation
