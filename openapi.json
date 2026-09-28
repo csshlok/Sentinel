@@ -3847,6 +3847,342 @@
         "title": "OutcomeStatus",
         "type": "string"
       },
+      "PassportV2DiffClaim": {
+        "additionalProperties": false,
+        "description": "Three independent Phase 6 claims, plus the measurement's known limit.",
+        "properties": {
+          "artifact_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Digest"
+          },
+          "assertion_quality": {
+            "const": "NOT_MEASURED",
+            "default": "NOT_MEASURED",
+            "title": "Assertion Quality",
+            "type": "string"
+          },
+          "caveat": {
+            "default": "executed \u2260 verified",
+            "title": "Caveat",
+            "type": "string"
+          },
+          "changed_executable_lines": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed Executable Lines"
+          },
+          "checks_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checks Passed"
+          },
+          "collection_boundary": {
+            "default": "UNKNOWN",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Collection Boundary",
+            "type": "string"
+          },
+          "diff_exercised": {
+            "default": "UNKNOWN",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "STALE",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Diff Exercised",
+            "type": "string"
+          },
+          "executed_changed_lines": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed Changed Lines"
+          },
+          "freshness": {
+            "default": "UNKNOWN",
+            "enum": [
+              "CURRENT",
+              "STALE",
+              "UNKNOWN"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "measured_percent_text": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Percent Text"
+          },
+          "status_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Digest"
+          }
+        },
+        "title": "PassportV2DiffClaim",
+        "type": "object"
+      },
+      "PassportV2Issued": {
+        "additionalProperties": false,
+        "description": "Sentinel-issued v2 payload signature; bundle manifests are signed in Phase 8.",
+        "properties": {
+          "payload": {
+            "$ref": "#/components/schemas/PassportV2Payload"
+          },
+          "payload_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Payload Digest",
+            "type": "string"
+          },
+          "signature_b64": {
+            "maxLength": 512,
+            "title": "Signature B64",
+            "type": "string"
+          },
+          "signer_fingerprint": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Signer Fingerprint",
+            "type": "string"
+          },
+          "signer_identity": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Signer Identity",
+            "type": "string"
+          },
+          "signer_provider": {
+            "enum": [
+              "TPM",
+              "SOFTWARE"
+            ],
+            "title": "Signer Provider",
+            "type": "string"
+          },
+          "signer_public_spki_b64": {
+            "maxLength": 2048,
+            "title": "Signer Public Spki B64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "payload",
+          "payload_digest",
+          "signer_fingerprint",
+          "signer_public_spki_b64",
+          "signer_provider",
+          "signer_identity",
+          "signature_b64"
+        ],
+        "title": "PassportV2Issued",
+        "type": "object"
+      },
+      "PassportV2LaunchBinding": {
+        "additionalProperties": false,
+        "description": "Digest of a persisted launch record, without its possibly secret output.",
+        "properties": {
+          "record_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Record Digest",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "record_digest"
+        ],
+        "title": "PassportV2LaunchBinding",
+        "type": "object"
+      },
+      "PassportV2Payload": {
+        "additionalProperties": false,
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "change_revision": {
+            "minimum": 1.0,
+            "title": "Change Revision",
+            "type": "integer"
+          },
+          "contract_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Digest"
+          },
+          "diff_coverage": {
+            "$ref": "#/components/schemas/PassportV2DiffClaim"
+          },
+          "execution_boundary": {
+            "const": "UNKNOWN",
+            "default": "UNKNOWN",
+            "title": "Execution Boundary",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "journal_event_count": {
+            "minimum": 0.0,
+            "title": "Journal Event Count",
+            "type": "integer"
+          },
+          "journal_head": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal Head"
+          },
+          "journal_integrity": {
+            "enum": [
+              "PASS",
+              "UNKNOWN"
+            ],
+            "title": "Journal Integrity",
+            "type": "string"
+          },
+          "launch_records": {
+            "items": {
+              "$ref": "#/components/schemas/PassportV2LaunchBinding"
+            },
+            "maxItems": 1024,
+            "title": "Launch Records",
+            "type": "array"
+          },
+          "lifecycle_state": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "risk_level": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "runs_later": {
+            "const": "UNKNOWN",
+            "default": "UNKNOWN",
+            "title": "Runs Later",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 2,
+            "default": 2,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "change_id",
+          "change_revision",
+          "lifecycle_state",
+          "risk_level",
+          "journal_event_count",
+          "journal_integrity",
+          "launch_records",
+          "issued_at"
+        ],
+        "title": "PassportV2Payload",
+        "type": "object"
+      },
       "PathCategory": {
         "enum": [
           "SOURCE",
@@ -7724,6 +8060,65 @@
           }
         },
         "summary": "Export Passport",
+        "tags": [
+          "passport"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/passport/v2/issue": {
+      "post": {
+        "operationId": "issue_passport_v2_api_v1_changes__change_id__passport_v2_issue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PassportV2Issued"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Passport V2",
         "tags": [
           "passport"
         ]

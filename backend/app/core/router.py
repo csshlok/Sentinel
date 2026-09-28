@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Query, Response, status
+from fastapi import APIRouter, Header, Query, Request, Response, status
 
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.service import (
@@ -62,6 +62,7 @@ from backend.app.contracts.models import (
     RepositoryInfo,
     RepositoryPathRequest,
     SignedPassportExport,
+    PassportV2Issued,
     SigningPublicKeyResponse,
     ToolManifest,
     ToolManifestListResponse,
@@ -72,6 +73,8 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.change_service import ChangeService
 from backend.app.core.runtime_service import RuntimeServices
+from backend.app.core.errors import AppError
+from backend.app.passport.v2 import PassportV2Issuer
 
 
 IdempotencyHeader = Annotated[
@@ -449,6 +452,18 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def export_passport(change_id: UUID) -> SignedPassportExport:
         return runtime.passport.export(change_id)
+
+    @router.post(
+        "/changes/{change_id}/passport/v2/issue",
+        response_model=PassportV2Issued,
+        tags=["passport"],
+    )
+    async def issue_passport_v2(change_id: UUID, request: Request) -> PassportV2Issued:
+        if await request.body():
+            raise AppError("PASSPORT_PAYLOAD_FORBIDDEN",
+                           "Passport v2 is issued only from Sentinel's Change records.")
+        service.get(change_id)
+        return PassportV2Issuer(service.repository.database).issue(change_id)
 
     @router.get(
         "/identity/signing-key",

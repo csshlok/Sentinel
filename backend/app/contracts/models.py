@@ -1209,3 +1209,58 @@ class DiffCoverageResult(ContractModel):
     threshold: float | None = None
     policy_version: ShortText | None = None
     gate_satisfied: bool | None = None
+
+
+class PassportV2LaunchBinding(ContractModel):
+    """Digest of a persisted launch record, without its possibly secret output."""
+
+    run_id: UUID
+    status: ShortText
+    record_digest: Digest
+
+
+class PassportV2DiffClaim(ContractModel):
+    """Three independent Phase 6 claims, plus the measurement's known limit."""
+
+    checks_passed: bool | None = None
+    diff_exercised: Literal["PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"] = "UNKNOWN"
+    freshness: Literal["CURRENT", "STALE", "UNKNOWN"] = "UNKNOWN"
+    changed_executable_lines: int | None = Field(default=None, ge=0)
+    executed_changed_lines: int | None = Field(default=None, ge=0)
+    measured_percent_text: ShortText | None = None
+    head_sha: GitSha | None = None
+    status_digest: Digest | None = None
+    artifact_digest: Digest | None = None
+    collection_boundary: ShortText = "UNKNOWN"
+    assertion_quality: Literal["NOT_MEASURED"] = "NOT_MEASURED"
+    caveat: str = "executed ≠ verified"
+
+
+class PassportV2Payload(ContractModel):
+    schema_version: Literal[2] = 2
+    change_id: UUID
+    change_revision: int = Field(ge=1)
+    lifecycle_state: ShortText
+    risk_level: ShortText
+    contract_digest: Digest | None = None
+    journal_head: Digest | None = None
+    journal_event_count: int = Field(ge=0)
+    journal_integrity: Literal["PASS", "UNKNOWN"]
+    launch_records: list[PassportV2LaunchBinding] = Field(max_length=1024)
+    execution_boundary: Literal["UNKNOWN"] = "UNKNOWN"
+    diff_coverage: PassportV2DiffClaim = Field(default_factory=PassportV2DiffClaim)
+    runs_later: Literal["UNKNOWN"] = "UNKNOWN"
+    limitations: list[ShortText] = Field(default_factory=list, max_length=32)
+    issued_at: AwareDatetime
+
+
+class PassportV2Issued(ContractModel):
+    """Sentinel-issued v2 payload signature; bundle manifests are signed in Phase 8."""
+
+    payload: PassportV2Payload
+    payload_digest: Digest
+    signer_fingerprint: ShortText
+    signer_public_spki_b64: str = Field(max_length=2048)
+    signer_provider: Literal["TPM", "SOFTWARE"]
+    signer_identity: ShortText
+    signature_b64: str = Field(max_length=512)
