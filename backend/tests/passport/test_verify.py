@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import struct
 import io
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from typer.testing import CliRunner
 
 from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.cng import CngKey
@@ -18,6 +20,7 @@ from backend.app.passport.format import MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.passport.verify import _validate_claims, verify_bundle
+from backend.app.cli.main import app as cli_app
 from backend.app.passport.card import card_facts
 from backend.app.contracts.models import JournalEventType
 from backend.app.core.journal import JournalWriter
@@ -326,13 +329,31 @@ def test_unsupported_public_key_algorithm_returns_invalid(tmp_path: Path) -> Non
         signature = parse_canonical(archive.read("signature.json"))
     # SubjectPublicKeyInfo with an unsupported algorithm OID (1.2.3.4).
     signature["public_spki_b64"] = base64.b64encode(
-        bytes.fromhex("300c300706032a030403020000")
+        bytes.fromhex("300b300506032a030403020001")
     ).decode("ascii")
     target = _rewrite(GOLDEN, tmp_path / "unknown-algorithm.sentinel",
                       replacement={"signature.json": canonicalize(signature)})
     result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
     assert result.verdict == "INVALID"
-    assert "UnsupportedAlgorithm" in result.reason or "ValueError" in result.reason
+    assert "UnsupportedAlgorithm" in result.reason
+    cli = CliRunner().invoke(cli_app, ["verify", str(target), "--json"])
+    assert cli.exit_code == 1
+    assert json.loads(cli.stdout)["verdict"] == "INVALID"
+
+
+def test_unexpected_verifier_exception_still_returns_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnexpectedVerificationFailure(Exception):
+        pass
+
+    def unexpected(_: bytes) -> str:
+        raise UnexpectedVerificationFailure()
+
+    monkeypatch.setattr("backend.app.passport.verify.fingerprint", unexpected)
+    result = verify_bundle(GOLDEN, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID"
+    assert "UnexpectedVerificationFailure" in result.reason
 
 
 def test_hidden_bytes_before_central_directory_are_invalid(tmp_path: Path) -> None:
