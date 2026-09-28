@@ -135,6 +135,15 @@ def test_planted_workspace_config_never_runs_during_preview_or_apply(
     assert {"filter-clean", "ws-hook-pre-commit", "ws-hook-commit-msg",
             "ws-hook-post-commit"} <= set(fired), fired
 
+    # Positive control for the user repository's post-merge hook: apply-back runs
+    # `merge --ff-only` there, and the same fast-forward under plain git fires it.
+    merge_control = tmp_path / "merge-control"
+    shutil.copytree(user_repo, merge_control, symlinks=True)
+    assert _plain(merge_control, "reset", "-q", "--hard", preview.base_sha).returncode == 0
+    merged = _plain(merge_control, "merge", "--ff-only", "-q", preview.sealed_sha)
+    assert merged.returncode == 0, merged.stderr
+    assert "user-hook-post-merge" in _canaries(canaries)
+
 
 
 
