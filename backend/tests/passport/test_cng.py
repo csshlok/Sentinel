@@ -185,6 +185,53 @@ def test_missing_tpm_falls_back_to_software_only_when_no_key_exists(
             key.delete_for_test()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_existing_software_identity_rejects_transient_tpm_outage_and_provider_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_dll = cng._api()
+    name = f"Sentinel disposable test {uuid4()}"
+
+    class PlatformUnavailable:
+        status = 0x80090035
+
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            if label == cng.PLATFORM_PROVIDER:
+                return self.status
+            return real_dll.NCryptOpenStorageProvider(output, label, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    fake = PlatformUnavailable()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(cng, "_api", lambda: fake)
+        with CngKey.open(name=name) as first:
+            assert first.provider == "SOFTWARE"
+            original = first.public_spki()
+        fake.status = 0x80290401  # transient TPM failure; identity could be hidden
+        with pytest.raises(cng.CngError, match="NCryptOpenStorageProvider\\(Platform\\)"):
+            CngKey.open(name=name)
+
+    class BothProviders:
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            return real_dll.NCryptOpenStorageProvider(output, cng.SOFTWARE_PROVIDER, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(cng, "_api", lambda: BothProviders())
+            with pytest.raises(RuntimeError, match="Multiple CNG providers"):
+                CngKey.open(name=name)
+        with CngKey.open(name=name) as reopened:
+            assert reopened.public_spki() == original
+    finally:
+        with CngKey.open(name=name) as cleanup:
+            cleanup.delete_for_test()
+
+
 def test_fingerprint_is_sha256_of_spki() -> None:
     public = ec.generate_private_key(ec.SECP256R1()).public_key()
     spki = public.public_bytes(serialization.Encoding.DER,
