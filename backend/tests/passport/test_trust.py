@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.trust import TrustRegistry, normalize_fingerprint
+import backend.app.passport.trust as trust_module
 
 
 def _spki() -> bytes:
@@ -96,6 +97,25 @@ def test_concurrent_registry_mutations_preserve_both_updates(
     assert {item["fingerprint"] for item in TrustRegistry(path).list()} == {
         fingerprint(first), fingerprint(second),
     }
+
+
+def test_default_named_trust_directory_uses_protected_store_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "Sentinel" / "trusted_keys.json"
+    calls: list[Path] = []
+
+    def protected(directory: Path) -> bool:
+        calls.append(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        return True
+
+    monkeypatch.setattr(trust_module, "prepare_store_directory", protected)
+    TrustRegistry(path).add(spki=_spki(), label="Lab")
+    assert calls and all(directory == path.parent for directory in calls)
+    monkeypatch.setattr(trust_module, "prepare_store_directory", lambda _path: False)
+    with pytest.raises(OSError, match="permissions"):
+        TrustRegistry(path).list()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")

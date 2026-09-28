@@ -20,6 +20,7 @@ from typing import Callable, Iterator, Literal, ParamSpec, TypeVar
 from cryptography.hazmat.primitives import serialization
 
 from backend.app.passport.cng import CngKey, fingerprint, verify_signature
+from backend.app.core.evidence_store import prepare_store_directory
 
 _FINGERPRINT = re.compile(r"^[A-Z2-7]{52}$")
 _MAX_STORE_BYTES = 1_048_576
@@ -31,7 +32,7 @@ T = TypeVar("T")
 @contextmanager
 def _registry_lock(path: Path) -> Iterator[None]:
     """Serialize a registry read-modify-write across processes."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _prepare_registry_path(path)
     with (path.parent / f"{path.name}.lock").open("a+b") as stream:
         if os.name == "nt":
             import msvcrt
@@ -58,6 +59,19 @@ def _locked_mutation(method: Callable[P, T]) -> Callable[P, T]:
         with _registry_lock(registry.path):
             return method(*args, **kwargs)
     return guarded
+
+
+def _prepare_registry_path(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError("Trust registry path is a link")
+    if path.parent.name.casefold() == "sentinel":
+        if not prepare_store_directory(path.parent):
+            raise OSError("Sentinel trust directory permissions could not be restricted")
+    else:
+        # Explicit paths are used by isolated tests and offline tooling.
+        if path.parent.is_symlink():
+            raise ValueError("Trust registry directory is a link")
+        path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def default_trust_path() -> Path:
@@ -115,6 +129,7 @@ class TrustRegistry:
         self.path = path or default_trust_path()
 
     def _read(self) -> dict[str, object]:
+        _prepare_registry_path(self.path)
         if not self.path.exists():
             return {"schema_version": 1, "keys": {}, "revoked": {}, "rotations": []}
         if self.path.stat().st_size > _MAX_STORE_BYTES:
@@ -154,11 +169,11 @@ class TrustRegistry:
         return data
 
     def _write(self, data: dict[str, object]) -> None:
+        _prepare_registry_path(self.path)
         encoded = json.dumps(data, sort_keys=True, separators=(",", ":"),
                              ensure_ascii=False).encode("utf-8")
         if len(encoded) > _MAX_STORE_BYTES:
             raise ValueError("Trust registry is oversized")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(prefix=".trusted-", suffix=".json",
                                              dir=self.path.parent)
         try:
