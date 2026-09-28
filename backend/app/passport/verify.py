@@ -39,6 +39,7 @@ class VerificationResult:
     payload_sha256: str | None = None
     signer_fingerprint: str | None = None
     signer_identity: str | None = None
+    trusted_as: str | None = None
     claims: dict[str, object] = field(default_factory=dict)
 
 
@@ -262,12 +263,14 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
                 return VerificationResult("INDETERMINATE", "Signer does not match the explicit key.",
                                           **common)
             return VerificationResult("VALID", "Signature and explicit key match.",
-                                      signer_identity=identity or signer["identity"], **common)
+                                      signer_identity=signer["identity"], trusted_as=identity,
+                                      **common)
         if decision != "TRUSTED":
             return VerificationResult("INDETERMINATE", f"Signer is {decision.lower()}.",
                                       **common)
         return VerificationResult("VALID", "Signature, contents and recipient trust verified.",
-                                  signer_identity=identity, **common)
+                                  signer_identity=signer["identity"], trusted_as=identity,
+                                  **common)
     except (OSError, ValueError, TypeError, KeyError, AssertionError, RuntimeError,
             RecursionError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         return _invalid(f"Portable Passport invalid: {type(exc).__name__}: {exc}")

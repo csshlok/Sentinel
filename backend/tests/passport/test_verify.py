@@ -73,10 +73,27 @@ def test_trusted_bundle_valid_without_sender_database(signed_bundle) -> None:
     trust.add(spki=spki, label="Recipient label")
     result = verify_bundle(path, trust=trust)
     assert result.verdict == "VALID", result.reason
-    assert result.signer_identity == "Sentinel installation Recipient label"
+    assert result.signer_identity == "Sentinel installation Lab"
+    assert result.trusted_as == "Sentinel installation Recipient label"
     assert result.claims["execution_boundary"] == "UNKNOWN"
     assert result.claims["runs_later"] == "UNKNOWN"
     assert result.claims["diff_exercised"] == "UNKNOWN"
+    with zipfile.ZipFile(path) as archive:
+        passport = parse_canonical(archive.read("passport.json"))
+        manifest = parse_canonical(archive.read("manifest.json"))
+        html = archive.read("visuals/passport.html").decode("utf-8")
+        svg = archive.read("visuals/passport.svg").decode("utf-8")
+    assert result.payload_sha256 == manifest["payload_sha256"]
+    assert result.signer_identity == passport["signer"]["identity"]
+    for field, expected in (
+        ("Checks passed", "UNKNOWN"), ("Diff exercised", "UNKNOWN"),
+        ("Freshness", "UNKNOWN"), ("Execution boundary", "UNKNOWN"),
+        ("Runs later", "UNKNOWN"),
+    ):
+        assert f"{field}: {expected}" in svg
+        assert expected in html
+    for limitation in result.claims["limitations"]:
+        assert limitation in html and limitation in svg
     # The verifier reads only the archive and recipient trust path.
     for db_file in root.glob("*.sqlite3*"):
         db_file.unlink()
@@ -132,6 +149,19 @@ def test_symlink_and_duplicate_normalized_names_are_invalid(signed_bundle) -> No
                    append=[("evidence/café", b"x", 0o100644),
                            ("evidence/cafe\u0301", b"y", 0o100644)])
     assert "Duplicate" in verify_bundle(nfc).reason
+
+
+def test_encrypted_zip_entry_is_rejected_before_read(signed_bundle) -> None:
+    path, _, root = signed_bundle
+    data = bytearray(path.read_bytes())
+    local = data.find(b"PK\x03\x04")
+    central = data.find(b"PK\x01\x02")
+    assert local >= 0 and central >= 0
+    data[local + 6] |= 1
+    data[central + 8] |= 1
+    target = root / "encrypted.sentinel"
+    target.write_bytes(data)
+    assert "Encrypted" in verify_bundle(target).reason
 
 
 def test_oversized_zip_bomb_missing_and_malformed_are_invalid(signed_bundle) -> None:
