@@ -158,6 +158,33 @@ def test_first_use_key_open_is_serialized_across_threads(monkeypatch: pytest.Mon
             key.delete_for_test()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_missing_tpm_falls_back_to_software_only_when_no_key_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_dll = cng._api()
+
+    class NoTpmDll:
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            if label == cng.PLATFORM_PROVIDER:
+                return 0x80090035
+            return real_dll.NCryptOpenStorageProvider(output, label, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    monkeypatch.setattr(cng, "_api", lambda: NoTpmDll())
+    name = f"Sentinel disposable test {uuid4()}"
+    with CngKey.open(name=name) as key:
+        try:
+            assert key.provider == "SOFTWARE"
+            spki = key.public_spki()
+            with CngKey.open(name=name) as reopened:
+                assert reopened.public_spki() == spki
+        finally:
+            key.delete_for_test()
+
+
 def test_fingerprint_is_sha256_of_spki() -> None:
     public = ec.generate_private_key(ec.SECP256R1()).public_key()
     spki = public.public_bytes(serialization.Encoding.DER,

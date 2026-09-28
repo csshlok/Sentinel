@@ -24,7 +24,10 @@ PLATFORM_PROVIDER = "Microsoft Platform Crypto Provider"
 SOFTWARE_PROVIDER = "Microsoft Software Key Storage Provider"
 DEFAULT_KEY_NAME = "Sentinel Passport v2 ES256"
 _BAD_KEYSET = 0x80090016
-_PLATFORM_UNAVAILABLE_FOR_KEY = {0x80090029, 0x80290405}
+_PLATFORM_UNAVAILABLE_FOR_KEY = {
+    0x80090029, 0x80290405,  # unsupported platform/key
+    0x80090035, 0x8028400F, 0x80284008,  # no TPM/device/service
+}
 _ECC_P256_PUBLIC_MAGIC = 0x31534345  # ECS1
 _EXPORT_POLICY = "Export Policy"
 
@@ -138,10 +141,10 @@ class CngKey:
                     platform_open_error = status & 0xFFFFFFFF
                 elif label == SOFTWARE_PROVIDER:
                     _checked("NCryptOpenStorageProvider", status)
-            # If the Platform KSP itself cannot be queried, an existing TPM
-            # identity may be hidden. Even an existing software key cannot
-            # prove which of the two identities is active in this condition.
-            if platform_open_error is not None:
+            # A transient Platform error can hide an existing TPM identity.
+            # Only explicit no-device statuses permit the software fallback.
+            if (platform_open_error is not None
+                    and platform_open_error not in _PLATFORM_UNAVAILABLE_FOR_KEY):
                 raise CngError("NCryptOpenStorageProvider(Platform)", platform_open_error)
             # An existing software identity stays stable if a TPM becomes available later.
             for label, handle in providers:
