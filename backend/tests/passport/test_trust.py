@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 from pathlib import Path
 from uuid import uuid4
 
@@ -66,6 +67,35 @@ def test_noncanonical_revocation_cannot_fail_open(tmp_path: Path) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="Malformed trust registry entries"):
         registry.decision(spki=spki)
+
+
+def test_concurrent_registry_mutations_preserve_both_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "trusted_keys.json"
+    first, second = _spki(), _spki()
+    registry_a, registry_b = TrustRegistry(path), TrustRegistry(path)
+    first_read = threading.Event()
+    original = registry_a._read
+
+    def delayed_read():
+        data = original()
+        first_read.set()
+        threading.Event().wait(0.25)
+        return data
+
+    monkeypatch.setattr(registry_a, "_read", delayed_read)
+    thread_a = threading.Thread(target=lambda: registry_a.add(spki=first, label="A"))
+    thread_b = threading.Thread(target=lambda: registry_b.add(spki=second, label="B"))
+    thread_a.start()
+    assert first_read.wait(2)
+    thread_b.start()
+    thread_a.join(3)
+    thread_b.join(3)
+    assert not thread_a.is_alive() and not thread_b.is_alive()
+    assert {item["fingerprint"] for item in TrustRegistry(path).list()} == {
+        fingerprint(first), fingerprint(second),
+    }
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")

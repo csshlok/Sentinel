@@ -11,9 +11,11 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Iterator, Literal, ParamSpec, TypeVar
 
 from cryptography.hazmat.primitives import serialization
 
@@ -22,6 +24,40 @@ from backend.app.passport.cng import CngKey, fingerprint, verify_signature
 _FINGERPRINT = re.compile(r"^[A-Z2-7]{52}$")
 _MAX_STORE_BYTES = 1_048_576
 _MAX_KEYS = 256
+P = ParamSpec("P")
+T = TypeVar("T")
+
+
+@contextmanager
+def _registry_lock(path: Path) -> Iterator[None]:
+    """Serialize a registry read-modify-write across processes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / f"{path.name}.lock").open("a+b") as stream:
+        if os.name == "nt":
+            import msvcrt
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def _locked_mutation(method: Callable[P, T]) -> Callable[P, T]:
+    @wraps(method)
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> T:
+        registry = args[0]
+        with _registry_lock(registry.path):
+            return method(*args, **kwargs)
+    return guarded
 
 
 def default_trust_path() -> Path:
@@ -135,6 +171,7 @@ class TrustRegistry:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
+    @_locked_mutation
     def add(self, *, fingerprint_value: str | None = None, spki: bytes | None = None,
             label: str) -> str:
         if not label.strip() or len(label) > 80 or any(ord(char) < 32 for char in label):
@@ -176,6 +213,7 @@ class TrustRegistry:
         return [{"fingerprint": key, **value, "revoked": key in revoked}
                 for key, value in sorted(keys.items()) if isinstance(value, dict)]
 
+    @_locked_mutation
     def remove(self, value: str) -> bool:
         data = self._read()
         keys = data["keys"]
@@ -185,6 +223,7 @@ class TrustRegistry:
             self._write(data)
         return removed
 
+    @_locked_mutation
     def revoke(self, value: str, *, reason: str = "Local revocation") -> None:
         if not reason or len(reason) > 256:
             raise ValueError("Invalid revocation reason")
@@ -230,6 +269,7 @@ class TrustRegistry:
             "signature": base64.b64encode(old_key.sign(body)).decode("ascii"),
         }
 
+    @_locked_mutation
     def apply_rotation(self, statement: dict[str, str]) -> str:
         try:
             old_spki = base64.b64decode(statement["old_spki"], validate=True)
