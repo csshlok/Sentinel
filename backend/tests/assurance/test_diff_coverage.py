@@ -17,11 +17,16 @@ from backend.app.git.state import GitStateTracker
 from backend.tests.support_kb import git, make_repo, write
 
 
-def _case(tmp_path: Path) -> tuple[Path, ChangeView, object, object]:
+def _case(tmp_path: Path, *, unrelated_tests: int = 1) -> tuple[Path, ChangeView, object, object]:
+    test_source = (
+        "import pytest\nfrom module import old\n\n"
+        f"@pytest.mark.parametrize('case', range({unrelated_tests}))\n"
+        "def test_old(case):\n    assert old() == 1\n"
+    )
     root = make_repo(tmp_path / "repo", {
         ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
         "module.py": "def old():\n    return 1\n\ndef new():\n    return 1\n",
-        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+        "tests/test_old.py": test_source,
     })
     change = ChangeView(id=uuid4(), title="coverage", intent="measure", repository_path=str(root),
                         created_at=utc_now(), updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
@@ -39,7 +44,7 @@ def _request(baseline: object, tested: object, *, required: bool = False) -> Dif
 
 
 def test_unrelated_passing_suite_reports_zero_exercise_and_uncovered_lines(tmp_path: Path) -> None:
-    root, change, baseline, tested = _case(tmp_path)
+    root, change, baseline, tested = _case(tmp_path, unrelated_tests=200)
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested))
     assert result.checks_passed is True
