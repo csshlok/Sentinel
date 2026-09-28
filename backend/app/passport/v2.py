@@ -20,6 +20,7 @@ from backend.app.core.database import Database
 from backend.app.core.errors import AppError, change_not_found
 from backend.app.core.journal import compute_event_hash
 from backend.app.passport.cng import CngKey, DEFAULT_KEY_NAME, fingerprint
+from backend.app.passport.jcs import canonicalize
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
@@ -28,8 +29,7 @@ _MAX_RECORD_BYTES = 1_048_576
 
 def canonical_payload(payload: PassportV2Payload) -> bytes:
     """Canonical payload bytes for the constrained v2 schema (no JSON floats)."""
-    return json.dumps(payload.model_dump(mode="json"), sort_keys=True,
-                      separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return canonicalize(payload.model_dump(mode="json"))
 
 
 class PassportV2Issuer:
