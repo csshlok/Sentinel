@@ -2374,6 +2374,384 @@
         "title": "DeviationSeverity",
         "type": "string"
       },
+      "DiffCoverageFile": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Changed Lines",
+            "type": "array"
+          },
+          "executable_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Executable Lines",
+            "type": "array"
+          },
+          "executed_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Executed Lines",
+            "type": "array"
+          },
+          "path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "uncovered_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Uncovered Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "DiffCoverageFile",
+        "type": "object"
+      },
+      "DiffCoverageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_checkpoint_id": {
+            "format": "uuid",
+            "title": "Baseline Checkpoint Id",
+            "type": "string"
+          },
+          "interpreter_path": {
+            "anyOf": [
+              {
+                "maxLength": 32767,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interpreter Path"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DiffCoverageRule"
+          },
+          "test_args": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Test Args",
+            "type": "array"
+          },
+          "tested_checkpoint_id": {
+            "format": "uuid",
+            "title": "Tested Checkpoint Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseline_checkpoint_id",
+          "tested_checkpoint_id"
+        ],
+        "title": "DiffCoverageRequest",
+        "type": "object"
+      },
+      "DiffCoverageResult": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Digest"
+          },
+          "assertion_quality": {
+            "const": "NOT_MEASURED",
+            "default": "NOT_MEASURED",
+            "title": "Assertion Quality",
+            "type": "string"
+          },
+          "baseline_checkpoint_id": {
+            "format": "uuid",
+            "title": "Baseline Checkpoint Id",
+            "type": "string"
+          },
+          "caveat": {
+            "default": "executed \u2260 verified",
+            "title": "Caveat",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "changed_executable_lines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed Executable Lines"
+          },
+          "checks_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checks Passed"
+          },
+          "collector_id": {
+            "const": "coverage.py-json-v1",
+            "default": "coverage.py-json-v1",
+            "title": "Collector Id",
+            "type": "string"
+          },
+          "collector_status": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Collector Status",
+            "type": "string"
+          },
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Command",
+            "type": "array"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "contract_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Contract Digest",
+            "type": "string"
+          },
+          "diff_exercised": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "STALE",
+              "NOT_APPLICABLE"
+            ],
+            "title": "Diff Exercised",
+            "type": "string"
+          },
+          "excluded": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Excluded",
+            "type": "object"
+          },
+          "executed_changed_lines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed Changed Lines"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/DiffCoverageFile"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "freshness": {
+            "enum": [
+              "CURRENT",
+              "STALE",
+              "UNKNOWN"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "gate_satisfied": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Satisfied"
+          },
+          "head_sha": {
+            "pattern": "^[0-9a-fA-F]{40}$",
+            "title": "Head Sha",
+            "type": "string"
+          },
+          "measured_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Percent"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Version"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "run_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Run Ids",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Status Digest",
+            "type": "string"
+          },
+          "tested_checkpoint_id": {
+            "format": "uuid",
+            "title": "Tested Checkpoint Id",
+            "type": "string"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          }
+        },
+        "required": [
+          "change_id",
+          "baseline_checkpoint_id",
+          "tested_checkpoint_id",
+          "head_sha",
+          "status_digest",
+          "contract_digest",
+          "started_at",
+          "completed_at",
+          "collector_status",
+          "diff_exercised",
+          "freshness"
+        ],
+        "title": "DiffCoverageResult",
+        "type": "object"
+      },
+      "DiffCoverageRule": {
+        "additionalProperties": false,
+        "description": "Opt-in versioned threshold supplied with a measurement request.",
+        "properties": {
+          "minimum_percent": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Minimum Percent",
+            "type": "number"
+          },
+          "per_file": {
+            "default": false,
+            "title": "Per File",
+            "type": "boolean"
+          },
+          "policy_version": {
+            "default": "advisory-v1",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "DiffCoverageRule",
+        "type": "object"
+      },
       "EnvironmentDrift": {
         "additionalProperties": false,
         "properties": {
@@ -5596,6 +5974,75 @@
         "summary": "Stop Agent",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/assurance/diff-coverage": {
+      "post": {
+        "operationId": "measure_diff_coverage_api_v1_changes__change_id__assurance_diff_coverage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiffCoverageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffCoverageResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Measure Diff Coverage",
+        "tags": [
+          "assurance"
         ]
       }
     },

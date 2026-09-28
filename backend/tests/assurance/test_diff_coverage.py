@@ -1,0 +1,150 @@
+"""Real repository and coverage acceptance cases for diff-linked assurance."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+
+from backend.app.assurance.diff_coverage import collect_diff_coverage, evaluate_report
+from backend.app.assurance.diff_map import map_diff
+from backend.app.contracts.models import (
+    ChangeView, DiffCoverageRequest, DiffCoverageRule, DiffCoverageResult, ReviewState, utc_now,
+)
+from backend.app.git.state import GitStateTracker
+from backend.tests.support_kb import git, make_repo, write
+
+
+def _case(tmp_path: Path) -> tuple[Path, ChangeView, object, object]:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "def old():\n    return 1\n\ndef new():\n    return 1\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="coverage", intent="measure", repository_path=str(root),
+                        created_at=utc_now(), updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n    return 2\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    return root, change, baseline, tested
+
+
+def _request(baseline: object, tested: object, *, required: bool = False) -> DiffCoverageRequest:
+    return DiffCoverageRequest(baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+                               interpreter_path=sys.executable, test_args=["-q"],
+                               rule=DiffCoverageRule(required=required, minimum_percent=80))
+
+
+def test_unrelated_passing_suite_reports_zero_exercise_and_uncovered_lines(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "FAIL"
+    assert result.executed_changed_lines == 0
+    assert result.changed_executable_lines and result.changed_executable_lines > 0
+    assert result.files[0].uncovered_lines
+    assert result.freshness == "CURRENT"
+
+
+def test_executed_without_assertion_is_not_verified(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    write(root, "tests/test_old.py", "from module import new\n\ndef test_new():\n    new()\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    assert result.executed_changed_lines and result.executed_changed_lines > 0
+    assert result.assertion_quality == "NOT_MEASURED"
+    assert result.caveat == "executed ≠ verified"
+
+
+def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    git(root, "add", "module.py")
+    git(root, "commit", "-q", "-m", "new code")
+    git(root, "mv", "module.py", "renamed.py")
+    write(root, "extra.py", "answer = 42\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert "renamed.py" in mapped.lines
+    assert mapped.lines["extra.py"] == {1}
+
+
+def test_truncated_diff_is_unknown(tmp_path: Path) -> None:
+    _, change, baseline, tested = _case(tmp_path)
+    tested = tested.model_copy(update={"summary": tested.summary.model_copy(update={"patch_truncated": True})})
+    assert map_diff(baseline=baseline, tested=tested).error
+
+
+def test_wrong_commit_and_required_unknown_fail_closed(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    write(root, "module.py", "def changed():\n    return 3\n")
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "STALE"
+    assert result.gate_satisfied is False
+
+
+def test_test_run_mutation_is_stale(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    write(root, "tests/test_old.py", "from pathlib import Path\n\ndef test_mutate():\n    Path('module.py').write_text('x = 3\\n')\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "STALE"
+    assert result.freshness == "STALE"
+    assert result.gate_satisfied is False
+
+
+def test_committed_staged_unstaged_and_classified_files(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    git(root, "add", "module.py")
+    git(root, "commit", "-q", "-m", "committed")
+    write(root, "staged.py", "staged = 1\n")
+    git(root, "add", "staged.py")
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n    return 3\n")
+    write(root, "settings.toml", "enabled = true\n")
+    write(root, "generated/output.py", "value = 1\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert "module.py" in mapped.lines
+    assert "staged.py" in mapped.lines
+    assert mapped.excluded["settings.toml"] == "configuration"
+    assert mapped.excluded["generated/output.py"] == "generated"
+
+
+def test_oversized_report_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    monkeypatch.setattr("backend.app.assurance.diff_coverage.ARTIFACT_LIMIT", 1)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    assert "oversized" in result.reasons[0]
+
+
+def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    request = _request(baseline, tested, required=True)
+    initial = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        head_sha=tested.head_sha, status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(), collector_status="COLLECTED",
+        diff_exercised="UNKNOWN", freshness="CURRENT", gate_satisfied=False,
+    )
+    for report in ({}, {"files": {}}, {"files": {"module.py": {"executed_lines": "bad"}}}):
+        result = evaluate_report(result=initial, changed={"module.py": {4, 5}}, excluded={},
+                                 report=report, root=root, rule=request)
+        assert result.diff_exercised == "UNKNOWN"
+        assert result.gate_satisfied is False
+    unsupported = evaluate_report(result=initial, changed={}, excluded={"app.ts": "unsupported language or non-source file"},
+                                  report={"files": {}}, root=root, rule=request)
+    assert unsupported.diff_exercised == "UNKNOWN"
+    empty = evaluate_report(result=initial, changed={}, excluded={}, report={"files": {}},
+                            root=root, rule=request)
+    assert empty.diff_exercised == "NOT_APPLICABLE"

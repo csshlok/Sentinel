@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, Response, status
 
 from backend.app.assurance.models import AssuranceEvaluation
+from backend.app.assurance.diff_coverage import collect_diff_coverage
+from backend.app.assurance.engine import contract_digest
 from backend.app.assurance.service import (
     AssuranceFacts,
     EnvironmentView,
@@ -29,6 +31,8 @@ from backend.app.contracts.models import (
     AssuranceRunListResponse,
     ChainVerificationResult,
     DependencyReport,
+    DiffCoverageRequest,
+    DiffCoverageResult,
     GitCheckpointComparison,
     GitCheckpointListResponse,
     CapabilitiesResponse,
@@ -639,6 +643,27 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def evaluate_assurance(change_id: UUID, plan_id: UUID) -> AssuranceEvaluation:
         return runtime.evidence.evaluate(change_id, plan_id)
+
+    @router.post(
+        "/changes/{change_id}/assurance/diff-coverage",
+        response_model=DiffCoverageResult,
+        tags=["assurance"],
+    )
+    def measure_diff_coverage(
+        change_id: UUID, request: DiffCoverageRequest,
+    ) -> DiffCoverageResult:
+        change = service.get(change_id)
+        baseline = runtime.evidence.get_checkpoint(change_id, request.baseline_checkpoint_id)
+        tested = runtime.evidence.get_checkpoint(change_id, request.tested_checkpoint_id)
+        result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                       request=request)
+        if contract_digest(service.get(change_id)) != result.contract_digest:
+            return result.model_copy(update={
+                "freshness": "STALE", "diff_exercised": "STALE",
+                "gate_satisfied": False if request.rule.required else None,
+                "reasons": ["Change Contract changed during measurement."],
+            })
+        return result
 
     @router.get(
         "/changes/{change_id}/assurance/facts",

@@ -1126,3 +1126,61 @@ def utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
 
     return datetime.now(UTC)
+
+
+class DiffCoverageRule(ContractModel):
+    """Opt-in versioned threshold supplied with a measurement request."""
+
+    schema_version: Literal[1] = 1
+    required: bool = False
+    minimum_percent: float = Field(default=0, ge=0, le=100)
+    per_file: bool = False
+    policy_version: ShortText = "advisory-v1"
+
+
+class DiffCoverageRequest(ContractModel):
+    baseline_checkpoint_id: UUID
+    tested_checkpoint_id: UUID
+    interpreter_path: RepositoryPath | None = None
+    test_args: list[ShortText] = Field(default_factory=list, max_length=32)
+    rule: DiffCoverageRule = Field(default_factory=DiffCoverageRule)
+
+
+class DiffCoverageFile(ContractModel):
+    path: RepositoryPath
+    changed_lines: list[int] = Field(default_factory=list)
+    executable_lines: list[int] = Field(default_factory=list)
+    executed_lines: list[int] = Field(default_factory=list)
+    uncovered_lines: list[int] = Field(default_factory=list)
+    reason: ShortText | None = None
+
+
+class DiffCoverageResult(ContractModel):
+    schema_version: Literal[1] = 1
+    change_id: UUID
+    baseline_checkpoint_id: UUID
+    tested_checkpoint_id: UUID
+    head_sha: GitSha
+    status_digest: Digest
+    contract_digest: Digest
+    collector_id: Literal["coverage.py-json-v1"] = "coverage.py-json-v1"
+    command: list[str] = Field(default_factory=list)
+    run_ids: list[UUID] = Field(default_factory=list)
+    artifact_digest: Digest | None = None
+    started_at: AwareDatetime
+    completed_at: AwareDatetime
+    collector_status: ShortText
+    checks_passed: bool | None = None
+    diff_exercised: Literal["PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"]
+    freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+    assertion_quality: Literal["NOT_MEASURED"] = "NOT_MEASURED"
+    caveat: str = "executed ≠ verified"
+    measured_percent: float | None = None
+    changed_executable_lines: int | None = None
+    executed_changed_lines: int | None = None
+    files: list[DiffCoverageFile] = Field(default_factory=list)
+    excluded: dict[str, str] = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)
+    threshold: float | None = None
+    policy_version: ShortText | None = None
+    gate_satisfied: bool | None = None
