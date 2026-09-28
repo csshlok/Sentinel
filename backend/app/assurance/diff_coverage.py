@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +21,28 @@ from backend.app.git.state import GitStateTracker
 
 ARTIFACT_LIMIT = 8_388_608
 PATCH_LIMIT = 1_048_576
+_PYTHON_EXECUTABLE = re.compile(r"python(?:3(?:\.\d+)?)?w?(?:\.exe)?$", re.I)
+
+
+def _trusted_interpreter_path(raw: str, root: Path) -> bool:
+    """Reject remote, wrapper and repository-chosen executables before probing them."""
+
+    if os.name == "nt" and (raw.startswith(("\\\\", "//", "\\\\?\\"))
+                            or not re.match(r"^[A-Za-z]:[\\/]", raw)):
+        return False
+    path = Path(raw)
+    if not path.is_absolute() or _PYTHON_EXECUTABLE.fullmatch(path.name) is None:
+        return False
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_file():
+            return False
+        relative = resolved.relative_to(root.resolve())
+    except ValueError:
+        return True  # trusted local Python outside the agent-writable repository
+    except OSError:
+        return False
+    return bool(relative.parts and relative.parts[0].lower() == ".venv")
 
 
 def _report_path(root: Path, raw: str) -> str | None:
@@ -129,8 +153,8 @@ def collect_diff_coverage(
             or baseline.id != request.baseline_checkpoint_id
             or tested.id != request.tested_checkpoint_id):
         return result.model_copy(update={"reasons": ["Checkpoint identity mismatch."]})
-    if not Path(interpreter).is_absolute() or not Path(interpreter).is_file():
-        return result.model_copy(update={"reasons": ["Project interpreter is unavailable."]})
+    if not _trusted_interpreter_path(interpreter, root):
+        return result.model_copy(update={"reasons": ["Project interpreter is unavailable or disallowed."]})
     try:
         before = tracker.capture(change.id, "diff-pre-run", str(root),
                                  tested.evidence_revision, PATCH_LIMIT)

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from backend.app.assurance.diff_map import DiffMap, _parse_patch
 from backend.app.assurance.diff_map import map_diff
+from backend.app.assurance.diff_coverage import _trusted_interpreter_path
 from backend.app.git.state import GitStateTracker
 from backend.tests.support_kb import git, make_repo, write
 
@@ -93,3 +94,16 @@ def test_binary_asset_is_listed_without_hiding_python_diff(tmp_path: Path) -> No
     assert mapped.error is None
     assert mapped.lines == {"module.py": {1}}
     assert mapped.excluded["logo.png"] == "binary"
+
+
+def test_untrusted_interpreter_names_are_refused_before_launch(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    wrapper = root / "python.cmd"
+    wrapper.write_text("echo unsafe\n", encoding="utf-8")
+    rogue = root / "python.exe"
+    rogue.write_bytes(b"not an interpreter")
+    assert not _trusted_interpreter_path(str(wrapper), root)
+    assert not _trusted_interpreter_path(str(rogue), root)
+    assert not _trusted_interpreter_path(r"\\host\share\python.exe", root)
+    assert not _trusted_interpreter_path(r"C:\Windows\System32\cmd.exe", root)
