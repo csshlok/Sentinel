@@ -9,6 +9,13 @@ test("builds install, token and run commands for a loopback service", () => {
   assert.match(c.token, /CHANGE_ASSURANCE_API_TOKEN/);
 });
 
+test("the default token file is the backend's store, not the legacy in-repository path", () => {
+  const c = tuiCommands({ apiUrl: "http://127.0.0.1:8000" })!;
+  assert.ok(c.token.includes('"$env:LOCALAPPDATA\\Sentinel\\api_token"'), c.token);
+  assert.ok(!c.token.includes(".change-assurance"));
+  assert.ok(tuiCommands({ apiUrl: "http://127.0.0.1:8000", tokenFile: "D:\\t\\api_token" })!.token.includes("D:\\t\\api_token"));
+});
+
 test("the token value never appears in any command", () => {
   const c = tuiCommands({ apiUrl: "http://127.0.0.1:8000" })!;
   for (const line of Object.values(c)) assert.ok(!/Bearer|[A-Za-z0-9_-]{40,}/.test(line));

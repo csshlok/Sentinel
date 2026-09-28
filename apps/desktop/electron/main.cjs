@@ -10,6 +10,7 @@ const { toSafeError, BridgeError } = require("./ipc-errors.cjs");
 const { createLogger } = require("./logging.cjs");
 const { describeProcess, detectGit, killTree } = require("./process-tools.cjs");
 const { createDescriptorStore } = require("./runtime-descriptor.cjs");
+const { readExternalToken: readExternalTokenFrom } = require("./external-token.cjs");
 const { selectFolder, saveJson } = require("./native-dialogs.cjs");
 const { buildRepairPage } = require("./repair-page.cjs");
 const { buildRuntimeStatus } = require("./runtime-status.cjs");
@@ -42,15 +43,7 @@ log(`start argv=${process.argv.slice(1).filter((a) => !a.startsWith("--remote-de
 
 /** Development-only: read the backend's own token file when it was started separately. */
 function readExternalToken() {
-  if (process.env.CHANGE_ASSURANCE_API_TOKEN) return process.env.CHANGE_ASSURANCE_API_TOKEN;
-  const dbPath =
-    process.env.CHANGE_ASSURANCE_DB_PATH ||
-    path.join(REPO_ROOT, ".change-assurance", "change_assurance.sqlite3");
-  try {
-    return fs.readFileSync(path.join(path.dirname(dbPath), "api_token"), "utf8").trim();
-  } catch {
-    return "";
-  }
+  return readExternalTokenFrom({ env: process.env });
 }
 
 /** Packaged builds ship `resources/backend`; development uses the repository itself. */

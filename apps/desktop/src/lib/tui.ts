@@ -17,7 +17,8 @@ const isLoopback = (url: string) => /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):
 export function tuiCommands(input: { apiUrl: string; actorId?: string; tokenFile?: string }): TuiCommands | null {
   if (!isLoopback(input.apiUrl)) return null;
   const url = input.apiUrl.replace(/\/$/, "");
-  const file = input.tokenFile ?? ".change-assurance\\api_token";
+  // The backend's default store (%LOCALAPPDATA%\Sentinel); PowerShell expands $env:LOCALAPPDATA inside the double-quoted path.
+  const file = input.tokenFile ?? "$env:LOCALAPPDATA\\Sentinel\\api_token";
   const actor = input.actorId && /^[0-9a-f-]{8,}$/i.test(input.actorId) ? ` --actor-id ${input.actorId}` : "";
   return {
     install: 'python -m pip install -e ".[tui]"',
