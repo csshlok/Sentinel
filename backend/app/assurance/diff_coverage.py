@@ -136,6 +136,11 @@ def evaluate_report(
         for path, reason in excluded.items()
     ):
         state = "UNKNOWN"
+    if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and any(
+        path.lower().endswith(".py") and reason == "test code"
+        for path, reason in excluded.items()
+    ):
+        state = "UNKNOWN"
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
     return result.model_copy(update={

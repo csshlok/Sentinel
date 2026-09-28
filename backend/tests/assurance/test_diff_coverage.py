@@ -76,6 +76,18 @@ def test_new_passing_tests_cannot_cover_unexecuted_production_diff(tmp_path: Pat
     assert result.excluded["tests/test_unrelated.py"] == "test code"
 
 
+def test_required_gate_cannot_silently_exclude_test_named_production_module(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1 + 0\n\ndef new():\n    return 1\n")
+    write(root, "pricing_test.py", "def charge():\n    return 999\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.excluded["pricing_test.py"] == "test code"
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+
+
 def test_new_untracked_untested_source_lists_its_uncovered_lines(tmp_path: Path) -> None:
     root, change, baseline, _ = _case(tmp_path)
     write(root, "new_feature.py", "def untested():\n    return 42\n")
