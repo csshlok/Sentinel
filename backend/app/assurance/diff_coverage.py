@@ -105,7 +105,7 @@ def evaluate_report(
     elif total == 0:
         state = "NOT_APPLICABLE"
     else:
-        minimum = rule.rule.minimum_percent if rule.rule.required else 100.0
+        minimum = rule.rule.minimum_percent or 100.0
         percent = 100.0 * executed_total / total
         per_file_ok = not rule.rule.per_file or all(
             not f.executable_lines or 100.0 * len(f.executed_lines) / len(f.executable_lines) >= minimum
@@ -120,6 +120,7 @@ def evaluate_report(
     gate = (state == "PASS" and result.checks_passed is True) if rule.rule.required else None
     return result.model_copy(update={
         "files": measured, "excluded": excluded, "diff_exercised": state,
+        "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,
         "gate_satisfied": gate,
@@ -143,8 +144,8 @@ def collect_diff_coverage(
         contract_digest=contract_digest(change), command=command,
         started_at=started, completed_at=started, collector_status="NOT_STARTED",
         diff_exercised="UNKNOWN", freshness="UNKNOWN",
-        threshold=request.rule.minimum_percent if request.rule.required else None,
-        policy_version=request.rule.policy_version if request.rule.required else None,
+        threshold=request.rule.minimum_percent or 100.0,
+        policy_version=request.rule.policy_version,
         gate_satisfied=False if request.rule.required else None,
         reasons=["Measurement did not complete."],
     )

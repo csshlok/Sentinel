@@ -280,3 +280,27 @@ def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -
     empty = evaluate_report(result=initial, changed={}, excluded={}, report={"files": {}},
                             root=root, rule=request)
     assert empty.diff_exercised == "NOT_APPLICABLE"
+
+
+def test_advisory_threshold_is_reported_and_used(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    initial = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        head_sha=tested.head_sha, status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(), collector_status="COLLECTED",
+        checks_passed=True, diff_exercised="UNKNOWN", freshness="CURRENT",
+    )
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        rule=DiffCoverageRule(minimum_percent=80),
+    )
+    measured = evaluate_report(
+        result=initial, changed={"module.py": set(range(1, 21))}, excluded={},
+        report={"files": {"module.py": {
+            "executed_lines": list(range(1, 20)), "missing_lines": [20],
+        }}}, root=root, rule=request,
+    )
+    assert measured.measured_percent == 95
+    assert measured.threshold == 80
+    assert measured.diff_exercised == "PASS"
+    assert measured.gate_satisfied is None
