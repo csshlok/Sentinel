@@ -334,6 +334,22 @@ def test_preexisting_ignored_editor_and_environment_files_do_not_block_gate(
     assert result.gate_satisfied is True
 
 
+def test_zero_executed_tests_cannot_report_diff_exercised_pass(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n"
+          "    return 1\n\nFLAG = 1  # executed during collection\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        interpreter_path=sys.executable, test_args=["--collect-only", "-q"],
+    )
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=request)
+    assert result.checks_passed is None
+    assert result.diff_exercised == "UNKNOWN"
+    assert any("did not execute any tests" in reason for reason in result.reasons)
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")

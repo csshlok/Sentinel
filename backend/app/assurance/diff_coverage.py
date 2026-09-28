@@ -315,7 +315,7 @@ def collect_diff_coverage(
                                        "artifact_digest": artifact_digest,
                                        "completed_at": utc_now(), "freshness": "CURRENT",
                                        "reasons": reasons})
-    if report is None:
+    if report is None or checks_passed is None:
         return result
     try:
         return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
