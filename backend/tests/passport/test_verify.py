@@ -438,6 +438,37 @@ def test_each_unsigned_zip_header_field_is_rejected(
         field, result.reason)
 
 
+@pytest.mark.parametrize("descriptor", [False, True])
+def test_between_member_gap_or_data_descriptor_is_rejected(
+    tmp_path: Path, descriptor: bool,
+) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    first_size = int.from_bytes(raw[18:22], "little")
+    first_name_size = int.from_bytes(raw[26:28], "little")
+    first_end = 30 + first_name_size + first_size
+    inserted = (b"PK\x07\x08" + raw[14:26]) if descriptor else b"UNSIGNED-GAP"
+    directory_offset = int.from_bytes(raw[-6:-2], "little")
+    raw[first_end:first_end] = inserted
+    if descriptor:
+        raw[6:8] = (8).to_bytes(2, "little")
+    position = directory_offset + len(inserted)
+    for index in range(6):
+        assert raw[position:position + 4] == b"PK\x01\x02"
+        if descriptor and index == 0:
+            raw[position + 8:position + 10] = (8).to_bytes(2, "little")
+        if index:
+            offset = int.from_bytes(raw[position + 42:position + 46], "little")
+            raw[position + 42:position + 46] = (offset + len(inserted)).to_bytes(4, "little")
+        name_size = int.from_bytes(raw[position + 28:position + 30], "little")
+        position += 46 + name_size
+    raw[-6:-2] = (directory_offset + len(inserted)).to_bytes(4, "little")
+    target = tmp_path / "extra-between-members.sentinel"
+    target.write_bytes(raw)
+    result = verify_bundle(target, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", result.reason
+    assert "ZIP" in result.reason
+
+
 def test_claim_type_coercion_cannot_make_card_and_verifier_disagree() -> None:
     with zipfile.ZipFile(GOLDEN) as archive:
         content = {name: archive.read(name) for name in archive.namelist()}
