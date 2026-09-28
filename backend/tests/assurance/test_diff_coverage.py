@@ -705,6 +705,23 @@ def test_utf8_bom_python_source_is_measured(tmp_path: Path) -> None:
     assert result.gate_satisfied is True
 
 
+def test_in_repo_junction_to_external_python_is_untrusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    lexical = root / ".venv" / Path(sys.executable).name
+    original_resolve = Path.resolve
+
+    def junction_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == lexical:
+            return Path(sys.executable).resolve()
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", junction_resolve)
+    assert not _trusted_interpreter_path(str(lexical), root)
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)

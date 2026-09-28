@@ -33,6 +33,12 @@ def _trusted_interpreter_path(raw: str, root: Path) -> bool:
     if not path.is_absolute() or _PYTHON_EXECUTABLE.fullmatch(path.name) is None:
         return False
     try:
+        Path(os.path.abspath(raw)).relative_to(Path(os.path.abspath(root)))
+    except ValueError:
+        pass
+    else:
+        return False  # lexical in-repo path stays untrusted through a junction
+    try:
         resolved = path.resolve(strict=True)
         if not resolved.is_file():
             return False
