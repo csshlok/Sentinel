@@ -195,6 +195,18 @@ def test_truncated_diff_is_unknown(tmp_path: Path) -> None:
     assert map_diff(baseline=baseline, tested=tested).error
 
 
+def test_truncated_tested_checkpoint_is_unknown_before_freshness_comparison(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1)
+    assert tested.summary.patch_truncated
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True),
+                                   patch_limit=1)
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.freshness == "UNKNOWN"
+    assert "truncated" in result.reasons[0]
+
+
 def test_wrong_commit_and_required_unknown_fail_closed(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     write(root, "module.py", "def changed():\n    return 3\n")

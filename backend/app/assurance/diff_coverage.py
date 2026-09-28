@@ -21,7 +21,6 @@ from backend.app.execution.commands import run_verification_command
 from backend.app.git.state import GitStateTracker
 
 ARTIFACT_LIMIT = 8_388_608
-PATCH_LIMIT = 1_048_576
 _PYTHON_EXECUTABLE = re.compile(r"python(?:3(?:\.\d+)?)?w?(?:\.exe)?$", re.I)
 
 
@@ -158,6 +157,7 @@ def evaluate_report(
 def collect_diff_coverage(
     *, change: ChangeView, baseline: GitCheckpoint, tested: GitCheckpoint,
     request: DiffCoverageRequest, git_state: GitStateTracker | None = None,
+    patch_limit: int = 1_048_576,
 ) -> DiffCoverageResult:
     """Run coverage in a disposable evidence directory and recapture state afterward."""
 
@@ -182,11 +182,13 @@ def collect_diff_coverage(
             or baseline.id != request.baseline_checkpoint_id
             or tested.id != request.tested_checkpoint_id):
         return result.model_copy(update={"reasons": ["Checkpoint identity mismatch."]})
+    if tested.summary.patch_truncated or baseline.summary.patch_truncated:
+        return result.model_copy(update={"reasons": ["Checkpoint patch was truncated; mapping is unknown."]})
     if not _trusted_interpreter_path(interpreter, root):
         return result.model_copy(update={"reasons": ["Project interpreter is unavailable or disallowed."]})
     try:
         before = tracker.capture(change.id, "diff-pre-run", str(root),
-                                 tested.evidence_revision, PATCH_LIMIT)
+                                 tested.evidence_revision, patch_limit)
     except Exception as exc:
         return result.model_copy(update={"reasons": [f"Pre-run capture failed: {type(exc).__name__}."]})
     if before.head_sha != tested.head_sha or before.status_digest != tested.status_digest:
@@ -264,7 +266,7 @@ def collect_diff_coverage(
         reasons.append(f"Coverage collection failed: {type(exc).__name__}.")
     try:
         after = tracker.capture(change.id, "diff-post-run", str(root),
-                                tested.evidence_revision, PATCH_LIMIT)
+                                tested.evidence_revision, patch_limit)
     except Exception as exc:
         return result.model_copy(update={"checks_passed": checks_passed,
                                          "collector_status": collector_status,

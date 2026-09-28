@@ -523,7 +523,7 @@ class EvidenceService:
             request = request.model_copy(update={"rule": merge_diff_coverage_rule(
                 change.contract.diff_coverage_rule, request.rule)})
         result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
-                                       request=request)
+                                       request=request, patch_limit=self._patch_limit)
         try:
             same_contract = contract_digest(current_change()) == result.contract_digest
         except AppError:
@@ -571,7 +571,7 @@ class EvidenceService:
                            f"NOT_APPLICABLE satisfies policy: {rule.not_applicable_satisfies}.")
         try:
             current = self._git.capture(change.id, "diff-gate", change.repository_path,
-                                        self._revision(change), 1_048_576)
+                                        self._revision(change), self._patch_limit)
         except AppError:
             return False, "Required diff coverage freshness could not be confirmed."
         if current.head_sha != result.head_sha or current.status_digest != result.status_digest:
