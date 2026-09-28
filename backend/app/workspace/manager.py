@@ -377,41 +377,52 @@ class WorkspaceManager:
 
     # ------------------------------------------------------------------ cleanup
 
+    def _remove_profile_storage(self, record: WorkspaceRecord, problems: list[str]) -> bool:
+        """Delete workspace files, the profile and its folder; True when both are gone."""
+
+        packages = local_appdata_known_folder() / "Packages" / record.profile_name
+        container = record.container_path or packages / "AC"
+        if not _same_path(container.parent, packages):
+            problems.append("the recorded container folder is not the profile's folder")
+            return False
+        for name in _CONTAINER_SUBDIRECTORIES:
+            target = container / name
+            if os.path.lexists(target):
+                try:
+                    remove_tree_no_follow(target)
+                except OSError as exc:
+                    problems.append(f"could not remove {name} ({type(exc).__name__})")
+        try:
+            delete_profile(record.profile_name)
+        except AppError as exc:
+            problems.append(f"profile delete failed ({exc.details.get('hresult')})")
+        if os.path.lexists(packages):
+            try:
+                remove_tree_no_follow(packages)
+            except OSError as exc:
+                problems.append(f"could not remove the profile folder ({type(exc).__name__})")
+        return not os.path.lexists(packages) and not profile_exists(record.profile_name)
+
     def cleanup(self, workspace_id: UUID) -> WorkspaceRecord:
-        """Remove the workspace, the profile folder and the AppContainer profile."""
+        """Remove the workspace, the profile folder and the AppContainer profile.
+
+        Idempotent for CLEANED. Any failure records CLEANUP_FAILED (visible to the
+        DB-driven sweep) and raises ``WORKSPACE_CLEANUP_FAILED``.
+        """
 
         record = self.get(workspace_id)
         if record.state == WorkspaceState.CLEANED:
             return record
         if record.active_run_id is not None:
             raise workspace_state_conflict(record.state.value, "cleanup")
-        packages = local_appdata_known_folder() / "Packages" / record.profile_name
-        container = record.container_path or packages / "AC"
         problems: list[str] = []
-        if not _same_path(container.parent, packages):
-            problems.append("the recorded container folder is not the profile's folder")
-        else:
-            for name in _CONTAINER_SUBDIRECTORIES:
-                target = container / name
-                if os.path.lexists(target):
-                    try:
-                        remove_tree_no_follow(target)
-                    except OSError as exc:
-                        problems.append(f"could not remove {name} ({type(exc).__name__})")
-            try:
-                delete_profile(record.profile_name)
-            except AppError as exc:
-                problems.append(f"profile delete failed ({exc.details.get('hresult')})")
-            if os.path.lexists(packages):
-                try:
-                    remove_tree_no_follow(packages)
-                except OSError as exc:
-                    problems.append(f"could not remove the profile folder ({type(exc).__name__})")
         try:
-            mapped = profile_exists(record.profile_name)
-        except AppError:
-            mapped = True
-        if not problems and not os.path.lexists(packages) and not mapped:
+            removed = self._remove_profile_storage(record, problems)
+        except Exception as exc:  # any failure must end CLEANUP_FAILED, never silent
+            code = exc.code if isinstance(exc, AppError) else type(exc).__name__
+            problems.append(f"cleanup could not run ({code})")
+            removed = False
+        if removed and not problems:
             return self._save(
                 record, record.state, state=WorkspaceState.CLEANED, cleaned_at=self._clock(),
             )

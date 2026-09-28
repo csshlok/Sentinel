@@ -116,6 +116,7 @@ def delete_test_profiles() -> list[str]:
     from backend.app.execution.appcontainer import (
         delete_profile,
         local_appdata_known_folder,
+        profile_exists,
         remove_tree_no_follow,
     )
 
@@ -131,6 +132,12 @@ def delete_test_profiles() -> list[str]:
         delete_profile(moniker)
         remove_tree_no_follow(folder)
         removed.append(moniker)
+    # Folders whose profile mapping is already gone (e.g. a child still held files
+    # when an earlier teardown ran) are removed too -- still only sentinel.test.*.
+    for folder in packages.glob(TEST_PROFILE_PREFIX + "*"):
+        if folder.name.startswith(TEST_PROFILE_PREFIX) and not profile_exists(folder.name):
+            remove_tree_no_follow(folder)
+            removed.append(folder.name)
     return removed
 
 
