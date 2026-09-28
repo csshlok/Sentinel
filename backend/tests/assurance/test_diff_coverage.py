@@ -55,6 +55,21 @@ def test_unrelated_passing_suite_reports_zero_exercise_and_uncovered_lines(tmp_p
     assert result.freshness == "CURRENT"
 
 
+def test_new_passing_tests_cannot_cover_unexecuted_production_diff(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "tests/test_unrelated.py", "import pytest\n\n"
+          "@pytest.mark.parametrize('case', range(20))\n"
+          "def test_unrelated(case):\n    assert case >= 0\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "FAIL"
+    assert result.executed_changed_lines == 0
+    assert result.gate_satisfied is False
+    assert result.excluded["tests/test_unrelated.py"] == "test code"
+
+
 def test_executed_without_assertion_is_not_verified(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     write(root, "tests/test_old.py", "from module import new\n\ndef test_new():\n    new()\n")

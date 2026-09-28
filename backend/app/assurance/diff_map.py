@@ -23,6 +23,11 @@ class DiffMap:
 
 def _classification(path: str) -> str | None:
     lower = "/" + path.lower().replace("\\", "/")
+    name = lower.rsplit("/", 1)[-1]
+    if ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
+            or (name.startswith("test_") and name.endswith(".py"))
+            or name.endswith("_test.py")):
+        return "test code"
     if any(part in lower for part in _GENERATED) or lower.endswith(("_pb2.py", ".g.py")):
         return "generated"
     if lower.endswith((".toml", ".yaml", ".yml", ".json", ".ini", ".cfg")):
