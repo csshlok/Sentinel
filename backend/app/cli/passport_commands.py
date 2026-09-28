@@ -6,13 +6,15 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import typer
 from typer._click.exceptions import UsageError
 from typer.core import TyperCommand
 
 from backend.app.passport.trust import TrustRegistry, load_public_key
+from backend.app.passport.cng import CngKey
+from backend.app.passport.identity import active_key_name, activate_key_name
 from backend.app.passport.trust import normalize_fingerprint
 from backend.app.passport.verify import verify_bundle
 from backend.app.passport.format import MAX_BUNDLE_BYTES
@@ -43,6 +45,37 @@ def _output(value: object, *, as_json: bool) -> None:
 def _fail(error: Exception) -> None:
     typer.echo(f"Trust registry error: {error}", err=True)
     raise typer.Exit(1)
+
+
+def rotate_identity_command(*, output: Path, as_json: bool) -> None:
+    """Publish an old-key-signed rotation before activating a new CNG key."""
+    new_name = f"Sentinel Passport v2 ES256 {uuid4()}"
+    created = False
+    activated = False
+    try:
+        with CngKey.open(name=active_key_name()) as old:
+            with CngKey.open(name=new_name) as successor:
+                created = True
+                statement = TrustRegistry().sign_rotation(
+                    old_key=old, new_spki=successor.public_spki())
+                body = json.dumps(statement, sort_keys=True, separators=(",", ":"))
+                with output.open("x", encoding="utf-8") as stream:
+                    stream.write(body + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                activate_key_name(new_name)
+                activated = True
+        _output({"rotation_statement": str(output),
+                 "old_fingerprint": statement["old_fingerprint"],
+                 "new_fingerprint": statement["new_fingerprint"]}, as_json=as_json)
+    except (OSError, ValueError) as exc:
+        if created and not activated:
+            try:
+                with CngKey.open(name=new_name) as successor:
+                    successor.delete_for_test()
+            except (OSError, ValueError):
+                pass
+        _fail(exc)
 
 
 @trust_app.command("add")

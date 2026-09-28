@@ -13,9 +13,10 @@ from backend.app.contracts.models import PassportV2Payload
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.passport.card import render_html, render_svg
-from backend.app.passport.cng import CngKey, DEFAULT_KEY_NAME, fingerprint
+from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize
+from backend.app.passport.identity import active_key_name
 from backend.app.passport.v2 import PassportV2Issuer
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +42,7 @@ def _member(path: str, content: bytes, media_type: str) -> dict[str, object]:
 class BundleExporter:
     """Export only allowlisted claim fields and record digests from Sentinel DB."""
 
-    def __init__(self, database: Database, *, key_name: str = DEFAULT_KEY_NAME,
+    def __init__(self, database: Database, *, key_name: str | None = None,
                  installation_label: str = "local") -> None:
         self._database = database
         self._key_name = key_name
@@ -81,7 +82,7 @@ class BundleExporter:
         claims = source_claims
         journal = self._journal_links(change_id, expected_count=claims.journal_event_count,
                                       expected_head=claims.journal_head)
-        with CngKey.open(name=self._key_name) as key:
+        with CngKey.open(name=self._key_name or active_key_name()) as key:
             claims = self._issuer._with_provider(claims, key.provider)
             spki = key.public_spki()
             signer_fp = fingerprint(spki)

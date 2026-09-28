@@ -23,6 +23,7 @@ from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.main import create_app
 from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.cng import CngKey
+from backend.app.passport.identity import active_key_name, activate_key_name
 from backend.app.passport.jcs import parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.providers.http_transport import HttpResponse
@@ -139,3 +140,40 @@ def test_cli_legacy_v1_export_is_reachable(monkeypatch: pytest.MonkeyPatch) -> N
                                             "--v1", "--json"])
     assert response.exit_code == 0, response.output
     assert json.loads(response.stdout)["schema_version"] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_identity_rotation_switches_api_signer_and_emits_statement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    old_name = f"Sentinel disposable test {uuid4()}"
+    successor_name = None
+    with CngKey.open(name=old_name) as old:
+        old_spki = old.public_spki()
+    try:
+        activate_key_name(old_name)
+        destination = tmp_path / "rotation.json"
+        rotated = CliRunner().invoke(cli_app, ["identity", "rotate", "--output",
+                                               str(destination), "--json"])
+        assert rotated.exit_code == 0, rotated.output
+        successor_name = active_key_name()
+        assert successor_name != old_name
+        statement = json.loads(destination.read_text(encoding="utf-8"))
+        trust = TrustRegistry(tmp_path / "recipient.json")
+        trust.add(spki=old_spki, label="Old")
+        assert trust.apply_rotation(statement) == json.loads(rotated.stdout)["new_fingerprint"]
+        api = create_app(settings=Settings(database_path=tmp_path / "passport.sqlite3"),
+                         credential_store=InMemoryCredentialStore())
+        with TestClient(api) as client:
+            client.headers["Authorization"] = f"Bearer {api.state.api_token}"
+            issued = client.post(f"/api/v1/changes/{change.id}/passport/v2/issue")
+            assert issued.status_code == 200, issued.text
+            assert issued.json()["signer_fingerprint"] == statement["new_fingerprint"]
+    finally:
+        for name in (successor_name, old_name):
+            if name is not None:
+                with CngKey.open(name=name) as key:
+                    key.delete_for_test()

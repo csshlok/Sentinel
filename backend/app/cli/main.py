@@ -23,7 +23,8 @@ from rich.console import Console
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
 from backend.app.cli.passport_commands import (
-    VerifyUsageCommand, export_passport_command, trust_app, verify_command,
+    VerifyUsageCommand, export_passport_command, rotate_identity_command, trust_app,
+    verify_command,
 )
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
@@ -442,6 +443,13 @@ def passport_export(change_id: UUID, api_url: str = ApiUrlOption,
 def identity_signing_key(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     """Show this operator's own Ed25519 public signing key."""
     _run(lambda: ApiClient(api_url).get_signing_public_key(), as_json=json_, no_color=no_color)
+
+
+@identity_app.command("rotate")
+def identity_rotate(output: Path = typer.Option(..., "--output"),
+                    json_: bool = JsonOption) -> None:
+    """Create a successor key and write an old-key-signed rotation statement."""
+    rotate_identity_command(output=output, as_json=json_)
 
 
 @evidence_app.command("show")
