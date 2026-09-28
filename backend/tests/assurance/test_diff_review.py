@@ -76,3 +76,20 @@ def test_spaces_and_unicode_paths_map_to_their_real_new_file(tmp_path: Path) -> 
     mapped = map_diff(baseline=baseline, tested=tested)
     assert mapped.error is None
     assert mapped.lines == {"a b.py": {1}, "é.py": {1}}
+
+
+def test_binary_asset_is_listed_without_hiding_python_diff(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "value = 1\n"})
+    (root / "logo.png").write_bytes(b"\x89PNG\x00one")
+    git(root, "add", "logo.png")
+    git(root, "commit", "-q", "-m", "asset")
+    tracker = GitStateTracker()
+    change_id = uuid4()
+    baseline = tracker.capture(change_id, "baseline", str(root), 1, 1_048_576)
+    (root / "logo.png").write_bytes(b"\x89PNG\x00two")
+    write(root, "module.py", "value = 2\n")
+    tested = tracker.capture(change_id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.lines == {"module.py": {1}}
+    assert mapped.excluded["logo.png"] == "binary"

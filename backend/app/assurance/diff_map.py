@@ -127,8 +127,22 @@ def _parse_patch(patch: str, result: DiffMap, root: Path | None = None) -> None:
             if path is None and new_left:
                 result.error = "Deletion hunk unexpectedly adds lines."
                 return
-        elif line.startswith(("Binary files ", "GIT binary patch")):
-            result.error = "Binary diff cannot be mapped to executable lines."
+        elif line.startswith("Binary files ") and line.endswith(" differ"):
+            pair = line[len("Binary files "):-len(" differ")].rsplit(" and ", 1)
+            if len(pair) != 2:
+                result.error = "Binary diff path could not be identified."
+                return
+            try:
+                binary_path = _destination_path(pair[1])
+            except ValueError:
+                result.error = "Binary diff path could not be identified."
+                return
+            if binary_path is None or binary_path.lower().endswith(".py"):
+                result.error = "Binary Python source cannot be mapped."
+                return
+            result.excluded[binary_path] = "binary"
+        elif line.startswith("GIT binary patch"):
+            result.error = "Binary patch cannot be mapped."
             return
         elif line and not line.startswith(("index ", "new file mode ", "deleted file mode ",
                                            "old mode ", "new mode ", "similarity index ",
