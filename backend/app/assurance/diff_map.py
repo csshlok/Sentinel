@@ -12,6 +12,14 @@ from backend.app.core.errors import AppError
 from backend.app.git.safe_exec import run_git
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
+_ENVIRONMENT_DIRS = frozenset({".venv", "venv", ".tox", ".nox", "node_modules",
+                               "__pycache__", ".pytest_cache", ".mypy_cache",
+                               ".ruff_cache"})
+_INERT_SUFFIXES = frozenset({".md", ".rst", ".txt", ".png", ".jpg", ".jpeg",
+                             ".gif", ".webp", ".ico", ".bmp", ".avif", ".svg",
+                             ".woff", ".woff2", ".ttf", ".otf"})
+_LOCKFILES = frozenset({"package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+                        "poetry.lock", "uv.lock", "cargo.lock", "gemfile.lock"})
 
 
 @dataclass(slots=True)
@@ -21,33 +29,41 @@ class DiffMap:
     error: str | None = None
 
 
+def hidden_index_paths(repository_root: str, *, limit: int = 8_388_608) -> list[str]:
+    """List tracked paths whose index flags can hide worktree edits from Git diff."""
+    captured = run_git(repository_root, ["ls-files", "-v", "-z", "--"], limit=limit)
+    if (captured.returncode or captured.incomplete or captured.timed_out
+            or captured.truncated):
+        raise ValueError("Index flag enumeration failed")
+    hidden: list[str] = []
+    for raw in captured.stdout.split(b"\0"):
+        if not raw:
+            continue
+        if len(raw) < 3 or raw[1:2] != b" ":
+            raise ValueError("Malformed index flag record")
+        tag = chr(raw[0])
+        if tag == "S" or tag.islower():
+            hidden.append(raw[2:].decode("utf-8"))
+    return hidden
+
+
 def _classification(path: str, root: Path | None = None) -> str | None:
     lower = "/" + path.lower().replace("\\", "/")
     name = lower.rsplit("/", 1)[-1]
     if name == ".gitignore":
         return "ignore rules changed"
-    if ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
+    if lower.endswith(".py") and ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
             or (name.startswith("test_") and name.endswith(".py"))
             or name.endswith("_test.py")):
         return "test code"
+    if name in _LOCKFILES:
+        return "lockfile"
+    if Path(name).suffix in _INERT_SUFFIXES:
+        return "documentation" if lower.endswith((".md", ".rst", ".txt")) else "inert asset"
     if lower.endswith((".toml", ".yaml", ".yml", ".json", ".ini", ".cfg")):
         return "configuration"
-    if lower.endswith((".md", ".rst", ".txt")):
-        return "documentation"
     if not lower.endswith(".py"):
-        if lower.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-                           ".java", ".go", ".rs", ".cs", ".rb", ".pyw", ".pyx",
-                           ".pyi", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cc",
-                           ".cpp", ".h", ".hpp")):
-            return "unsupported language"
-        if root is not None:
-            try:
-                with (root / path).open("rb") as stream:
-                    if stream.read(2) == b"#!":
-                        return "unsupported language"
-            except OSError:
-                pass
-        return "non-source file"
+        return "unsupported language"
     if root is not None:
         source = root / path
         try:
@@ -183,6 +199,14 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         result.error = "Baseline is not clean or checkpoint patch was truncated."
         return result
     try:
+        hidden = hidden_index_paths(tested.repository_root, limit=limit)
+    except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
+        result.error = "Index flags could not be checked."
+        return result
+    if hidden:
+        result.error = "Index hides worktree state: " + ", ".join(hidden[:8]) + "."
+        return result
+    try:
         ancestry = run_git(
             tested.repository_root,
             ["merge-base", "--is-ancestor", baseline.head_sha, tested.head_sha],
@@ -216,11 +240,11 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     if result.error:
         return result
     try:
-        # Deliberately omit --exclude-standard: .git/info/exclude and the user's
-        # core.excludesFile are writable outside the committed project rules.
+        # No exclude options at all: even an untracked .gitignore can ignore
+        # itself and hide a newly imported module from status and from a
+        # per-directory-excluded ls-files call.
         other = run_git(tested.repository_root,
-                        ["ls-files", "--others", "-z",
-                         "--exclude-per-directory=.gitignore", "--"], limit=limit)
+                        ["ls-files", "--others", "-z", "--"], limit=limit)
         if other.returncode or other.incomplete or other.timed_out or other.truncated:
             raise ValueError("Untracked-file enumeration failed")
         paths = [part.decode("utf-8") for part in other.stdout.split(b"\0") if part]
@@ -235,8 +259,21 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         path = path.replace("\\", "/")
         if path in result.lines or path in result.excluded:
             continue
+        if path.split("/", 1)[0].lower() in _ENVIRONMENT_DIRS:
+            continue  # environment/dependency tree, outside the source diff scope
         classification = _classification(path, Path(tested.repository_root))
         bound_to_checkpoint = path in checkpoint_untracked
+        if path.lower().endswith("/.gitignore") or path.lower() == ".gitignore":
+            if not bound_to_checkpoint:
+                result.excluded[path] = "ignore rules changed"
+            elif classification:
+                result.excluded[path] = classification
+            continue
+        if not bound_to_checkpoint and not path.lower().endswith(
+                (".py", ".pyc", ".pyd", ".pth")):
+            # Editor state and inert user-global excludes cannot make an
+            # otherwise measured Python change permanently UNKNOWN.
+            continue
         if not bound_to_checkpoint:
             result.excluded[path] = "untracked outside checkpoint"
         if classification:

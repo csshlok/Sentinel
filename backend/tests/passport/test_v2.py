@@ -13,7 +13,9 @@ import pytest
 from fastapi.testclient import TestClient
 import backend.app.core.router as router_module
 
-from backend.app.contracts.models import DiffCoverageResult, JournalEventType
+from backend.app.contracts.models import (
+    AgentAttachRequest, AgentLaunchRequest, AgentRun, DiffCoverageResult, JournalEventType,
+)
 from backend.app.core.config import Settings
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -22,6 +24,7 @@ from backend.app.main import create_app
 from backend.app.passport.cng import CngKey, verify_signature
 from backend.app.passport.v2 import PassportV2Issuer, canonical_payload
 from backend.app.assurance.store import EvidenceStore
+from backend.app.assurance.service import EvidenceService
 from backend.app.git.state import GitStateTracker
 from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.support_kb import make_repo, write
@@ -45,6 +48,40 @@ def _launch(database, change_id) -> str:
                                    subject_type="agent_run", subject_id=run_id,
                                    payload={"status": "SUCCEEDED", "exit_code": 0})
     return str(run_id)
+
+
+def test_real_attached_run_can_be_bound_to_passport_snapshot(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    evidence = EvidenceService(EvidenceStore(database), journal=JournalWriter(database))
+    attached = evidence.attach_agent(
+        change, AgentAttachRequest(adapter="claude", external_run_id="external-1"))
+    payload = PassportV2Issuer(database).snapshot(change.id)
+    assert len(payload.launch_records) == 1
+    assert payload.launch_records[0].run_id == attached.id
+    assert payload.launch_records[0].status == "ATTACHED"
+
+
+def test_service_launch_with_real_status_is_bound_to_journal(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+
+    class CompletedLauncher:
+        on_update = None
+
+        def launch(self, change_id, repository_path, request, output_limit_bytes):
+            assert change_id == change.id
+            now = datetime.now(UTC)
+            return AgentRun(id=uuid4(), change_id=change_id, adapter=request.adapter,
+                            status="PASSED", exit_code=0, duration_ms=1,
+                            started_at=now, completed_at=now)
+
+    evidence = EvidenceService(EvidenceStore(database), launcher=CompletedLauncher(),
+                               journal=JournalWriter(database))
+    run = evidence.launch_agent(change, AgentLaunchRequest(adapter="test", executable="python"))
+    payload = PassportV2Issuer(database).snapshot(change.id)
+    assert payload.launch_records[0].run_id == run.id
+    assert payload.launch_records[0].status == "PASSED"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
@@ -91,6 +128,21 @@ def test_tampered_journal_refuses_issue(tmp_path: Path) -> None:
                            ('{"source":"forged"}', str(event.id)))
     with pytest.raises(AppError, match="hash mismatch"):
         PassportV2Issuer(database).snapshot(change.id)
+
+
+def test_broken_previous_journal_hash_refuses_issue(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    journal = JournalWriter(database)
+    journal.append(change.id, JournalEventType.PASSPORT_BUILT, payload={"step": 1})
+    journal.append(change.id, JournalEventType.PASSPORT_BUILT, payload={"step": 2})
+    with database.connection() as connection:
+        connection.execute("DROP TRIGGER journal_events_immutable_update")
+        connection.execute("UPDATE journal_events SET prev_event_hash = ? "
+                           "WHERE change_id = ? AND seq = 2", ("f" * 64, str(change.id)))
+    with pytest.raises(AppError) as broken:
+        PassportV2Issuer(database).snapshot(change.id)
+    assert broken.value.code == "PASSPORT_JOURNAL_INVALID"
 
 
 def test_launch_record_mutation_changes_bound_digest(tmp_path: Path) -> None:

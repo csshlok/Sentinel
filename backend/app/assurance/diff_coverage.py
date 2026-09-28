@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import os
@@ -34,6 +33,12 @@ def _trusted_interpreter_path(raw: str, root: Path) -> bool:
     if not path.is_absolute() or _PYTHON_EXECUTABLE.fullmatch(path.name) is None:
         return False
     try:
+        Path(os.path.abspath(raw)).relative_to(Path(os.path.abspath(root)))
+    except ValueError:
+        pass
+    else:
+        return False  # lexical in-repo path stays untrusted through a junction
+    try:
         resolved = path.resolve(strict=True)
         if not resolved.is_file():
             return False
@@ -54,27 +59,11 @@ def _report_path(root: Path, raw: str) -> str | None:
     return relative.as_posix()
 
 
-def _statement_starts(root: Path, path: str, lines: set[int]) -> dict[int, int]:
-    """Map changed continuation lines to the smallest enclosing Python statement."""
-    source = (root / path).read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=path)
-    statements = [node for node in ast.walk(tree) if isinstance(node, ast.stmt)
-                  and hasattr(node, "end_lineno")]
-    starts: dict[int, int] = {}
-    for line in lines:
-        containing = [node for node in statements
-                      if node.lineno <= line <= node.end_lineno]
-        if containing:
-            node = min(containing, key=lambda item: (item.end_lineno - item.lineno,
-                                                     -item.lineno))
-            starts[line] = node.lineno
-    return starts
-
-
 def evaluate_report(
     *, result: DiffCoverageResult, changed: dict[str, set[int]],
     excluded: dict[str, str], report: dict[str, object], root: Path,
     rule: DiffCoverageRequest,
+    collected_test_paths: set[str] | None = None,
 ) -> DiffCoverageResult:
     """Pure report comparison; missing or inconsistent file records remain UNKNOWN."""
 
@@ -91,6 +80,8 @@ def evaluate_report(
             files[path] = item
     measured: list[DiffCoverageFile] = []
     total = executed_total = 0
+    unmeasured_code: list[str] = []
+    override_reasons: list[str] = []
     for path, lines in sorted(changed.items()):
         item = files.get(path)
         if item is None:
@@ -105,11 +96,18 @@ def evaluate_report(
                        for n in executed + missing + pragma_excluded)):
             return result.model_copy(update={"reasons": [f"Malformed coverage lines: {path}."],
                                              "excluded": excluded})
-        starts = _statement_starts(root, path, lines)
+        source_lines = (root / path).read_text(encoding="utf-8-sig").splitlines()
         executable = set(executed) | set(missing) | set(pragma_excluded)
-        target = {line for line, start in starts.items() if start in executable}
-        excluded_changed = {line for line in target if starts[line] in pragma_excluded}
-        hit = {line for line in target if starts[line] in executed} - excluded_changed
+        target = lines & executable
+        excluded_changed = target & set(pragma_excluded)
+        hit = target & set(executed) - excluded_changed
+        for line in sorted(lines - executable):
+            if line > len(source_lines):
+                unmeasured_code.append(f"{path}:{line}")
+                continue
+            stripped = source_lines[line - 1].strip()
+            if stripped and not stripped.startswith("#"):
+                unmeasured_code.append(f"{path}:{line}")
         total += len(target)
         executed_total += len(hit)
         measured.append(DiffCoverageFile(
@@ -118,7 +116,14 @@ def evaluate_report(
             excluded_by_pragma_lines=sorted(excluded_changed),
             reason="excluded-by-pragma" if excluded_changed else None,
         ))
-    unsupported = any(v.startswith("unsupported language") for v in excluded.values())
+    unsupported = any(
+        reason.startswith("unsupported language") or reason == "configuration"
+        or (reason == "binary" and Path(path).suffix.lower() not in {
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".avif",
+            ".svg", ".woff", ".woff2", ".ttf", ".otf",
+        })
+        for path, reason in excluded.items()
+    )
     if not changed and excluded:
         state = "UNKNOWN" if unsupported else "NOT_APPLICABLE"
     elif total == 0:
@@ -131,25 +136,44 @@ def evaluate_report(
             for f in measured
         )
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
+    if unmeasured_code:
+        state = "UNKNOWN"
+        override_reasons.append("Changed code lines lack exact coverage data: "
+                                + ", ".join(unmeasured_code[:8]) + ".")
     if unsupported and state == "PASS":
         state = "UNKNOWN"
-    if any(reason in {"untracked outside checkpoint", "ignore rules changed"}
-           for reason in excluded.values()):
+    if unsupported:
+        paths = [path for path, reason in excluded.items()
+                 if reason.startswith("unsupported language") or reason == "configuration"
+                 or reason == "binary"]
+        override_reasons.append("Unsupported or unmeasured changed files: "
+                                + ", ".join(paths[:8]) + ".")
+    unbound = [path for path, reason in excluded.items()
+               if reason in {"untracked outside checkpoint", "ignore rules changed"}]
+    if unbound:
         state = "UNKNOWN"
-    if rule.rule.required and any(
+        override_reasons.append("Changed files are outside the checkpoint or alter ignore rules: "
+                                + ", ".join(unbound[:8]) + ".")
+    generated = [path for path, reason in excluded.items() if (
         path.lower().endswith(".py") and reason == "generated"
-        for path, reason in excluded.items()
-    ):
+    )]
+    if rule.rule.required and generated:
         state = "UNKNOWN"
-    if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and any(
-        path.lower().endswith(".py") and reason == "test code"
-        for path, reason in excluded.items()
-    ):
+        override_reasons.append("Generated Python source is unmeasured: "
+                                + ", ".join(generated[:8]) + ".")
+    uncollected_test_code = [path for path, reason in excluded.items()
+                             if path.lower().endswith(".py") and reason == "test code"
+                             and path not in (collected_test_paths or set())]
+    if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and uncollected_test_code:
         state = "UNKNOWN"
+    if rule.rule.required and uncollected_test_code:
+        override_reasons.append("Changed test-named Python file is not a collected test: "
+                                + ", ".join(uncollected_test_code[:8]) + ".")
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
     return DiffCoverageResult.model_validate({**result.model_dump(), **{
         "files": measured, "excluded": excluded, "diff_exercised": state,
+        "reasons": [*result.reasons, *override_reasons],
         "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,
@@ -211,6 +235,7 @@ def collect_diff_coverage(
     report: dict[str, object] | None = None
     artifact_digest: str | None = None
     checks_passed: bool | None = None
+    collected_test_paths: set[str] = set()
     collector_status = "ERROR"
     reasons: list[str] = []
     try:
@@ -220,11 +245,20 @@ def collect_diff_coverage(
             data = evidence / "coverage.data"
             artifact = evidence / "coverage.json"
             junit = evidence / "pytest-results.xml"
+            pytest_config = evidence / "sentinel-pytest.ini"
             config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
+            pytest_config.write_text(
+                "[pytest]\naddopts =\npython_files = test_*.py *_test.py\n"
+                "python_classes = Test*\npython_functions = test_*\n"
+                "testpaths =\nnorecursedirs = .git .venv venv node_modules "
+                ".tox .nox __pycache__\n",
+                encoding="utf-8",
+            )
             argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
                     "-m", "coverage", "run", "--rcfile", str(config),
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
-                    "-o", "addopts=", f"--junitxml={junit}", *test_args]
+                    *test_args, "-c", str(pytest_config), f"--rootdir={root}",
+                    "-o", "addopts=", f"--junitxml={junit}"]
             result = result.model_copy(update={"command": argv})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
             if run.timed_out or run.incomplete:
@@ -244,6 +278,15 @@ def collect_diff_coverage(
                         suites = []
                     executed_tests = sum(int(item.attrib["tests"]) - int(item.attrib.get("skipped", 0))
                                          for item in suites)
+                    for case in suite.iter("testcase"):
+                        file_attr = case.attrib.get("file")
+                        if file_attr:
+                            normalized = _report_path(root, file_attr)
+                            if normalized:
+                                collected_test_paths.add(normalized)
+                        classname = case.attrib.get("classname", "")
+                        if classname and all(part.isidentifier() for part in classname.split(".")):
+                            collected_test_paths.add(classname.replace(".", "/") + ".py")
                     if executed_tests <= 0:
                         reasons.append("Pytest did not execute any tests.")
                     else:
@@ -297,11 +340,12 @@ def collect_diff_coverage(
                                        "artifact_digest": artifact_digest,
                                        "completed_at": utc_now(), "freshness": "CURRENT",
                                        "reasons": reasons})
-    if report is None:
+    if report is None or checks_passed is None:
         return result
     try:
         return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
-                               report=report, root=root, rule=request)
+                               report=report, root=root, rule=request,
+                               collected_test_paths=collected_test_paths)
     except Exception as exc:
         return result.model_copy(update={
             "collector_status": "ERROR", "diff_exercised": "UNKNOWN",

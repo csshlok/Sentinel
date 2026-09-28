@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import typer
+from click.exceptions import UsageError as ClickUsageError
 from typer._click.exceptions import UsageError
 from typer.core import TyperCommand
 
@@ -28,9 +29,15 @@ class VerifyUsageCommand(TyperCommand):
     """Give verifier syntax errors the documented standalone exit code 3."""
 
     def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        as_json = "--json" in args  # Typer consumes this mutable list before raising.
         try:
             return super().parse_args(ctx, args)
-        except UsageError as exc:
+        except (UsageError, ClickUsageError) as exc:
+            if as_json:
+                typer.echo(json.dumps({"verdict": "USAGE_ERROR",
+                                       "reason": exc.format_message()},
+                                      sort_keys=True, separators=(",", ":")))
+                raise typer.Exit(3) from exc
             exc.exit_code = 3
             raise
 
@@ -48,32 +55,48 @@ def _fail(error: Exception) -> None:
 
 
 def rotate_identity_command(*, output: Path, as_json: bool) -> None:
-    """Publish an old-key-signed rotation before activating a new CNG key."""
+    """Activate a successor, then publish its old-key-signed statement."""
     new_name = f"Sentinel Passport v2 ES256 {uuid4()}"
     created = False
     activated = False
+    output_created = False
+    old_name: str | None = None
     try:
-        with CngKey.open(name=active_key_name()) as old:
+        if output.exists():
+            raise FileExistsError("Rotation statement path already exists")
+        old_name = active_key_name()
+        with CngKey.open_existing(name=old_name) as old:
+            created = True  # A failed open may already have finalized the new key.
             with CngKey.open(name=new_name) as successor:
-                created = True
                 statement = TrustRegistry().sign_rotation(
                     old_key=old, new_spki=successor.public_spki())
                 body = json.dumps(statement, sort_keys=True, separators=(",", ":"))
+                activate_key_name(new_name)
+                activated = True
                 with output.open("x", encoding="utf-8") as stream:
+                    output_created = True
                     stream.write(body + "\n")
                     stream.flush()
                     os.fsync(stream.fileno())
-                activate_key_name(new_name)
-                activated = True
         _output({"rotation_statement": str(output),
                  "old_fingerprint": statement["old_fingerprint"],
                  "new_fingerprint": statement["new_fingerprint"]}, as_json=as_json)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
+        if output_created:
+            try:
+                output.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if activated and old_name is not None:
+            try:
+                activate_key_name(old_name)
+                activated = False
+            except Exception:
+                pass  # Keep the successor key if rollback could not restore the selector.
         if created and not activated:
             try:
-                with CngKey.open(name=new_name) as successor:
-                    successor.delete_for_test()
-            except (OSError, ValueError):
+                CngKey.delete_unactivated_successor(name=new_name)
+            except Exception:
                 pass
         _fail(exc)
 

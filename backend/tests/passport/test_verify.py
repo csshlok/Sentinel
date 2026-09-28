@@ -16,11 +16,12 @@ from typer.testing import CliRunner
 
 from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.cng import CngKey
-from backend.app.passport.format import MAX_MEMBER_BYTES
+from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.passport.verify import _validate_claims, verify_bundle
 from backend.app.cli.main import app as cli_app
+from backend.app.core.errors import AppError
 from backend.app.passport.card import card_facts
 from backend.app.contracts.models import JournalEventType
 from backend.app.core.journal import JournalWriter
@@ -55,6 +56,31 @@ def test_zip64_record_is_rejected_even_with_valid_signed_members(tmp_path: Path)
     result = verify_bundle(hostile, trust=_golden_trust(tmp_path))
     assert result.verdict == "INVALID", result.reason
     assert "ZIP" in result.reason
+
+
+def test_bundle_read_is_bounded_even_if_file_grows_after_stat() -> None:
+    observed: list[int] = []
+
+    class GrowingStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            observed.append(size)
+            return super().read(size)
+
+    class GrowingPath:
+        def is_file(self) -> bool:
+            return True
+
+        def stat(self):
+            return type("Stat", (), {"st_size": 1})()
+
+        def open(self, mode: str):
+            assert mode == "rb"
+            return GrowingStream(b"X" * (MAX_BUNDLE_BYTES + 2))
+
+    result = verify_bundle(GrowingPath())  # type: ignore[arg-type]
+    assert result.verdict == "INVALID"
+    assert observed == [MAX_BUNDLE_BYTES + 1]
+    assert "oversized" in result.reason
 
 
 def test_stored_member_size_slack_cannot_hide_unsigned_bytes(tmp_path: Path) -> None:
@@ -356,6 +382,26 @@ def test_unexpected_verifier_exception_still_returns_invalid(
     assert "UnexpectedVerificationFailure" in result.reason
 
 
+def test_unavailable_trust_directory_is_indeterminate_not_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "Sentinel" / "trusted_keys.json"
+
+    def unsafe_directory(_: Path) -> bool:
+        raise AppError("EVIDENCE_STORE_UNSAFE_LOCATION", "Unsafe link", status_code=409)
+
+    monkeypatch.setattr("backend.app.passport.trust.prepare_store_directory",
+                        unsafe_directory)
+    monkeypatch.setattr("backend.app.passport.trust.default_trust_path", lambda: path)
+    result = verify_bundle(GOLDEN, trust=TrustRegistry(path))
+    assert result.verdict == "INDETERMINATE"
+    assert "trust registry is unavailable" in result.reason
+    cli = CliRunner().invoke(cli_app, ["trust", "list", "--json"])
+    assert cli.exit_code == 1
+    assert cli.exception is not None
+    assert "Traceback" not in cli.output
+
+
 def test_hidden_bytes_before_central_directory_are_invalid(tmp_path: Path) -> None:
     raw = GOLDEN.read_bytes()
     offset = int.from_bytes(raw[-6:-2], "little")
@@ -378,6 +424,74 @@ def test_local_header_method_mismatch_is_invalid(tmp_path: Path) -> None:
     result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
     assert result.verdict == "INVALID"
     assert "compression" in result.reason
+
+
+@pytest.mark.parametrize("field,offset,value", [
+    ("local version", 4, 1),
+    ("local DOS time", 10, 1),
+    ("local extra", 28, 1),
+    ("local crc", 14, 1),
+    ("local stored size", 18, 1),
+    ("local flags", 6, 2),
+    ("local name", 30, ord("X")),
+    ("central extra", 30, 1),
+    ("central made-by", 4, 1),
+    ("central internal attributes", 36, 1),
+    ("central comment", 32, 1),
+    ("central flags", 8, 2),
+    ("central crc", 16, 1),
+    ("EOCD count", 8, 1),
+    ("EOCD directory size", 12, 1),
+])
+def test_each_unsigned_zip_header_field_is_rejected(
+    tmp_path: Path, field: str, offset: int, value: int,
+) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    if field.startswith("local"):
+        start = 0
+    elif field.startswith("central"):
+        start = raw.find(b"PK\x01\x02")
+    else:
+        start = len(raw) - 22
+    assert start >= 0
+    raw[start + offset] ^= value
+    target = tmp_path / "mutated.sentinel"
+    target.write_bytes(raw)
+    result = verify_bundle(target, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", (field, result.reason)
+    assert any(reason in result.reason for reason in ("ZIP", "BadZipFile")), (
+        field, result.reason)
+
+
+@pytest.mark.parametrize("descriptor", [False, True])
+def test_between_member_gap_or_data_descriptor_is_rejected(
+    tmp_path: Path, descriptor: bool,
+) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    first_size = int.from_bytes(raw[18:22], "little")
+    first_name_size = int.from_bytes(raw[26:28], "little")
+    first_end = 30 + first_name_size + first_size
+    inserted = (b"PK\x07\x08" + raw[14:26]) if descriptor else b"UNSIGNED-GAP"
+    directory_offset = int.from_bytes(raw[-6:-2], "little")
+    raw[first_end:first_end] = inserted
+    if descriptor:
+        raw[6:8] = (8).to_bytes(2, "little")
+    position = directory_offset + len(inserted)
+    for index in range(6):
+        assert raw[position:position + 4] == b"PK\x01\x02"
+        if descriptor and index == 0:
+            raw[position + 8:position + 10] = (8).to_bytes(2, "little")
+        if index:
+            offset = int.from_bytes(raw[position + 42:position + 46], "little")
+            raw[position + 42:position + 46] = (offset + len(inserted)).to_bytes(4, "little")
+        name_size = int.from_bytes(raw[position + 28:position + 30], "little")
+        position += 46 + name_size
+    raw[-6:-2] = (directory_offset + len(inserted)).to_bytes(4, "little")
+    target = tmp_path / "extra-between-members.sentinel"
+    target.write_bytes(raw)
+    result = verify_bundle(target, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", result.reason
+    assert "ZIP" in result.reason
 
 
 def test_claim_type_coercion_cannot_make_card_and_verifier_disagree() -> None:

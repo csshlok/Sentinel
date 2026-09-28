@@ -22,7 +22,7 @@ from backend.app.core.journal import compute_event_hash
 from backend.app.git.state import GitStateTracker
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
-from backend.app.passport.identity import active_key_name
+from backend.app.passport.identity import open_signing_key
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
@@ -73,7 +73,7 @@ class PassportV2Issuer:
         events: dict[str, dict[str, object]] = {}
         for event in journal:
             kind = event["event_type"]
-            if kind not in {"agent.launched", "agent.completed"}:
+            if kind not in {"agent.launched", "agent.completed", "agent.attached"}:
                 continue
             if event["subject_type"] != "agent_run" or not event["subject_id"]:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch journal subject is invalid.",
@@ -83,9 +83,7 @@ class PassportV2Issuer:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Duplicate launch journal event.",
                                status_code=409)
             run_events[kind] = json.loads(event["payload_json"])
-        if set(events) != {row["id"] for row in launches} or any(
-                set(value) != {"agent.launched", "agent.completed"}
-                for value in events.values()):
+        if set(events) != {row["id"] for row in launches}:
             raise AppError("PASSPORT_LAUNCH_INVALID", "Launch records and journal differ.",
                            status_code=409)
         bindings: list[PassportV2LaunchBinding] = []
@@ -103,9 +101,22 @@ class PassportV2Issuer:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch record identity mismatch.",
                                status_code=409)
             status = parsed.get("status")
-            completed = events[row["id"]]["agent.completed"]
-            if (not isinstance(completed, dict) or status != row["status"]
-                    or completed.get("status") != status):
+            kinds = set(events[row["id"]])
+            if status in {"RUNNING", "PAUSED"}:
+                raise AppError("PASSPORT_LAUNCH_IN_PROGRESS",
+                               "A launch is still in progress; its outcome is unknown.",
+                               status_code=409)
+            if status == "ATTACHED":
+                attached = events[row["id"]].get("agent.attached")
+                valid = (kinds == {"agent.attached"} and isinstance(attached, dict)
+                         and attached.get("adapter") == parsed.get("adapter")
+                         and attached.get("external_run_id") == parsed.get("external_run_id"))
+            else:
+                completed = events[row["id"]].get("agent.completed")
+                valid = (kinds == {"agent.launched", "agent.completed"}
+                         and isinstance(completed, dict)
+                         and completed.get("status") == status)
+            if status != row["status"] or not valid:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch status differs from journal.",
                                status_code=409)
             try:
@@ -231,7 +242,7 @@ class PassportV2Issuer:
     def issue(self, change_id: UUID) -> PassportV2Issued:
         """No payload argument exists: CNG signs only this freshly built snapshot."""
         source_payload = self.snapshot(change_id)
-        with CngKey.open(name=self._key_name or active_key_name()) as key:
+        with (CngKey.open(name=self._key_name) if self._key_name else open_signing_key()) as key:
             payload = self._with_provider(source_payload, key.provider)
             message = canonical_payload(payload)
             spki = key.public_spki()

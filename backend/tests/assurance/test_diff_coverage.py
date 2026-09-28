@@ -178,7 +178,7 @@ def test_changed_pragma_exclusions_count_as_uncovered(tmp_path: Path) -> None:
     assert result.files[0].reason == "excluded-by-pragma"
 
 
-def test_unexecuted_multiline_continuation_counts_as_uncovered(tmp_path: Path) -> None:
+def test_unexecuted_multiline_continuation_never_gets_inferred_credit(tmp_path: Path) -> None:
     root, change, baseline, _ = _case(tmp_path)
     write(root, "module.py", "def old():\n    return 1\n\ndef new():\n"
           "    return max(\n        __import__('os').getpid())\n")
@@ -186,9 +186,174 @@ def test_unexecuted_multiline_continuation_counts_as_uncovered(tmp_path: Path) -
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True))
     assert result.checks_passed is True
-    assert result.diff_exercised == "FAIL"
+    assert result.diff_exercised in {"FAIL", "UNKNOWN"}
     assert result.gate_satisfied is False
-    assert 6 in result.files[0].uncovered_lines
+    assert (6 in result.files[0].uncovered_lines
+            or any("module.py:6" in reason for reason in result.reasons))
+
+
+@pytest.mark.parametrize("baseline_source,changed_source", [
+    (
+        "def old():\n    flag = False\n    if flag:\n        return 2\n    return 1\n",
+        "def old():\n    flag = False\n    if flag:\n"
+        "        # one\n        # two\n        # three\n        # four\n"
+        "        return 3\n    return 1\n",
+    ),
+    (
+        "def old():\n    return 1\n\ndef rarely():\n    return 2\n",
+        "def old():\n    return 1\n\ndef rarely():\n"
+        "    # a\n    # b\n    # c\n    # d\n    return 3\n",
+    ),
+    (
+        "def old():\n    try:\n        return 1\n    except ValueError:\n        return 2\n",
+        "def old():\n    try:\n        return 1\n    except (ValueError, TypeError):\n        return 2\n",
+    ),
+    (
+        "def old():\n    match 1:\n        case 1:\n            return 1\n"
+        "        case 2:\n            return 2\n",
+        "def old():\n    match 1:\n        case 1:\n            return 1\n"
+        "        case 2 | 3:\n            return 2\n",
+    ),
+])
+def test_changed_lines_never_inherit_compound_header_execution(
+    tmp_path: Path, baseline_source: str, changed_source: str,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": baseline_source,
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="line credit", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", changed_source)
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised != "PASS"
+    assert result.gate_satisfied is False
+
+
+def test_self_ignoring_untracked_gitignore_cannot_hide_imported_source(
+    tmp_path: Path,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "pkg/__init__.py": "",
+        "pkg/module.py": "def old():\n    return 1\n",
+        "module.py": "from pkg.module import old\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="hidden source", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "pkg/.gitignore", ".gitignore\nhidden_impl.py\n")
+    write(root, "pkg/hidden_impl.py", "def charge(x):\n    return x * 2\n")
+    write(root, "pkg/module.py", "from pkg import hidden_impl\n\ndef old():\n    return 1\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.excluded["pkg/.gitignore"] == "ignore rules changed"
+    assert mapped.excluded["pkg/hidden_impl.py"] == "untracked outside checkpoint"
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+
+
+def test_repo_pytest_collection_rules_cannot_hide_failing_tests(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "LIMIT = 5\n\ndef old():\n    return 1\n",
+        "tests/test_old.py": "from module import LIMIT, old\n\ndef test_old():\n"
+                             "    assert old() == 1\n\ndef test_limit():\n"
+                             "    assert LIMIT == 5\n",
+    })
+    change = ChangeView(id=uuid4(), title="pytest config", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "LIMIT = 50\n\ndef old():\n    return 1\n")
+    write(root, "pyproject.toml", '[tool.pytest.ini_options]\npython_functions = "test_old"\n')
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is False
+    assert result.gate_satisfied is False
+    assert any("sentinel-pytest.ini" in token for token in result.command)
+
+
+def test_new_test_file_can_satisfy_required_gate_when_it_covers_new_code(
+    tmp_path: Path,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "def old():\n    return 1\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="new test", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new(x):\n    return x + 1\n")
+    write(root, "tests/test_new.py", "from module import new\n\ndef test_new():\n"
+                                      "    assert new(1) == 2\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "PASS", result.reasons
+    assert result.gate_satisfied is True
+    assert result.excluded["tests/test_new.py"] == "test code"
+
+
+def test_preexisting_ignored_editor_and_environment_files_do_not_block_gate(
+    tmp_path: Path,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "def old():\n    return 1\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    (root / ".git" / "info" / "exclude").write_text(
+        ".vscode/\n.venv/\n", encoding="utf-8")
+    write(root, ".vscode/settings.json", "{}\n")
+    write(root, ".venv/lib/site-packages/dependency.py", "VALUE = 1\n")
+    change = ChangeView(id=uuid4(), title="ignored editor", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "def old():\n    return 1  # covered edit\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "PASS", result.reasons
+    assert result.gate_satisfied is True
+
+
+def test_zero_executed_tests_cannot_report_diff_exercised_pass(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n"
+          "    return 1\n\nFLAG = 1  # executed during collection\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        interpreter_path=sys.executable, test_args=["--collect-only", "-q"],
+    )
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=request)
+    assert result.checks_passed is None
+    assert result.diff_exercised == "UNKNOWN"
+    assert any("did not execute any tests" in reason for reason in result.reasons)
 
 
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
@@ -468,6 +633,99 @@ def test_unmeasured_script_stays_unknown_with_docs_only_gate(tmp_path: Path) -> 
     assert result.diff_exercised == "UNKNOWN"
     assert result.gate_satisfied is False
     assert result.excluded["deploy.ps1"] == "unsupported language"
+
+
+def test_unknown_source_extensions_cannot_use_docs_only_gate(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "tests/test_trivial.py": "def test_trivial():\n    assert True\n",
+    })
+    change = ChangeView(id=uuid4(), title="unknown source", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    for path, content in {
+        "Deploy.psm1": "function Invoke-Deploy { return 1 }\n",
+        "run.vbs": "WScript.Echo 1\n",
+        "Dockerfile": "FROM scratch\n",
+        "README.md": "Documentation.\n",
+        "package-lock.json": "{}\n",
+    }.items():
+        write(root, path, content)
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        rule=DiffCoverageRule(required=True, minimum_percent=80,
+                              not_applicable_satisfies=True),
+    )
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=request)
+    assert result.checks_passed is True
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    for path in ("Deploy.psm1", "run.vbs", "Dockerfile"):
+        assert result.excluded[path] == "unsupported language"
+    assert result.excluded["README.md"] == "documentation"
+    assert result.excluded["package-lock.json"] == "lockfile"
+
+
+@pytest.mark.parametrize("path,classification,phrase", [
+    ("Deploy.psm1", "unsupported language", "Unsupported or unmeasured"),
+    ("hidden.py", "untracked outside checkpoint", "outside the checkpoint"),
+    ("pkg/.gitignore", "ignore rules changed", "ignore rules"),
+    ("generated.py", "generated", "Generated Python"),
+    ("pricing_test.py", "test code", "not a collected test"),
+])
+def test_unknown_overrides_explain_their_cause(
+    tmp_path: Path, path: str, classification: str, phrase: str,
+) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    initial = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id,
+        tested_checkpoint_id=tested.id, head_sha=tested.head_sha,
+        status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(),
+        collector_status="COLLECTED", collector_version="7.0",
+        checks_passed=True, diff_exercised="UNKNOWN", freshness="CURRENT",
+        gate_satisfied=False,
+    )
+    result = evaluate_report(
+        result=initial, changed={}, excluded={path: classification},
+        report={"files": {}}, root=root, rule=_request(baseline, tested, required=True),
+    )
+    assert result.diff_exercised == "UNKNOWN"
+    assert any(phrase in reason and path in reason for reason in result.reasons)
+
+
+def test_utf8_bom_python_source_is_measured(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    (root / "module.py").write_bytes(
+        b"\xef\xbb\xbfdef old():\n    return 1  # covered edit\n\n"
+        b"def new():\n    return 1\n"
+    )
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "PASS", result.reasons
+    assert result.gate_satisfied is True
+
+
+def test_in_repo_junction_to_external_python_is_untrusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    lexical = root / ".venv" / Path(sys.executable).name
+    original_resolve = Path.resolve
+
+    def junction_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == lexical:
+            return Path(sys.executable).resolve()
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", junction_resolve)
+    assert not _trusted_interpreter_path(str(lexical), root)
 
 
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:

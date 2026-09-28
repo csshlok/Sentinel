@@ -6,6 +6,8 @@ import base64
 import ctypes
 import hashlib
 import os
+import threading
+import time
 from uuid import uuid4
 
 import pytest
@@ -109,6 +111,125 @@ def test_transient_platform_creation_failure_does_not_create_software_key(
     with pytest.raises(cng.CngError, match="NCryptCreatePersistedKey\\(Platform\\)"):
         CngKey.open(name=f"Sentinel disposable test {uuid4()}")
     assert attempted == ["platform"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_first_use_key_open_is_serialized_across_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = CngKey._open_unlocked.__func__
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+    name = f"Sentinel disposable test {uuid4()}"
+    identities: list[bytes] = []
+    errors: list[Exception] = []
+
+    def observed(cls, *, name: str, create_if_missing: bool = True):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.15)
+            return original(cls, name=name, create_if_missing=create_if_missing)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(CngKey, "_open_unlocked", classmethod(observed))
+
+    def worker() -> None:
+        try:
+            with CngKey.open(name=name) as key:
+                identities.append(key.public_spki())
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    try:
+        assert not errors and len(identities) == 2
+        assert identities[0] == identities[1]
+        assert peak == 1
+    finally:
+        with CngKey.open(name=name) as key:
+            key.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_missing_tpm_falls_back_to_software_only_when_no_key_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_dll = cng._api()
+
+    class NoTpmDll:
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            if label == cng.PLATFORM_PROVIDER:
+                return 0x80090035
+            return real_dll.NCryptOpenStorageProvider(output, label, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    monkeypatch.setattr(cng, "_api", lambda: NoTpmDll())
+    name = f"Sentinel disposable test {uuid4()}"
+    with CngKey.open(name=name) as key:
+        try:
+            assert key.provider == "SOFTWARE"
+            spki = key.public_spki()
+            with CngKey.open(name=name) as reopened:
+                assert reopened.public_spki() == spki
+        finally:
+            key.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_existing_software_identity_rejects_transient_tpm_outage_and_provider_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_dll = cng._api()
+    name = f"Sentinel disposable test {uuid4()}"
+
+    class PlatformUnavailable:
+        status = 0x80090035
+
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            if label == cng.PLATFORM_PROVIDER:
+                return self.status
+            return real_dll.NCryptOpenStorageProvider(output, label, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    fake = PlatformUnavailable()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(cng, "_api", lambda: fake)
+        with CngKey.open(name=name) as first:
+            assert first.provider == "SOFTWARE"
+            original = first.public_spki()
+        fake.status = 0x80290401  # transient TPM failure; identity could be hidden
+        with pytest.raises(cng.CngError, match="NCryptOpenStorageProvider\\(Platform\\)"):
+            CngKey.open(name=name)
+
+    class BothProviders:
+        def NCryptOpenStorageProvider(self, output, label, flags):
+            return real_dll.NCryptOpenStorageProvider(output, cng.SOFTWARE_PROVIDER, flags)
+
+        def __getattr__(self, attr):
+            return getattr(real_dll, attr)
+
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(cng, "_api", lambda: BothProviders())
+            with pytest.raises(RuntimeError, match="Multiple CNG providers"):
+                CngKey.open(name=name)
+        with CngKey.open(name=name) as reopened:
+            assert reopened.public_spki() == original
+    finally:
+        with CngKey.open(name=name) as cleanup:
+            cleanup.delete_for_test()
 
 
 def test_fingerprint_is_sha256_of_spki() -> None:

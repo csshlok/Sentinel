@@ -24,6 +24,7 @@ from pydantic import Field
 
 from backend.app.assurance.engine import AssuranceEngine, contract_digest
 from backend.app.assurance.diff_coverage import collect_diff_coverage
+from backend.app.assurance.diff_map import hidden_index_paths, map_diff
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
@@ -368,11 +369,10 @@ class EvidenceService:
     def stop_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
         """Stop a run started by this process; persist whatever state results."""
 
-        self._journal_append(
-            change_id, JournalEventType.AGENT_STOP_REQUESTED,
-            subject_type="agent_run", subject_id=run_id, payload={},
-        )
         stored = self._store.get_agent_run(run_id)
+        if stored is not None and stored.status.value in {
+                "PASSED", "FAILED", "TIMED_OUT", "CANCELLED", "ERROR"}:
+            return stored  # already terminal; no stop was requested or performed
         try:
             run = self._launcher.stop(run_id)
         except AppError:
@@ -382,6 +382,10 @@ class EvidenceService:
             run = stored if note in stored.limitations else stored.model_copy(
                 update={"limitations": [*stored.limitations, note]})
         self._store.save_agent_run(run)
+        self._journal_append(
+            change_id, JournalEventType.AGENT_STOP_REQUESTED,
+            subject_type="agent_run", subject_id=run_id, payload={},
+        )
         return run
 
     def pause_agent(self, change_id: UUID, run_id: UUID) -> AgentRun:
@@ -571,7 +575,23 @@ class EvidenceService:
         if (not acceptable_state or result.freshness != "CURRENT"
                 or result.checks_passed is not True or not result.gate_satisfied):
             return False, (f"Required diff coverage is {result.diff_exercised}; "
+                           f"{result.reasons[0] if result.reasons else 'Evidence is insufficient.'} "
                            f"NOT_APPLICABLE satisfies policy: {rule.not_applicable_satisfies}.")
+        try:
+            hidden = hidden_index_paths(change.repository_path, limit=self._patch_limit)
+        except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
+            return False, "Required diff coverage index flags could not be checked."
+        if hidden:
+            return False, "Required diff coverage index hides worktree state: " + hidden[0]
+        tested = self._store.get_checkpoint(result.tested_checkpoint_id)
+        if tested is None:
+            return False, "Required diff coverage tested checkpoint is missing."
+        remapped = map_diff(baseline=baseline, tested=tested, limit=self._patch_limit)
+        if remapped.error:
+            return False, "Required diff coverage cannot remap current source: " + remapped.error
+        for path, reason in remapped.excluded.items():
+            if reason in {"untracked outside checkpoint", "ignore rules changed"}:
+                return False, f"Required diff coverage has {reason}: {path}."
         try:
             current = self._git.capture(change.id, "diff-gate", change.repository_path,
                                         self._revision(change), self._patch_limit)

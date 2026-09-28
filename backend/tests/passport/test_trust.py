@@ -40,6 +40,36 @@ def test_add_list_remove_and_revoke(tmp_path: Path) -> None:
         registry.add(spki=spki, label="Lab")
 
 
+def test_registry_display_cannot_override_actual_fingerprint(tmp_path: Path) -> None:
+    path = tmp_path / "trusted_keys.json"
+    registry = TrustRegistry(path)
+    key = registry.add(spki=_spki(), label="Lab")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["keys"][key]["fingerprint"] = "SPOOFED"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert registry.list()[0]["fingerprint"] == key
+
+
+def test_relabel_preserves_rotation_lineage_and_effective_revocation(tmp_path: Path) -> None:
+    path = tmp_path / "trusted_keys.json"
+    registry = TrustRegistry(path)
+    old_spki, new_spki = _spki(), _spki()
+    old, new = registry.add(spki=old_spki, label="Old"), registry.add(spki=new_spki, label="New")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["keys"][old]["superseded_by"] = new
+    data["keys"][new]["rotated_from"] = old
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    registry.add(spki=new_spki, label="Renamed")
+    assert registry._read()["keys"][new]["rotated_from"] == old
+    registry.revoke(old)
+    assert registry.decision(spki=new_spki)[0] == "REVOKED"
+    listed = {item["fingerprint"]: item for item in registry.list()}
+    assert listed[new]["revoked"] is True and listed[new]["status"] == "REVOKED"
+    with pytest.raises(ValueError, match="rotation descendants"):
+        registry.remove(old)
+
+
 def test_wrong_fingerprint_and_malformed_registry_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "trusted_keys.json"
     registry = TrustRegistry(path)

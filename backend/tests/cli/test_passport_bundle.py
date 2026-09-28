@@ -31,6 +31,15 @@ from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.support_kb import make_repo
 
 
+@pytest.mark.parametrize("tail", [["--key"], ["--bogus"]])
+def test_verify_click_usage_errors_emit_json_verdict(tmp_path: Path,
+                                                     tail: list[str]) -> None:
+    result = CliRunner().invoke(cli_app, ["verify", str(tmp_path / "bundle.sentinel"),
+                                          "--json", *tail])
+    assert result.exit_code == 3
+    assert json.loads(result.stdout)["verdict"] == "USAGE_ERROR"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
 def test_api_exports_from_change_id_and_rejects_body(tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,3 +186,87 @@ def test_identity_rotation_switches_api_signer_and_emits_statement(
             if name is not None:
                 with CngKey.open(name=name) as key:
                     key.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_failed_rotation_never_publishes_statement_or_orphans_successor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.cli import passport_commands
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    old_name = f"Sentinel disposable test {uuid4()}"
+    successor_names: list[str] = []
+    actual_open = passport_commands.CngKey.open.__func__
+
+    def record_open(cls, *, name: str):
+        successor_names.append(name)
+        return actual_open(cls, name=name)
+
+    with CngKey.open(name=old_name) as old:
+        try:
+            activate_key_name(old_name)
+            destination = tmp_path / "statement.json"
+            monkeypatch.setattr(passport_commands.CngKey, "open", classmethod(record_open))
+            monkeypatch.setattr(passport_commands, "activate_key_name",
+                                lambda _name: (_ for _ in ()).throw(RuntimeError("activation failed")))
+            result = CliRunner().invoke(cli_app, ["identity", "rotate", "--output",
+                                                  str(destination), "--json"])
+            assert result.exit_code == 1
+            assert not destination.exists()
+            assert active_key_name() == old_name
+            assert successor_names
+            with pytest.raises(OSError, match="does not exist"):
+                CngKey.open_existing(name=successor_names[0])
+        finally:
+            for successor_name in successor_names:
+                try:
+                    with CngKey.open_existing(name=successor_name) as successor:
+                        successor.delete_for_test()
+                except OSError:
+                    pass
+            old.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_rotation_cleans_finalized_key_when_normal_open_rejects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.cli import passport_commands
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    old_name = f"Sentinel disposable test {uuid4()}"
+    successor_names: list[str] = []
+    actual_open = CngKey.open.__func__
+    actual_assert = CngKey._assert_nonexportable
+    with CngKey.open(name=old_name) as old:
+        try:
+            activate_key_name(old_name)
+
+            def record_open(cls, *, name: str):
+                successor_names.append(name)
+                return actual_open(cls, name=name)
+
+            def reject_successor(key):
+                if key.name != old_name:
+                    raise RuntimeError("CNG rejected finalized successor")
+                return actual_assert(key)
+
+            with monkeypatch.context() as scoped:
+                scoped.setattr(passport_commands.CngKey, "open", classmethod(record_open))
+                scoped.setattr(passport_commands.CngKey, "_assert_nonexportable",
+                               reject_successor)
+                result = CliRunner().invoke(cli_app, ["identity", "rotate", "--output",
+                                                      str(tmp_path / "failed.json")])
+            assert result.exit_code == 1
+            assert successor_names and not (tmp_path / "failed.json").exists()
+            assert active_key_name() == old_name
+            with pytest.raises(OSError, match="does not exist"):
+                CngKey.open_existing(name=successor_names[0])
+        finally:
+            for name in successor_names:
+                try:
+                    CngKey.delete_unactivated_successor(name=name)
+                except OSError:
+                    pass
+            old.delete_for_test()

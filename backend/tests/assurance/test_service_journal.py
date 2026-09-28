@@ -17,7 +17,7 @@ from uuid import uuid4
 from backend.app.assurance.service import EvidenceService
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
-    AgentAttachRequest, AgentLaunchRequest, AssuranceStatus, ChangeContract, ChangeView,
+    AgentAttachRequest, AgentLaunchRequest, AgentRunStatus, AssuranceStatus, ChangeContract, ChangeView,
     JournalEventType, ReviewState, RiskLevel,
 )
 from backend.app.core.change_repository import ChangeRepository, StoredChange
@@ -230,6 +230,20 @@ def test_agent_attach_and_stop_requested_are_journaled(tmp_path):
     assert JournalEventType.AGENT_STOP_REQUESTED in types
     attach_event = next(e for e in events if e.event_type is JournalEventType.AGENT_ATTACHED)
     assert attach_event.subject_id == attached.id
+
+
+def test_stop_after_restart_keeps_terminal_run_and_journal_unchanged(tmp_path):
+    h = Harness(tmp_path)
+    attached = h.service().attach_agent(
+        h.view(), AgentAttachRequest(adapter="claude", external_run_id="external-1"))
+    terminal = attached.model_copy(update={"status": AgentRunStatus.FAILED,
+                                          "completed_at": datetime.now(UTC)})
+    EvidenceStore(h.db).save_agent_run(terminal)
+    before = [event.event_type for event in h.events()]
+    returned = h.service().stop_agent(h.change_id, attached.id)
+    assert returned == terminal
+    assert EvidenceStore(h.db).get_agent_run(attached.id) == terminal
+    assert [event.event_type for event in h.events()] == before
 
 
 def test_journal_is_absent_when_evidence_service_has_no_journal_configured(tmp_path):
