@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Callable, Iterator, Literal, ParamSpec, TypeVar
@@ -272,6 +272,20 @@ class TrustRegistry:
         record = keys.get(key)
         if not isinstance(record, dict):
             return "UNTRUSTED", None
+        if record.get("superseded_by"):
+            return "UNTRUSTED", None
+        ancestor = record.get("rotated_from")
+        seen = {key}
+        while ancestor is not None:
+            if not isinstance(ancestor, str) or ancestor in seen:
+                return "REVOKED", None
+            seen.add(ancestor)
+            if ancestor in revoked:
+                return "REVOKED", None
+            parent = keys.get(ancestor)
+            if not isinstance(parent, dict):
+                return "REVOKED", None
+            ancestor = parent.get("rotated_from")
         pinned = record.get("spki")
         if pinned is not None and pinned != base64.b64encode(spki).decode("ascii"):
             return "MISMATCH", None
@@ -297,6 +311,9 @@ class TrustRegistry:
     @_locked_mutation
     def apply_rotation(self, statement: dict[str, str]) -> str:
         try:
+            if set(statement) != {"old_fingerprint", "old_spki", "new_fingerprint",
+                                  "new_spki", "issued_at", "signature"}:
+                raise ValueError("Unexpected rotation field")
             old_spki = base64.b64decode(statement["old_spki"], validate=True)
             new_spki = base64.b64decode(statement["new_spki"], validate=True)
             canonical_new_spki = _canonical_spki(new_spki)
@@ -304,6 +321,11 @@ class TrustRegistry:
             old_fp = normalize_fingerprint(statement["old_fingerprint"])
             new_fp = normalize_fingerprint(statement["new_fingerprint"])
             issued_at = statement["issued_at"]
+            issued = datetime.fromisoformat(issued_at)
+            now = datetime.now(UTC)
+            if (issued.tzinfo is None or issued < now - timedelta(days=30)
+                    or issued > now + timedelta(minutes=5) or old_fp == new_fp):
+                raise ValueError("Rotation time or identity is invalid")
             if fingerprint(old_spki) != old_fp or fingerprint(new_spki) != new_fp:
                 raise ValueError("Rotation fingerprint mismatch")
             body = _rotation_body(old_fingerprint=old_fp, new_fingerprint=new_fp,
@@ -322,13 +344,22 @@ class TrustRegistry:
         assert isinstance(keys, dict) and isinstance(revoked, dict) and isinstance(rotations, list)
         if new_fp in revoked or (len(keys) >= _MAX_KEYS and new_fp not in keys):
             raise ValueError("New rotation key cannot be trusted")
+        if new_fp in keys:
+            raise ValueError("New rotation key is already trusted")
         if len(rotations) >= _MAX_KEYS:
             raise ValueError("Too many rotation statements")
         keys[new_fp] = {
             "label": label.removeprefix("Sentinel installation "),
             "spki": base64.b64encode(canonical_new_spki).decode("ascii"),
             "added_at": datetime.now(UTC).isoformat(),
+            "rotated_from": old_fp,
         }
-        rotations.append(statement)
+        old_record = keys.get(old_fp)
+        if not isinstance(old_record, dict):
+            raise ValueError("Old rotation key is not trusted")
+        old_record["superseded_by"] = new_fp
+        rotations.append({field: statement[field] for field in (
+            "old_fingerprint", "old_spki", "new_fingerprint", "new_spki", "issued_at",
+            "signature")})
         self._write(data)
         return new_fp

@@ -150,3 +150,26 @@ def test_rotation_requires_valid_old_key_and_trust(tmp_path: Path) -> None:
             assert registry._read()["rotations"] == [statement]
         finally:
             old.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_rotation_cannot_steal_identity_and_revocation_cascades(tmp_path: Path) -> None:
+    registry = TrustRegistry(tmp_path / "trusted_keys.json")
+    old_name = f"Sentinel disposable test {uuid4()}"
+    with CngKey.open(name=old_name) as old:
+        try:
+            old_spki, successor = old.public_spki(), _spki()
+            registry.add(spki=old_spki, label="Office")
+            registry.add(spki=successor, label="Release")
+            statement = registry.sign_rotation(old_key=old, new_spki=successor)
+            with pytest.raises(ValueError, match="already trusted"):
+                registry.apply_rotation(statement)
+            assert registry.decision(spki=successor) == (
+                "TRUSTED", "Sentinel installation Release")
+            registry.remove(fingerprint(successor))
+            registry.apply_rotation(statement)
+            assert registry.decision(spki=old_spki)[0] == "UNTRUSTED"
+            registry.revoke(fingerprint(old_spki))
+            assert registry.decision(spki=successor)[0] == "REVOKED"
+        finally:
+            old.delete_for_test()
