@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 import backend.app.cli.passport_commands as commands
+import backend.app.cli.main as main_module
 import backend.app.core.router as router
 from backend.app.cli.main import app as cli_app
 from backend.app.core.config import Settings
@@ -117,3 +118,21 @@ def test_cli_export_and_offline_verify_exit_codes(tmp_path: Path,
     finally:
         with CngKey.open(name=key_name) as key:
             key.delete_for_test()
+
+
+def test_cli_legacy_v1_export_is_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    change_id = uuid4()
+
+    class FakeClient:
+        def __init__(self, base_url: str) -> None:
+            self.base_url = base_url
+
+        def export_signed_passport(self, requested):
+            assert requested == change_id
+            return {"schema_version": 1, "signature": "legacy"}
+
+    monkeypatch.setattr(main_module, "ApiClient", FakeClient)
+    response = CliRunner().invoke(cli_app, ["passport", "export", str(change_id),
+                                            "--v1", "--json"])
+    assert response.exit_code == 0, response.output
+    assert json.loads(response.stdout)["schema_version"] == 1

@@ -426,8 +426,15 @@ def passport_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = Js
 @passport_app.command("export")
 def passport_export(change_id: UUID, api_url: str = ApiUrlOption,
                     output: Path | None = typer.Option(None, "--output"),
+                    v1: bool = typer.Option(False, "--v1", help="Print the legacy v1 signed JSON."),
                     json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
-    """Save the signed portable Passport v2 bundle for this Change."""
+    """Save v2 bundle, or print the legacy v1 signed JSON with --v1."""
+    if v1:
+        if output is not None:
+            raise typer.BadParameter("--output is only available for v2 bundles")
+        _run(lambda: ApiClient(api_url).export_signed_passport(change_id),
+             as_json=json_, no_color=no_color)
+        return
     export_passport_command(change_id, api_url=api_url, output=output, as_json=json_)
 
 
