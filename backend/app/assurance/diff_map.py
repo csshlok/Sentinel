@@ -30,8 +30,13 @@ def _classification(path: str, root: Path | None = None) -> str | None:
         return "test code"
     if lower.endswith((".toml", ".yaml", ".yml", ".json", ".ini", ".cfg")):
         return "configuration"
+    if lower.endswith((".md", ".rst", ".txt")):
+        return "documentation"
     if not lower.endswith(".py"):
-        return "unsupported language or non-source file"
+        if lower.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+                           ".java", ".go", ".rs", ".cs", ".rb")):
+            return "unsupported language"
+        return "non-source file"
     if root is not None:
         source = root / path
         try:

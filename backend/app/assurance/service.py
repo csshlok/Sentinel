@@ -507,9 +507,12 @@ class EvidenceService:
             return False, "Required diff coverage was not measured from the Change baseline."
         if result.contract_digest != contract_digest(change):
             return False, "Required diff coverage belongs to an earlier Change Contract."
-        if (result.diff_exercised != "PASS" or result.freshness != "CURRENT"
+        acceptable_state = result.diff_exercised == "PASS" or (
+            result.diff_exercised == "NOT_APPLICABLE" and rule.not_applicable_satisfies)
+        if (not acceptable_state or result.freshness != "CURRENT"
                 or result.checks_passed is not True or not result.gate_satisfied):
-            return False, f"Required diff coverage is {result.diff_exercised}."
+            return False, (f"Required diff coverage is {result.diff_exercised}; "
+                           f"NOT_APPLICABLE satisfies policy: {rule.not_applicable_satisfies}.")
         try:
             current = self._git.capture(change.id, "diff-gate", change.repository_path,
                                         self._revision(change), 1_048_576)

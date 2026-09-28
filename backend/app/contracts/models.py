@@ -1142,6 +1142,7 @@ class DiffCoverageRule(ContractModel):
     required: bool = False
     minimum_percent: float = Field(default=0, ge=0, le=100)
     per_file: bool = False
+    not_applicable_satisfies: bool = False
     policy_version: ShortText = "diff-coverage-v1"
     interpreter_path: RepositoryPath | None = None
     test_args: list[ShortText] = Field(default_factory=lambda: ["-q"], max_length=4)

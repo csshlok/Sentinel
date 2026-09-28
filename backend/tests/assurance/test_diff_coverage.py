@@ -282,6 +282,25 @@ def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -
     assert empty.diff_exercised == "NOT_APPLICABLE"
 
 
+def test_documentation_only_diff_is_not_applicable_when_policy_allows_it(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    initial = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        head_sha=tested.head_sha, status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(), collector_status="COLLECTED",
+        checks_passed=True, diff_exercised="UNKNOWN", freshness="CURRENT",
+    )
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        rule=DiffCoverageRule(required=True, minimum_percent=80,
+                              not_applicable_satisfies=True),
+    )
+    measured = evaluate_report(result=initial, changed={}, excluded={"README.md": "documentation"},
+                               report={"files": {}}, root=root, rule=request)
+    assert measured.diff_exercised == "NOT_APPLICABLE"
+    assert measured.gate_satisfied is True
+
+
 def test_advisory_threshold_is_reported_and_used(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     initial = DiffCoverageResult(

@@ -101,7 +101,7 @@ def evaluate_report(
             reason="excluded-by-pragma" if excluded_changed else None,
         ))
     if not changed and excluded:
-        state = "UNKNOWN" if any(v == "unsupported language or non-source file" for v in excluded.values()) else "NOT_APPLICABLE"
+        state = "UNKNOWN" if any(v.startswith("unsupported language") for v in excluded.values()) else "NOT_APPLICABLE"
     elif total == 0:
         state = "NOT_APPLICABLE"
     else:
@@ -117,7 +117,8 @@ def evaluate_report(
         for path, reason in excluded.items()
     ):
         state = "UNKNOWN"
-    gate = (state == "PASS" and result.checks_passed is True) if rule.rule.required else None
+    gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
+            and result.checks_passed is True) if rule.rule.required else None
     return result.model_copy(update={
         "files": measured, "excluded": excluded, "diff_exercised": state,
         "threshold": rule.rule.minimum_percent or 100.0,

@@ -2769,6 +2769,11 @@
             "title": "Minimum Percent",
             "type": "number"
           },
+          "not_applicable_satisfies": {
+            "default": false,
+            "title": "Not Applicable Satisfies",
+            "type": "boolean"
+          },
           "per_file": {
             "default": false,
             "title": "Per File",

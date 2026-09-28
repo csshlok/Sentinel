@@ -113,6 +113,23 @@ def test_later_caller_chosen_baseline_cannot_open_required_gate(tmp_path: Path) 
     assert "Change baseline" in reason
 
 
+def test_not_applicable_requires_an_explicit_contract_choice(tmp_path: Path) -> None:
+    evidence, change, checkpoint = _fixture(tmp_path)
+    implicit = _result(change, checkpoint, "NOT_APPLICABLE").model_copy(
+        update={"gate_satisfied": False})
+    evidence.save_diff_coverage(implicit)
+    allowed, reason = evidence._diff_coverage_gate(change)
+    assert allowed is False
+    assert "NOT_APPLICABLE satisfies policy: False" in reason
+    opted = change.model_copy(update={"contract": ChangeContract(
+        schema_version=2, diff_coverage_rule=DiffCoverageRule(
+            required=True, minimum_percent=80, not_applicable_satisfies=True))})
+    accepted = _result(opted, checkpoint, "NOT_APPLICABLE").model_copy(
+        update={"gate_satisfied": True})
+    evidence.save_diff_coverage(accepted)
+    assert evidence._diff_coverage_gate(opted)[0] is True
+
+
 def test_required_rule_blocks_otherwise_passing_assurance_facts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
