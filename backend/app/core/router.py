@@ -8,8 +8,6 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, Response, status
 
 from backend.app.assurance.models import AssuranceEvaluation
-from backend.app.assurance.diff_coverage import collect_diff_coverage
-from backend.app.assurance.engine import contract_digest
 from backend.app.assurance.service import (
     AssuranceFacts,
     EnvironmentView,
@@ -652,21 +650,8 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     def measure_diff_coverage(
         change_id: UUID, request: DiffCoverageRequest,
     ) -> DiffCoverageResult:
-        change = service.get(change_id)
-        baseline = runtime.evidence.evidence.get_checkpoint(change_id, request.baseline_checkpoint_id)
-        tested = runtime.evidence.evidence.get_checkpoint(change_id, request.tested_checkpoint_id)
-        if change.contract.diff_coverage_rule is not None:
-            request = request.model_copy(update={"rule": change.contract.diff_coverage_rule})
-        result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
-                                       request=request)
-        if contract_digest(service.get(change_id)) != result.contract_digest:
-            result = result.model_copy(update={
-                "freshness": "STALE", "diff_exercised": "STALE",
-                "gate_satisfied": False if request.rule.required else None,
-                "reasons": ["Change Contract changed during measurement."],
-            })
-        runtime.evidence.evidence.save_diff_coverage(result)
-        return result
+        return runtime.evidence.evidence.measure_diff_coverage(
+            service.get(change_id), request, current_change=lambda: service.get(change_id))
 
     @router.get(
         "/changes/{change_id}/assurance/facts",

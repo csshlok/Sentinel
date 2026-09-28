@@ -1,4 +1,4 @@
-"""Persisted Change Contract v2 coverage rule and lifecycle gate tests."""
+﻿"""Persisted Change Contract v2 coverage rule and lifecycle gate tests."""
 
 from __future__ import annotations
 
@@ -84,10 +84,10 @@ def test_v1_contract_digest_remains_compatible(tmp_path: Path) -> None:
 def test_required_unknown_does_not_satisfy_persisted_gate(tmp_path: Path) -> None:
     evidence, change, checkpoint = _fixture(tmp_path)
     assert evidence._diff_coverage_gate(change)[0] is False
-    evidence.save_diff_coverage(_result(change, checkpoint, "UNKNOWN"))
+    evidence._store.save_diff_coverage(_result(change, checkpoint, "UNKNOWN"))
     restarted = EvidenceService(evidence._store)
     assert restarted._diff_coverage_gate(change)[0] is False
-    evidence.save_diff_coverage(_result(change, checkpoint, "PASS"))
+    evidence._store.save_diff_coverage(_result(change, checkpoint, "PASS"))
     assert restarted._diff_coverage_gate(change)[0] is True
     write(Path(change.repository_path), "module.py", "value = 2\n")
     assert restarted._diff_coverage_gate(change)[0] is False
@@ -95,7 +95,7 @@ def test_required_unknown_does_not_satisfy_persisted_gate(tmp_path: Path) -> Non
 
 def test_contract_change_invalidates_prior_pass(tmp_path: Path) -> None:
     evidence, change, checkpoint = _fixture(tmp_path)
-    evidence.save_diff_coverage(_result(change, checkpoint, "PASS"))
+    evidence._store.save_diff_coverage(_result(change, checkpoint, "PASS"))
     changed = change.model_copy(update={"contract": ChangeContract(
         schema_version=2, diff_coverage_rule=DiffCoverageRule(required=True, minimum_percent=90))})
     assert evidence._diff_coverage_gate(changed)[0] is False
@@ -107,7 +107,7 @@ def test_later_caller_chosen_baseline_cannot_open_required_gate(tmp_path: Path) 
     evidence._store.save_checkpoint(later)
     forged = _result(change, checkpoint, "PASS").model_copy(
         update={"baseline_checkpoint_id": later.id})
-    evidence.save_diff_coverage(forged)
+    evidence._store.save_diff_coverage(forged)
     allowed, reason = evidence._diff_coverage_gate(change)
     assert allowed is False
     assert "Change baseline" in reason
@@ -117,7 +117,7 @@ def test_not_applicable_requires_an_explicit_contract_choice(tmp_path: Path) -> 
     evidence, change, checkpoint = _fixture(tmp_path)
     implicit = _result(change, checkpoint, "NOT_APPLICABLE").model_copy(
         update={"gate_satisfied": False})
-    evidence.save_diff_coverage(implicit)
+    evidence._store.save_diff_coverage(implicit)
     allowed, reason = evidence._diff_coverage_gate(change)
     assert allowed is False
     assert "NOT_APPLICABLE satisfies policy: False" in reason
@@ -126,7 +126,7 @@ def test_not_applicable_requires_an_explicit_contract_choice(tmp_path: Path) -> 
             required=True, minimum_percent=80, not_applicable_satisfies=True))})
     accepted = _result(opted, checkpoint, "NOT_APPLICABLE").model_copy(
         update={"gate_satisfied": True})
-    evidence.save_diff_coverage(accepted)
+    evidence._store.save_diff_coverage(accepted)
     assert evidence._diff_coverage_gate(opted)[0] is True
 
 
@@ -144,5 +144,6 @@ def test_required_rule_blocks_otherwise_passing_assurance_facts(
     )
     monkeypatch.setattr(evidence, "evaluate", lambda *_: passing)
     assert evidence.assurance_facts(change).required_assurance_passed is False
-    evidence.save_diff_coverage(_result(change, checkpoint, "PASS"))
+    evidence._store.save_diff_coverage(_result(change, checkpoint, "PASS"))
     assert evidence.assurance_facts(change).required_assurance_passed is True
+

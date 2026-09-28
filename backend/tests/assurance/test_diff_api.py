@@ -53,3 +53,9 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
         assert body["gate_satisfied"] is False
         stored = EvidenceStore(Database(database)).latest_diff_coverage(change_id)
         assert stored is not None and stored.artifact_digest == body["artifact_digest"]
+        events = client.get(f"{base}/events")
+        assert events.status_code == 200, events.text
+        coverage_events = [item for item in events.json()["items"]
+                           if item["subject_type"] == "diff_coverage"]
+        assert len(coverage_events) == 1
+        assert coverage_events[0]["payload"]["artifact_digest"] == body["artifact_digest"]

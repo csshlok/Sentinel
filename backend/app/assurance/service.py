@@ -17,18 +17,20 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 from pydantic import Field
 
 from backend.app.assurance.engine import AssuranceEngine, contract_digest
+from backend.app.assurance.diff_coverage import collect_diff_coverage
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
     AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan, AssuranceRun,
     ChangeView, ContractModel, DependencyReport, EnvironmentDrift, EnvironmentPassport,
     GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass, utc_now,
-    DiffCoverageResult,
+    DiffCoverageRequest, DiffCoverageResult,
 )
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -492,8 +494,44 @@ class EvidenceService:
                      *[f"Check '{c}' failed." for c in evaluation.failed],
                      *([coverage_reason] if coverage_reason else [])][:64])
 
-    def save_diff_coverage(self, result: DiffCoverageResult) -> None:
-        self._store.save_diff_coverage(result)
+    def measure_diff_coverage(
+        self, change: ChangeView, request: DiffCoverageRequest,
+        *, current_change: Callable[[], ChangeView],
+    ) -> DiffCoverageResult:
+        """Measure, recheck the contract, and record the result and journal atomically."""
+
+        baseline = self.get_checkpoint(change.id, request.baseline_checkpoint_id)
+        tested = self.get_checkpoint(change.id, request.tested_checkpoint_id)
+        if change.contract.diff_coverage_rule is not None:
+            request = request.model_copy(update={"rule": change.contract.diff_coverage_rule})
+        result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                       request=request)
+        try:
+            same_contract = contract_digest(current_change()) == result.contract_digest
+        except AppError:
+            same_contract = False
+        if not same_contract:
+            result = result.model_copy(update={
+                "freshness": "STALE", "diff_exercised": "STALE",
+                "gate_satisfied": False if request.rule.required else None,
+                "reasons": ["Change Contract changed during measurement."],
+            })
+        with self._store.database.connection(immediate=True) as connection:
+            self._store.save_diff_coverage(result, connection=connection)
+            self._journal_append(
+                change.id, JournalEventType.ASSURANCE_CHECK_COMPLETED,
+                subject_type="diff_coverage", subject_id=result.tested_checkpoint_id,
+                payload={
+                    "baseline_checkpoint_id": str(result.baseline_checkpoint_id),
+                    "head_sha": result.head_sha,
+                    "status_digest": result.status_digest,
+                    "artifact_digest": result.artifact_digest,
+                    "diff_exercised": result.diff_exercised,
+                    "checks_passed": result.checks_passed,
+                },
+                connection=connection,
+            )
+        return result
 
     def _diff_coverage_gate(self, change: ChangeView) -> tuple[bool, str | None]:
         rule = change.contract.diff_coverage_rule

@@ -207,11 +207,13 @@ class EvidenceStore:
         return self._many("SELECT payload_json FROM assurance_runs WHERE plan_id = ? "
                           "ORDER BY completed_at ASC, id ASC", (str(plan_id),), AssuranceRun)
 
-    def save_diff_coverage(self, result: DiffCoverageResult) -> None:
+    def save_diff_coverage(
+        self, result: DiffCoverageResult, *, connection: sqlite3.Connection | None = None,
+    ) -> None:
         """Retain the measured result; later UNKNOWN results supersede earlier PASSes."""
 
-        with self._db.connection(immediate=True) as connection:
-            connection.execute(
+        with self._db.connection_or(connection, immediate=True) as target:
+            target.execute(
                 "INSERT INTO diff_coverage_results (id, change_id, payload_json, completed_at) "
                 "VALUES (?, ?, ?, ?)",
                 (str(uuid4()), str(result.change_id), result.model_dump_json(),
