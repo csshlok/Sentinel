@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import struct
 import io
 import os
 import zipfile
@@ -25,6 +26,32 @@ from backend.tests.passport.test_builder import _database, _seed_change
 GOLDEN = Path(__file__).parent / "fixtures" / "golden-v2.sentinel"
 GOLDEN_CHANGE = "cd12e3f4-2eed-4bf3-8505-ecc145cb4db5"
 GOLDEN_PAYLOAD = "30e1a6b04055c17a8eb73d4a26ff85f3f1ac2e4f120ec128b5c06fcfc7b41612"
+
+
+def _golden_trust(tmp_path: Path) -> TrustRegistry:
+    with zipfile.ZipFile(GOLDEN) as archive:
+        signature = parse_canonical(archive.read("signature.json"))
+    trust = TrustRegistry(tmp_path / "golden_trust.json")
+    trust.add(spki=base64.b64decode(signature["public_spki_b64"]), label="Golden")
+    return trust
+
+
+def test_zip64_record_is_rejected_even_with_valid_signed_members(tmp_path: Path) -> None:
+    """A second ZIP64 directory must not steer Python away from Windows readers."""
+    raw = GOLDEN.read_bytes()
+    directory_offset = int.from_bytes(raw[-6:-2], "little")
+    directory_size = int.from_bytes(raw[-10:-6], "little")
+    record = struct.pack("<IQHHIIQQQQ", 0x06064B50, 44, 45, 45, 0, 0, 7, 7,
+                         directory_size, directory_offset)
+    locator = struct.pack("<IIQI", 0x07064B50, 0,
+                          directory_offset + directory_size, 1)
+    eocd = bytearray(raw[-22:])
+    eocd[12:16] = (directory_size + len(record) + len(locator)).to_bytes(4, "little")
+    hostile = tmp_path / "zip64.sentinel"
+    hostile.write_bytes(raw[:-22] + record + locator + eocd)
+    result = verify_bundle(hostile, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", result.reason
+    assert "ZIP" in result.reason
 
 
 def test_committed_golden_bundle_card_and_verifier_agree(tmp_path: Path) -> None:

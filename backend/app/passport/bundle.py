@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import io
-import zipfile
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -14,7 +12,7 @@ from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.passport.card import render_html, render_svg
 from backend.app.passport.cng import CngKey, fingerprint
-from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
+from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES, serialize_archive
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.identity import active_key_name
 from backend.app.passport.v2 import PassportV2Issuer
@@ -129,17 +127,9 @@ class BundleExporter:
             if latest.model_dump(exclude={"issued_at"}) != source_claims.model_dump(exclude={"issued_at"}):
                 raise AppError("PASSPORT_RECORDS_MOVED", "Change moved during export.",
                                status_code=409)
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w", allowZip64=False) as archive:
-            for path, content in [("manifest.json", manifest),
+        data = serialize_archive([("manifest.json", manifest),
                                   *[(name, body) for name, body, _ in members],
-                                  ("signature.json", signature)]:
-                info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_STORED
-                info.create_system = 3
-                info.external_attr = 0o100644 << 16
-                archive.writestr(info, content)
-        data = output.getvalue()
+                                  ("signature.json", signature)])
         if len(data) > MAX_BUNDLE_BYTES:
             raise AppError("PASSPORT_EVIDENCE_LIMIT", "Portable Passport is oversized.",
                            status_code=409)

@@ -17,7 +17,9 @@ from uuid import UUID
 from backend.app.contracts.models import PassportV2Payload
 from backend.app.passport.card import render_html, render_svg
 from backend.app.passport.cng import fingerprint, verify_signature
-from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
+from backend.app.passport.format import (
+    MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES, serialize_archive,
+)
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry, normalize_fingerprint
 
@@ -278,6 +280,9 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
             _validate_local_headers(raw_zip, infos, directory_offset)
             names = _safe_names(infos)
             content = _read_members(archive, infos)
+        expected_zip = serialize_archive([(name, content[name]) for name in names])
+        if raw_zip != expected_zip:
+            raise ValueError("ZIP differs from the canonical exported layout")
         manifest = _object(content["manifest.json"], name="Manifest")
         payload_digest = _validate_manifest(manifest, content, names)
         passport = _object(content["passport.json"], name="Passport")
