@@ -21,6 +21,7 @@ from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.passport.verify import _validate_claims, verify_bundle
 from backend.app.cli.main import app as cli_app
+from backend.app.core.errors import AppError
 from backend.app.passport.card import card_facts
 from backend.app.contracts.models import JournalEventType
 from backend.app.core.journal import JournalWriter
@@ -354,6 +355,26 @@ def test_unexpected_verifier_exception_still_returns_invalid(
     result = verify_bundle(GOLDEN, trust=_golden_trust(tmp_path))
     assert result.verdict == "INVALID"
     assert "UnexpectedVerificationFailure" in result.reason
+
+
+def test_unavailable_trust_directory_is_indeterminate_not_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "Sentinel" / "trusted_keys.json"
+
+    def unsafe_directory(_: Path) -> bool:
+        raise AppError("EVIDENCE_STORE_UNSAFE_LOCATION", "Unsafe link", status_code=409)
+
+    monkeypatch.setattr("backend.app.passport.trust.prepare_store_directory",
+                        unsafe_directory)
+    monkeypatch.setattr("backend.app.passport.trust.default_trust_path", lambda: path)
+    result = verify_bundle(GOLDEN, trust=TrustRegistry(path))
+    assert result.verdict == "INDETERMINATE"
+    assert "trust registry is unavailable" in result.reason
+    cli = CliRunner().invoke(cli_app, ["trust", "list", "--json"])
+    assert cli.exit_code == 1
+    assert cli.exception is not None
+    assert "Traceback" not in cli.output
 
 
 def test_hidden_bytes_before_central_directory_are_invalid(tmp_path: Path) -> None:

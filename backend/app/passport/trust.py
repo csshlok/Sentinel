@@ -20,6 +20,7 @@ from typing import Callable, Iterator, Literal, ParamSpec, TypeVar
 from cryptography.hazmat.primitives import serialization
 
 from backend.app.passport.cng import CngKey, fingerprint, verify_signature
+from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import prepare_store_directory
 
 _FINGERPRINT = re.compile(r"^[A-Z2-7]{52}$")
@@ -65,7 +66,11 @@ def _prepare_registry_path(path: Path) -> None:
     if path.is_symlink():
         raise ValueError("Trust registry path is a link")
     if path.parent.name.casefold() == "sentinel":
-        if not prepare_store_directory(path.parent):
+        try:
+            prepared = prepare_store_directory(path.parent)
+        except AppError as exc:
+            raise OSError("Sentinel trust directory is unavailable") from exc
+        if not prepared:
             raise OSError("Sentinel trust directory permissions could not be restricted")
     else:
         # Explicit paths are used by isolated tests and offline tooling.
