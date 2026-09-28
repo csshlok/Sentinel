@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -52,6 +53,19 @@ def test_wrong_fingerprint_and_malformed_registry_fail_closed(tmp_path: Path) ->
         registry.decision(spki=first)
     with pytest.raises(ValueError):
         normalize_fingerprint("not a fingerprint")
+
+
+def test_noncanonical_revocation_cannot_fail_open(tmp_path: Path) -> None:
+    spki = _spki()
+    value = fingerprint(spki)
+    path = tmp_path / "trusted_keys.json"
+    registry = TrustRegistry(path)
+    registry.add(spki=spki, label="Lab")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["revoked"] = {value.replace("-", "").lower(): {"reason": "compromised"}}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="Malformed trust registry entries"):
+        registry.decision(spki=spki)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")

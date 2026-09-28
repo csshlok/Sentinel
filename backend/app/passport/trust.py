@@ -96,6 +96,25 @@ class TrustRegistry:
             raise ValueError("Malformed trust rotation records")
         if len(data["keys"]) > _MAX_KEYS or len(data["revoked"]) > _MAX_KEYS:
             raise ValueError("Trust registry has too many entries")
+        for key, value in data["keys"].items():
+            try:
+                canonical = normalize_fingerprint(key)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Malformed trust registry entries") from exc
+            if (key != canonical or not isinstance(value, dict)
+                    or not isinstance(value.get("label"), str)
+                    or not value["label"].strip() or len(value["label"]) > 80
+                    or any(ord(char) < 32 for char in value["label"])
+                    or value.get("spki") is not None
+                    and not isinstance(value["spki"], str)):
+                raise ValueError("Malformed trust registry entries")
+        for key, value in data["revoked"].items():
+            try:
+                canonical = normalize_fingerprint(key)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Malformed trust registry entries") from exc
+            if key != canonical or not isinstance(value, dict):
+                raise ValueError("Malformed trust registry entries")
         return data
 
     def _write(self, data: dict[str, object]) -> None:
