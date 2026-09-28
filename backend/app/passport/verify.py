@@ -22,6 +22,13 @@ from backend.app.passport.trust import TrustRegistry, normalize_fingerprint
 _MAX_ENTRIES = 7
 _MAX_RATIO = 100
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_MEDIA_TYPES = {
+    "passport.json": "application/json",
+    "evidence/records.json": "application/json",
+    "journal/events.jsonl": "application/x-ndjson",
+    "visuals/passport.svg": "image/svg+xml",
+    "visuals/passport.html": "text/html",
+}
 _EXPECTED_WITH_JOURNAL = [
     "manifest.json", "passport.json", "evidence/records.json",
     "journal/events.jsonl", "visuals/passport.svg", "visuals/passport.html",
@@ -141,7 +148,7 @@ def _validate_manifest(manifest: dict[str, object], content: dict[str, bytes],
         if record["size"] != len(content[name]) or record["sha256"] != hashlib.sha256(
                 content[name]).hexdigest():
             raise ValueError(f"Member digest or size mismatch: {name}")
-        if not isinstance(record["media_type"], str) or len(record["media_type"]) > 64:
+        if record["media_type"] != _MEDIA_TYPES[name]:
             raise ValueError("Invalid member media type")
     return payload_digest
 
@@ -214,6 +221,14 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
     try:
         if not path.is_file() or path.stat().st_size > MAX_BUNDLE_BYTES:
             raise ValueError("Bundle is missing or oversized")
+        raw_zip = path.read_bytes()
+        if (not raw_zip.startswith(b"PK\x03\x04") or len(raw_zip) < 22
+                or raw_zip[-22:-18] != b"PK\x05\x06" or raw_zip[-2:] != b"\x00\x00"):
+            raise ValueError("ZIP has a prefix, trailer or archive comment")
+        directory_size = int.from_bytes(raw_zip[-10:-6], "little")
+        directory_offset = int.from_bytes(raw_zip[-6:-2], "little")
+        if directory_offset + directory_size != len(raw_zip) - 22:
+            raise ValueError("ZIP central directory has an unexpected boundary")
         with zipfile.ZipFile(path, "r") as archive:
             if archive.comment:
                 raise ValueError("Unexpected ZIP archive comment")

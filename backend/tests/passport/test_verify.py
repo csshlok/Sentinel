@@ -164,6 +164,16 @@ def test_encrypted_zip_entry_is_rejected_before_read(signed_bundle) -> None:
     assert "Encrypted" in verify_bundle(target).reason
 
 
+def test_zip_prefix_and_trailer_are_rejected(signed_bundle) -> None:
+    path, _, root = signed_bundle
+    prefix = root / "prefix.sentinel"
+    prefix.write_bytes(b"MZ" + path.read_bytes())
+    assert verify_bundle(prefix).verdict == "INVALID"
+    trailer = root / "trailer.sentinel"
+    trailer.write_bytes(path.read_bytes() + b"hidden")
+    assert verify_bundle(trailer).verdict == "INVALID"
+
+
 def test_oversized_zip_bomb_missing_and_malformed_are_invalid(signed_bundle) -> None:
     path, _, root = signed_bundle
     oversized = _rewrite(path, root / "oversized.sentinel", omit={"signature.json"},
