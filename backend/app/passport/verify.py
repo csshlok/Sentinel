@@ -18,7 +18,7 @@ from backend.app.contracts.models import PassportV2Payload
 from backend.app.passport.card import render_html, render_svg
 from backend.app.passport.cng import fingerprint, verify_signature
 from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
-from backend.app.passport.jcs import parse_canonical
+from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry, normalize_fingerprint
 
 _MAX_ENTRIES = 7
@@ -186,7 +186,7 @@ def _validate_claims(passport: dict[str, object], manifest: dict[str, object],
     if set(passport) != {"schema_version", "claims", "signer"} or passport["schema_version"] != 2:
         raise ValueError("Unsupported Passport schema")
     claims = PassportV2Payload.model_validate(passport["claims"])
-    if claims.model_dump(mode="json") != passport["claims"]:
+    if canonicalize(claims.model_dump(mode="json")) != canonicalize(passport["claims"]):
         raise ValueError("Passport claim normalization mismatch")
     if str(claims.change_id) != manifest["change_id"]:
         raise ValueError("Passport Change ID mismatch")

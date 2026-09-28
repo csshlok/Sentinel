@@ -16,7 +16,7 @@ from backend.app.passport.cng import CngKey
 from backend.app.passport.format import MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
-from backend.app.passport.verify import verify_bundle
+from backend.app.passport.verify import _validate_claims, verify_bundle
 from backend.app.passport.card import card_facts
 from backend.app.contracts.models import JournalEventType
 from backend.app.core.journal import JournalWriter
@@ -265,3 +265,14 @@ def test_local_header_method_mismatch_is_invalid(tmp_path: Path) -> None:
     result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
     assert result.verdict == "INVALID"
     assert "Local ZIP header" in result.reason
+
+
+def test_claim_type_coercion_cannot_make_card_and_verifier_disagree() -> None:
+    with zipfile.ZipFile(GOLDEN) as archive:
+        content = {name: archive.read(name) for name in archive.namelist()}
+    passport = parse_canonical(content["passport.json"])
+    manifest = parse_canonical(content["manifest.json"])
+    passport["claims"]["diff_coverage"]["checks_passed"] = 1
+    passport["claims"]["diff_coverage"]["changed_executable_lines"] = True
+    with pytest.raises(ValueError, match="normalization"):
+        _validate_claims(passport, manifest, content, manifest["payload_sha256"])
