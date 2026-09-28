@@ -98,10 +98,11 @@ def test_node_agent_edits_workspace_and_changes_fast_forward_into_user_repo(
     assert preview.base_sha == record.base_sha
     assert preview.sealed_sha != preview.base_sha
     assert len(preview.commits) == 1
-    assert set(preview.changed_paths) == {
+    assert {(status, path) for status, path, *_ in preview.changed_paths} == {
         ("A", "created.txt"), ("M", "calc.py"), ("D", "delete_me.txt"),
         ("D", "rename_me.txt"), ("A", "renamed.txt"),
     }
+    assert preview.fast_forward_possible is True
     assert preview.approval_token
     sealed = workspace_manager.get(record.id)
     assert sealed.state == WorkspaceState.SEALED

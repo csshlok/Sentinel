@@ -19,6 +19,49 @@ class ApplyRefusal(StrEnum):
     USER_BRANCH_SWITCHED = "USER_BRANCH_SWITCHED"
     FAST_FORWARD_REFUSED = "FAST_FORWARD_REFUSED"
     SEALED_COMMIT_MISMATCH = "SEALED_COMMIT_MISMATCH"
+    USER_HEAD_DETACHED = "USER_HEAD_DETACHED"
+    WORKSPACE_HISTORY_DIVERGED = "WORKSPACE_HISTORY_DIVERGED"
+
+
+# Preview bounds (threat T-01-25: excess is reported as truncated, never loaded).
+PREVIEW_PATCH_LIMIT = 262_144
+PREVIEW_COMMIT_LIMIT = 256
+
+SYMLINK_MODE = "120000"
+GITLINK_MODE = "160000"
+
+# Path-risk rules (product plan section 4.3). Matching is case-insensitive
+# because the user's checkout is on a case-insensitive Windows file system.
+GIT_METADATA_NAMES = frozenset({".gitattributes", ".gitmodules"})
+HOOKS_LIKE_PREFIXES = (".husky/", ".githooks/")
+EXECUTION_BEARING_NAMES = frozenset({
+    "package.json", "conftest.py", "setup.py", "setup.cfg", "pyproject.toml",
+    "makefile", "gnumakefile",
+})
+EXECUTION_BEARING_PATHS = frozenset({".vscode/tasks.json"})
+EXECUTION_BEARING_PREFIXES = (".github/workflows/",)
+EXECUTION_BEARING_SUFFIXES = (".ps1", ".bat", ".cmd")
+
+
+def path_flags(path: str, old_mode: str, new_mode: str) -> tuple[str, ...]:
+    """Risk classes of one changed path (empty when it is an ordinary file)."""
+
+    lowered = path.replace("\\", "/").lower()
+    name = lowered.rsplit("/", 1)[-1]
+    flags: list[str] = []
+    if SYMLINK_MODE in (old_mode, new_mode):
+        flags.append("symlink")
+    if GITLINK_MODE in (old_mode, new_mode):
+        flags.append("gitlink")
+    if name in GIT_METADATA_NAMES:
+        flags.append("git-metadata")
+    if lowered.startswith(HOOKS_LIKE_PREFIXES):
+        flags.append("hooks-like")
+    if (name in EXECUTION_BEARING_NAMES or lowered in EXECUTION_BEARING_PATHS
+            or lowered.startswith(EXECUTION_BEARING_PREFIXES)
+            or lowered.endswith(EXECUTION_BEARING_SUFFIXES)):
+        flags.append("execution-bearing")
+    return tuple(flags)
 
 
 def _path(value: str | None) -> Path | None:
@@ -127,13 +170,25 @@ class WorkspaceRecord:
 
 @dataclass(frozen=True, slots=True)
 class ApplyPreview:
-    """What apply-back would land; ``approval_token`` is returned only here."""
+    """What apply-back would land; ``approval_token`` is returned only here.
+
+    ``commits`` holds ``(sha, author, subject)``; ``changed_paths`` holds
+    ``(status, path, old_mode, new_mode, flags)``. ``approval_token`` is None
+    whenever apply could not succeed (``refusal_reason`` says why).
+    """
 
     change_id: UUID
     workspace_id: UUID
     base_sha: str
     sealed_sha: str
-    commits: tuple[str, ...]
-    changed_paths: tuple[tuple[str, str], ...]
+    commits: tuple[tuple[str, str, str], ...]
+    changed_paths: tuple[tuple[str, str, str, str, tuple[str, ...]], ...]
     approval_token: str | None
     refusal_reason: str | None = None
+    user_branch: str | None = None
+    user_head: str | None = None
+    fast_forward_possible: bool = False
+    patch: str = ""
+    patch_truncated: bool = False
+    commits_truncated: bool = False
+    limitations: tuple[str, ...] = ()

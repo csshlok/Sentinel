@@ -14,6 +14,12 @@ the workspace with ``RECOVERY_IDENTITY``) -> preview (approval token bound to
 --no-tags <ws> HEAD:refs/sentinel/changes/<change_id>``, fetched ref ==
 sealed commit, ``merge-base --is-ancestor``, ``merge --ff-only``. Never a
 force, a reset or a non-fast-forward merge of the user's branch.
+
+Before any host-side Git touches the workspace, ``_validate_workspace_git``
+refuses a tampered ``ws\\.git`` (gitfile, junction, ``commondir``, alternates,
+reparse points, ``core.worktree``) and any junction in the work tree (Git for
+Windows descends into junctions). Those checks hold only while no agent
+process runs, which the single-run lease and the kill-on-close Job ensure.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ from backend.app.execution.appcontainer import (
     remove_tree_no_follow,
     validate_profile_name,
 )
-from backend.app.git.safe_exec import RECOVERY_IDENTITY, GitIdentity, run_git
+from backend.app.git.safe_exec import METADATA_LIMIT, RECOVERY_IDENTITY, GitIdentity, run_git
 from backend.app.workspace.errors import (
     workspace_apply_failed,
     workspace_approval_invalid,
@@ -63,7 +69,14 @@ from backend.app.workspace.errors import (
     workspace_source_mismatch,
     workspace_state_conflict,
 )
-from backend.app.workspace.models import ApplyPreview, ApplyRefusal, WorkspaceRecord
+from backend.app.workspace.models import (
+    PREVIEW_COMMIT_LIMIT,
+    PREVIEW_PATCH_LIMIT,
+    ApplyPreview,
+    ApplyRefusal,
+    WorkspaceRecord,
+    path_flags,
+)
 from backend.app.workspace.repository import WorkspaceRepository
 
 LOGGER = logging.getLogger(__name__)
@@ -79,6 +92,14 @@ UNTRACKED_SOURCE_LIMITATION = (
 NO_BASELINE_LIMITATION = (
     "No BASELINE checkpoint existed when the workspace was created; evidence comparisons "
     "may not describe the workspace base.")
+PREVIEW_LIMITATIONS: tuple[str, ...] = (
+    "The repository's own Git hooks (for example post-merge) do not run during apply-back.",
+    "Git filters, including Git LFS, are neutralized; content is applied exactly as stored "
+    "in the sealed commit.",
+    "Submodules were not cloned into the workspace.",
+    "Only files committed at the base commit were present in the workspace; uncommitted, "
+    "untracked and ignored files (for example node_modules or .env) were absent.",
+)
 
 
 def _digest(token: str) -> str:
@@ -121,6 +142,39 @@ def _reparse_point_below(root: Path) -> bool:
     return False
 
 
+def _followable_link_in_worktree(workspace: Path) -> bool:
+    """Whether the work tree holds a junction or any non-symlink reparse point.
+
+    Measured on Git for Windows 2.50: ``git add -A`` records a true symbolic
+    link (``IO_REPARSE_TAG_SYMLINK``) as a ``120000`` link without reading
+    its target, but it DESCENDS into a junction (mount point) and commits the
+    files behind it. Host-side seal runs at the user's full authority, so a
+    junction would let the workspace pull files the agent itself cannot read
+    into the sealed commit (and into the agent-readable object store). Every
+    reparse point other than a true symbolic link is therefore refused.
+    ``.git`` is excluded here; it has its own, stricter check.
+    """
+
+    pending = [os.fspath(workspace)]
+    top = True
+    while pending:
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if top and os.path.normcase(entry.name) == ".git":
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if _reparse_attributes(info):
+                    tag = getattr(os.lstat(entry.path), "st_reparse_tag", 0)
+                    if tag != stat.IO_REPARSE_TAG_SYMLINK:
+                        return True
+                    continue  # recorded as a link by Git, never followed
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(entry.path)
+        top = False
+    return False
+
+
 class WorkspaceManager:
     """Owns the lifecycle of per-Change workspace clones and their AppContainer profiles."""
 
@@ -157,16 +211,17 @@ class WorkspaceManager:
     def _git(
         self, repository: str | Path, args: Sequence[str], *,
         extra_roots: Sequence[str | Path] = (), identity: GitIdentity | None = None,
+        limit: int = METADATA_LIMIT,
     ) -> CapturedProcess:
         result = run_git(repository, list(args), timeout=self._git_timeout,
-                         extra_roots=extra_roots, identity=identity)
+                         extra_roots=extra_roots, identity=identity, limit=limit)
         if result.timed_out or result.incomplete:
             raise AppError("GIT_COMMAND_FAILED", "Git did not complete.", status_code=500)
         return result
 
     def _ws_git(
         self, record: WorkspaceRecord, args: Sequence[str], *,
-        identity: GitIdentity | None = None,
+        identity: GitIdentity | None = None, limit: int = METADATA_LIMIT,
     ) -> CapturedProcess:
         """Git against the workspace with an explicit git dir and work tree.
 
@@ -180,7 +235,7 @@ class WorkspaceManager:
         return self._git(
             workspace,
             [f"--git-dir={workspace / '.git'}", f"--work-tree={workspace}", *args],
-            extra_roots=[record.container_path], identity=identity,
+            extra_roots=[record.container_path], identity=identity, limit=limit,
         )
 
     def _save(
@@ -435,6 +490,8 @@ class WorkspaceManager:
             raise workspace_git_tampered("alternates")
         if _reparse_point_below(git_dir):
             raise workspace_git_tampered("git_dir_links")
+        if _followable_link_in_worktree(workspace):
+            raise workspace_git_tampered("worktree_links")
         worktree = self._ws_git(record, ["config", "--get", "core.worktree"])
         if worktree.returncode != 1:
             raise workspace_git_tampered("core_worktree")
@@ -450,64 +507,155 @@ class WorkspaceManager:
             raise workspace_not_found(str(change_id))
         return record
 
+    def _seal(self, record: WorkspaceRecord, change_id: UUID) -> str:
+        """Commit every workspace change (hooks neutralized) and return the sealed sha."""
+
+        if self._ws_git(record, ["add", "-A"]).returncode != 0:
+            raise workspace_seal_failed("git add failed")
+        staged = self._ws_git(record, ["diff", "--cached", "--quiet", "--no-ext-diff"])
+        if staged.returncode not in (0, 1):
+            raise workspace_seal_failed("the staged changes could not be read")
+        if staged.returncode == 1:
+            commit = self._ws_git(
+                record,
+                ["commit", "-q", "--no-verify", "-m",
+                 f"Sentinel workspace seal for change {change_id}"],
+                identity=RECOVERY_IDENTITY,
+            )
+            if commit.returncode != 0:
+                raise workspace_seal_failed("git commit failed")
+        head = self._ws_git(record, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+        sealed = _text(head)
+        if head.returncode != 0 or not _SHA.fullmatch(sealed):
+            raise workspace_seal_failed("the sealed commit could not be read")
+        return sealed
+
+    def _describe(
+        self, record: WorkspaceRecord, base: str, sealed: str,
+    ) -> tuple[bool, tuple[tuple[str, str, str], ...], bool,
+               tuple[tuple[str, str, str, str, tuple[str, ...]], ...], str, bool]:
+        """(diverged, commits, commits truncated, changed paths, patch, patch truncated)."""
+
+        ancestor = self._ws_git(record, ["merge-base", "--is-ancestor", base, sealed])
+        diverged = ancestor.returncode != 0
+        listed = self._ws_git(
+            record, ["log", "-z", "--no-color", "--format=%H%x00%an <%ae>%x00%s",
+                     f"--max-count={PREVIEW_COMMIT_LIMIT + 1}", f"{base}..{sealed}"],
+        )
+        if listed.returncode != 0 or listed.truncated:
+            raise workspace_seal_failed("the sealed commits could not be listed")
+        fields = listed.stdout.decode("utf-8", errors="replace").split("\0")
+        if fields and fields[-1] == "":
+            fields.pop()
+        entries = [tuple(fields[index:index + 3]) for index in range(0, len(fields) - 2, 3)]
+        commits = tuple((sha.strip(), author, subject) for sha, author, subject in entries)
+        commits_truncated = len(commits) > PREVIEW_COMMIT_LIMIT
+        raw = self._ws_git(
+            record, ["diff", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-ext-diff",
+                     "--no-textconv", base, sealed],
+        )
+        if raw.returncode != 0 or raw.truncated:
+            raise workspace_seal_failed("the changed paths could not be listed")
+        items = raw.stdout.decode("utf-8", errors="replace").split("\0")
+        changed: list[tuple[str, str, str, str, tuple[str, ...]]] = []
+        index = 0
+        while index + 1 < len(items):
+            meta, path = items[index], items[index + 1]
+            index += 2
+            parts = meta.lstrip(":").split()
+            if len(parts) != 5:
+                raise workspace_seal_failed("the changed paths could not be parsed")
+            old_mode, new_mode, _old, _new, status = parts
+            changed.append((status[:1], path, old_mode, new_mode,
+                            path_flags(path, old_mode, new_mode)))
+        patch = self._ws_git(
+            record, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", base, sealed],
+            limit=PREVIEW_PATCH_LIMIT,
+        )
+        if patch.returncode != 0:
+            raise workspace_seal_failed("the patch could not be produced")
+        return (diverged, commits[:PREVIEW_COMMIT_LIMIT], commits_truncated, tuple(changed),
+                patch.stdout.decode("utf-8", errors="replace"), patch.truncated)
+
+    def _user_state(self, source: Path) -> tuple[bool, str | None, str | None]:
+        """(HEAD detached, branch ref, HEAD sha) of the user repository -- read-only."""
+
+        try:
+            branch = self._git(source, ["symbolic-ref", "-q", "HEAD"])
+            head = self._git(source, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+        except AppError as exc:
+            raise workspace_apply_failed("the user repository could not be read") from exc
+        if branch.returncode not in (0, 1):
+            raise workspace_apply_failed("the user repository branch could not be read")
+        return (branch.returncode == 1,
+                _text(branch) if branch.returncode == 0 else None,
+                _text(head) if head.returncode == 0 else None)
+
+    @staticmethod
+    def _user_refusal(
+        record: WorkspaceRecord, detached: bool, branch: str | None, head: str | None,
+    ) -> ApplyRefusal | None:
+        if detached:
+            return ApplyRefusal.USER_HEAD_DETACHED
+        if branch != record.base_branch:
+            return ApplyRefusal.USER_BRANCH_SWITCHED
+        if head != record.base_sha:
+            return ApplyRefusal.USER_BRANCH_MOVED
+        return None
+
     def preview(self, change_id: UUID) -> ApplyPreview:
-        """Seal the workspace and describe what apply-back would land (no user-repo I/O)."""
+        """Seal the workspace and describe what apply-back would land.
+
+        The user repository is only read (branch and HEAD); nothing is fetched
+        into it. An approval token is issued only when apply can succeed, and
+        every preview voids the previous token.
+        """
 
         record = self._live(change_id)
-        if record.state not in (WorkspaceState.READY, WorkspaceState.SEALED):
+        if record.state not in (WorkspaceState.READY, WorkspaceState.SEALED,
+                                WorkspaceState.APPLY_REFUSED):
             raise workspace_state_conflict(record.state.value, "preview")
         if record.active_run_id is not None:
+            raise workspace_state_conflict(record.state.value, "preview")
+        if record.source_repository is None:
             raise workspace_state_conflict(record.state.value, "preview")
         base = record.base_sha or ""
         self._validate_workspace_git(record)
         try:
-            if self._ws_git(record, ["add", "-A"]).returncode != 0:
-                raise workspace_seal_failed("git add failed")
-            staged = self._ws_git(record, ["diff", "--cached", "--quiet", "--no-ext-diff"])
-            if staged.returncode not in (0, 1):
-                raise workspace_seal_failed("the staged changes could not be read")
-            if staged.returncode == 1:
-                commit = self._ws_git(
-                    record,
-                    ["commit", "-q", "--no-verify", "-m",
-                     f"Sentinel workspace seal for change {change_id}"],
-                    identity=RECOVERY_IDENTITY,
-                )
-                if commit.returncode != 0:
-                    raise workspace_seal_failed("git commit failed")
-            head = self._ws_git(record, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
-            sealed = _text(head)
-            if head.returncode != 0 or not _SHA.fullmatch(sealed):
-                raise workspace_seal_failed("the sealed commit could not be read")
-            listed = self._ws_git(record, ["rev-list", "--reverse", f"{base}..{sealed}"])
-            if listed.returncode != 0:
-                raise workspace_seal_failed("the sealed commits could not be listed")
-            names = self._ws_git(
-                record, ["diff", "--name-status", "--no-renames", "--no-ext-diff", "-z",
-                         base, sealed],
-            )
-            if names.returncode != 0:
-                raise workspace_seal_failed("the changed paths could not be listed")
+            sealed = self._seal(record, change_id)
+            diverged, commits, commits_truncated, changed, patch, patch_truncated = (
+                self._describe(record, base, sealed))
         except AppError as exc:
             if exc.code.startswith("WORKSPACE_"):
                 raise
             raise workspace_seal_failed("Git failed while sealing") from exc
-        commits = tuple(line for line in _text(listed).splitlines() if line)
-        fields = names.stdout.decode("utf-8", errors="replace").split("\0")
-        if fields and fields[-1] == "":
-            fields.pop()
-        changed = tuple(
-            (fields[index], fields[index + 1]) for index in range(0, len(fields) - 1, 2)
-        )
-        token = secrets.token_urlsafe(32)
-        record = self._save(
-            record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
-            approval_digest=_digest(token), approved_base_sha=base,
-            approved_sealed_sha=sealed, refusal_reason=None,
-        )
+        detached, user_branch, user_head = self._user_state(record.source_repository)
+        refusal = (ApplyRefusal.WORKSPACE_HISTORY_DIVERGED if diverged
+                   else self._user_refusal(record, detached, user_branch, user_head))
+        token: str | None = None
+        if refusal is None:
+            token = secrets.token_urlsafe(32)
+            record = self._save(
+                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
+                approval_digest=_digest(token), approved_base_sha=base,
+                approved_sealed_sha=sealed, refusal_reason=None,
+            )
+        else:
+            record = self._save(
+                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
+                approval_digest=None, approved_base_sha=None, approved_sealed_sha=None,
+                refusal_reason=refusal.value,
+            )
+        LOGGER.info("workspace %s previewed (refusal=%s)", record.id,
+                    refusal.value if refusal else None)
         return ApplyPreview(
             change_id=change_id, workspace_id=record.id, base_sha=base, sealed_sha=sealed,
             commits=commits, changed_paths=changed, approval_token=token,
+            refusal_reason=refusal.value if refusal else None,
+            user_branch=user_branch, user_head=user_head,
+            fast_forward_possible=refusal is None,
+            patch=patch, patch_truncated=patch_truncated, commits_truncated=commits_truncated,
+            limitations=tuple(dict.fromkeys(record.limitations + PREVIEW_LIMITATIONS)),
         )
 
     # ------------------------------------------------------------------ apply
@@ -515,23 +663,52 @@ class WorkspaceManager:
     def _refuse(
         self, record: WorkspaceRecord, reason: ApplyRefusal, detail: str | None = None
     ) -> WorkspaceRecord:
+        """Persist an apply refusal; the approval is void (a new preview is required)."""
+
         limitations = record.limitations + ((detail,) if detail else ())
+        LOGGER.info("workspace %s apply refused: %s", record.id, reason.value)
         return self._save(
             record, record.state, state=WorkspaceState.APPLY_REFUSED,
-            refusal_reason=reason.value, limitations=limitations,
+            refusal_reason=reason.value, limitations=limitations, approval_digest=None,
+            approved_base_sha=None, approved_sealed_sha=None,
         )
 
-    def apply(self, change_id: UUID, approval_token: str) -> WorkspaceRecord:
-        """Fast-forward the user's branch to the approved sealed commit, or refuse."""
+    @staticmethod
+    def _token_matches(record: WorkspaceRecord, approval_token: object) -> bool:
+        return (isinstance(approval_token, str) and bool(approval_token)
+                and bool(record.approval_digest)
+                and hmac.compare_digest(_digest(approval_token), record.approval_digest or ""))
 
-        record = self._live(change_id)
+    def apply(self, change_id: UUID, approval_token: str) -> WorkspaceRecord:
+        """Fast-forward the user's branch to the approved sealed commit, or refuse.
+
+        Idempotent: replaying the approved token after success returns the
+        applied record without running Git. Every refusal voids the approval,
+        leaves the user's HEAD and working tree as they were and removes the
+        private ref; there is never a force, a reset or a merge commit.
+        """
+
+        record = (self.repository.live_for_change(change_id)
+                  or self.repository.latest_for_change(change_id))
+        if record is None:
+            raise workspace_not_found(str(change_id))
+        if record.applied_sha and record.state in (WorkspaceState.APPLIED,
+                                                   WorkspaceState.CLEANED):
+            if not self._token_matches(record, approval_token):
+                raise workspace_approval_invalid()
+            if record.state == WorkspaceState.APPLIED:
+                try:
+                    return self.cleanup(record.id)
+                except AppError:
+                    return self.get(record.id)
+            return record
+        if record.state == WorkspaceState.CLEANED:
+            raise workspace_not_found(str(change_id))
         if record.active_run_id is not None:
             raise workspace_state_conflict(record.state.value, "apply")
         # A cleared approval (a newer run or preview voided it) is an invalid
         # approval, whatever state the workspace moved to since.
-        if (not isinstance(approval_token, str) or not approval_token
-                or not record.approval_digest
-                or not hmac.compare_digest(_digest(approval_token), record.approval_digest)):
+        if not self._token_matches(record, approval_token):
             raise workspace_approval_invalid()
         if record.state != WorkspaceState.SEALED:
             raise workspace_state_conflict(record.state.value, "apply")
@@ -544,16 +721,21 @@ class WorkspaceManager:
             raise workspace_state_conflict(record.state.value, "apply")
         self._validate_workspace_git(record)
 
-        # Read-only checks against the user repository come first.
+        # The workspace must still be exactly what was previewed.
         try:
-            branch = self._git(source, ["symbolic-ref", "-q", "HEAD"])
-            head = self._git(source, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+            ws_head = self._ws_git(record, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+            ws_status = self._ws_git(record, ["status", "--porcelain=v1"])
         except AppError as exc:
-            raise workspace_apply_failed("the user repository could not be read") from exc
-        if branch.returncode != 0 or _text(branch) != record.base_branch:
-            return self._refuse(record, ApplyRefusal.USER_BRANCH_SWITCHED)
-        if head.returncode != 0 or _text(head) != record.base_sha:
-            return self._refuse(record, ApplyRefusal.USER_BRANCH_MOVED)
+            raise workspace_apply_failed("the workspace could not be read") from exc
+        if (ws_head.returncode != 0 or _text(ws_head) != record.sealed_sha
+                or ws_status.returncode != 0 or ws_status.stdout.strip()):
+            return self._refuse(record, ApplyRefusal.SEALED_COMMIT_MISMATCH)
+
+        # Read-only checks against the user repository come before any fetch.
+        detached, branch, head = self._user_state(source)
+        refusal = self._user_refusal(record, detached, branch, head)
+        if refusal is not None:
+            return self._refuse(record, refusal)
 
         ref = f"refs/sentinel/changes/{change_id}"
         try:
@@ -590,6 +772,7 @@ class WorkspaceManager:
                 record, WorkspaceState.SEALED, state=WorkspaceState.APPLIED,
                 applied_sha=_text(after), refusal_reason=None,
             )
+            LOGGER.info("workspace %s applied as %s", record.id, record.applied_sha)
         except AppError as exc:
             if exc.code.startswith("WORKSPACE_"):
                 raise

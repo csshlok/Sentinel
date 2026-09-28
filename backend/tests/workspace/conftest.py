@@ -214,12 +214,12 @@ def create_junction(target: Path, link: Path) -> None:
     _winapi.CreateJunction(str(target), str(link))
 
 
-def has_object(repo: Path, sha: str) -> bool:
-    """Whether ``repo``'s object store contains ``sha`` (plain git, read-only)."""
+def has_object(repo: Path, sha: str, *, kind: str = "commit") -> bool:
+    """Whether ``repo``'s object store contains ``sha`` of ``kind`` (plain git, read-only)."""
 
     import subprocess
 
     return subprocess.run(
-        ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"],
+        ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{{kind}}}"],
         capture_output=True,
     ).returncode == 0
