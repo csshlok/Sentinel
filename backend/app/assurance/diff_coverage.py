@@ -153,8 +153,9 @@ def collect_diff_coverage(
         data = evidence / "coverage.data"
         artifact = evidence / "coverage.json"
         config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
-        argv = [interpreter, "-m", "coverage", "run", "--rcfile", str(config),
-                "--data-file", str(data), "-m", "pytest", *test_args]
+        argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
+                "-m", "coverage", "run", "--rcfile", str(config),
+                "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
         result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
         try:
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)

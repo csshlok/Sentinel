@@ -147,6 +147,26 @@ def test_test_run_mutation_is_stale(tmp_path: Path) -> None:
     assert result.gate_satisfied is False
 
 
+def test_pytest_does_not_create_cache_files_in_unignored_repository(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "module.py": "def value():\n    return 1\n",
+        "tests/test_module.py": "from module import value\n\ndef test_value():\n"
+                                "    assert value() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="cache", intent="measure", repository_path=str(root),
+                        created_at=utc_now(), updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "def value():\n    return 1\n\ndef unused():\n    return 2\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    assert result.checks_passed is True
+    assert result.freshness == "CURRENT"
+    assert not (root / ".pytest_cache").exists()
+    assert not (root / "__pycache__").exists()
+
+
 def test_committed_staged_unstaged_and_classified_files(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")
