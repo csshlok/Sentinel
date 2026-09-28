@@ -19,6 +19,7 @@ from backend.app.contracts.models import (
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError, change_not_found
 from backend.app.core.journal import compute_event_hash
+from backend.app.git.state import GitStateTracker
 from backend.app.passport.cng import CngKey, DEFAULT_KEY_NAME, fingerprint
 from backend.app.passport.jcs import canonicalize
 
@@ -47,7 +48,8 @@ class PassportV2Issuer:
         """Read all bound records in one SQLite snapshot; caller supplies only the ID."""
         with self._database.connection() as connection:
             change = connection.execute(
-                "SELECT id, revision, lifecycle_state, risk_level, contract_json "
+                "SELECT id, revision, lifecycle_state, risk_level, contract_json, "
+                "repository_path, evidence_revision "
                 "FROM changes WHERE id = ?", (str(change_id),)).fetchone()
             if change is None:
                 raise change_not_found(str(change_id))
@@ -103,7 +105,7 @@ class PassportV2Issuer:
                            status_code=409)
         contract_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
                            if isinstance(contract_raw, str) else None)
-        return PassportV2Payload(
+        payload = PassportV2Payload(
             change_id=change_id, change_revision=change["revision"],
             lifecycle_state=change["lifecycle_state"], risk_level=change["risk_level"],
             contract_digest=contract_digest, journal_head=head,
@@ -113,6 +115,32 @@ class PassportV2Issuer:
             diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
             issued_at=utc_now(),
         )
+        return self._checked_freshness(change_id, payload, change)
+
+    @staticmethod
+    def _checked_freshness(change_id: UUID, claims: PassportV2Payload,
+                           change: object) -> PassportV2Payload:
+        """Reobserve CURRENT coverage before any v2 signing path uses it."""
+        diff = claims.diff_coverage
+        if diff.freshness != "CURRENT" or diff.head_sha is None or diff.status_digest is None:
+            return claims
+        try:
+            current = GitStateTracker().capture(
+                change_id, "passport-issue", change["repository_path"],
+                max(1, int(change["evidence_revision"])), 1_048_576,
+            )
+        except (AppError, OSError, ValueError, TypeError):
+            state, reason = "UNKNOWN", "Repository freshness could not be observed at issue."
+        else:
+            if current.head_sha != diff.head_sha or current.status_digest != diff.status_digest:
+                state, reason = "STALE", "Repository moved after diff coverage measurement."
+            elif current.summary.patch_truncated:
+                state, reason = "UNKNOWN", "Current Git patch was truncated at issue."
+            else:
+                return claims
+        updated = diff.model_copy(update={"freshness": state, "diff_exercised": state})
+        return claims.model_copy(update={"diff_coverage": updated,
+                                         "limitations": [*claims.limitations, reason]})
 
     @staticmethod
     def _verify_journal(change_id: UUID, rows: list[object]) -> str | None:

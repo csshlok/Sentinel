@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.contracts.models import JournalEventType
+from backend.app.contracts.models import DiffCoverageResult, JournalEventType
 from backend.app.core.config import Settings
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -20,7 +20,10 @@ from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.main import create_app
 from backend.app.passport.cng import CngKey, verify_signature
 from backend.app.passport.v2 import PassportV2Issuer, canonical_payload
+from backend.app.assurance.store import EvidenceStore
+from backend.app.git.state import GitStateTracker
 from backend.tests.passport.test_builder import _database, _seed_change
+from backend.tests.support_kb import make_repo, write
 
 
 def _launch(database, change_id) -> str:
@@ -107,3 +110,35 @@ def test_http_rejects_caller_supplied_payload(tmp_path: Path) -> None:
                                json={"payload": {"checks_passed": True}})
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "PASSPORT_PAYLOAD_FORBIDDEN"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_v2_issuer_signs_stale_after_repository_moves(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "VALUE = 1\n"})
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    with database.connection() as connection:
+        connection.execute("UPDATE changes SET repository_path = ? WHERE id = ?",
+                           (str(root), str(change.id)))
+    captured = GitStateTracker().capture(change.id, "measured", str(root), 1, 1_048_576)
+    now = datetime.now(UTC)
+    EvidenceStore(database).save_diff_coverage(DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=uuid4(), tested_checkpoint_id=uuid4(),
+        head_sha=captured.head_sha, status_digest=captured.status_digest,
+        contract_digest="c" * 64, started_at=now, completed_at=now,
+        collector_status="COLLECTED", checks_passed=True, diff_exercised="PASS",
+        freshness="CURRENT", changed_executable_lines=1, executed_changed_lines=1,
+        measured_percent=100,
+    ))
+    write(root, "module.py", "VALUE = 2\n")
+    key_name = f"Sentinel disposable test {uuid4()}"
+    try:
+        issued = PassportV2Issuer(database, key_name=key_name).issue(change.id)
+        assert issued.payload.diff_coverage.freshness == "STALE"
+        assert issued.payload.diff_coverage.diff_exercised == "STALE"
+        assert verify_signature(spki=base64.b64decode(issued.signer_public_spki_b64),
+                                message=canonical_payload(issued.payload),
+                                signature=base64.b64decode(issued.signature_b64))
+    finally:
+        with CngKey.open(name=key_name) as key:
+            key.delete_for_test()

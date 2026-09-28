@@ -12,7 +12,6 @@ from uuid import UUID
 from backend.app.contracts.models import PassportV2Payload
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
-from backend.app.git.state import GitStateTracker
 from backend.app.passport.card import render_html, render_svg
 from backend.app.passport.cng import CngKey, DEFAULT_KEY_NAME, fingerprint
 from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
@@ -76,41 +75,10 @@ class BundleExporter:
                            status_code=409)
         return joined
 
-    def _checked_freshness(self, change_id: UUID,
-                           claims: PassportV2Payload) -> PassportV2Payload:
-        """Recheck a CURRENT Phase 6 measurement at export time."""
-        diff = claims.diff_coverage
-        if diff.freshness != "CURRENT" or diff.head_sha is None or diff.status_digest is None:
-            return claims
-        with self._database.connection() as connection:
-            row = connection.execute(
-                "SELECT repository_path, evidence_revision FROM changes WHERE id = ?",
-                (str(change_id),)).fetchone()
-        if row is None:
-            raise AppError("PASSPORT_RECORDS_MOVED", "Change disappeared during export.",
-                           status_code=409)
-        try:
-            current = GitStateTracker().capture(
-                change_id, "passport-export", row["repository_path"],
-                max(1, int(row["evidence_revision"])), 1_048_576,
-            )
-        except (AppError, OSError, ValueError):
-            state, reason = "UNKNOWN", "Repository freshness could not be observed at export."
-        else:
-            if current.head_sha != diff.head_sha or current.status_digest != diff.status_digest:
-                state, reason = "STALE", "Repository moved after diff coverage measurement."
-            elif current.summary.patch_truncated:
-                state, reason = "UNKNOWN", "Current Git patch was truncated at export."
-            else:
-                return claims
-        updated = diff.model_copy(update={"freshness": state, "diff_exercised": state})
-        return claims.model_copy(update={"diff_coverage": updated,
-                                         "limitations": [*claims.limitations, reason]})
-
     def export(self, change_id: UUID) -> BundleArtifact:
         """Create and sign a bundle; no payload or evidence parameter is accepted."""
         source_claims = self._issuer.snapshot(change_id)
-        claims = self._checked_freshness(change_id, source_claims)
+        claims = source_claims
         journal = self._journal_links(change_id, expected_count=claims.journal_event_count,
                                       expected_head=claims.journal_head)
         with CngKey.open(name=self._key_name) as key:
