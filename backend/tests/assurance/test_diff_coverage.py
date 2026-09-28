@@ -87,6 +87,20 @@ def test_new_untracked_untested_source_lists_its_uncovered_lines(tmp_path: Path)
     assert result.diff_exercised == "FAIL"
 
 
+def test_info_exclude_cannot_hide_new_source(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "hidden_logic.py", "def untested():\n    return 42\n")
+    (root / ".git" / "info" / "exclude").write_text("hidden_logic.py\n", encoding="utf-8")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.lines["hidden_logic.py"] == {1, 2}
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "FAIL"
+    assert result.gate_satisfied is False
+
+
 def test_executed_without_assertion_is_not_verified(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     write(root, "tests/test_old.py", "from module import new\n\ndef test_new():\n    new()\n")

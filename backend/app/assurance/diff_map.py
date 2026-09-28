@@ -202,10 +202,22 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     _parse_patch(patch, result, Path(tested.repository_root))
     if result.error:
         return result
-    for entry in tested.summary.files:
-        if entry.status.value != "UNTRACKED":
+    try:
+        # Deliberately omit --exclude-standard: .git/info/exclude and the user's
+        # core.excludesFile are writable outside the committed project rules.
+        other = run_git(tested.repository_root,
+                        ["ls-files", "--others", "-z",
+                         "--exclude-per-directory=.gitignore", "--"], limit=limit)
+        if other.returncode or other.incomplete or other.timed_out or other.truncated:
+            raise ValueError("Untracked-file enumeration failed")
+        paths = [part.decode("utf-8") for part in other.stdout.split(b"\0") if part]
+    except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
+        result.error = "Untracked-file enumeration failed."
+        return result
+    for path in paths:
+        path = path.replace("\\", "/")
+        if path in result.lines or path in result.excluded:
             continue
-        path = entry.path.replace("\\", "/")
         classification = _classification(path, Path(tested.repository_root))
         if classification:
             result.excluded[path] = classification
