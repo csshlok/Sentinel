@@ -463,6 +463,7 @@ class WorkspaceManager:
             head = self._ws_git(record, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
             if head.returncode != 0 or _text(head) != base_sha:
                 raise workspace_clone_failed("the workspace HEAD is not the source HEAD")
+            self._pin_line_endings(record)
             return self._save(record, WorkspaceState.CREATING, state=WorkspaceState.READY)
         except Exception as exc:
             try:
@@ -473,6 +474,26 @@ class WorkspaceManager:
                 raise
             code = exc.code if isinstance(exc, AppError) else type(exc).__name__
             raise workspace_clone_failed(f"workspace creation failed ({code})") from exc
+
+    def _pin_line_endings(self, record: WorkspaceRecord) -> None:
+        """Record the checkout's line-ending settings in the workspace's own config.
+
+        Sentinel's host Git carries the system ``core.autocrlf``/``core.eol``
+        into the checkout, but the agent's Git runs with
+        ``GIT_CONFIG_NOSYSTEM=1``; without the same settings it saw every
+        CRLF-checked-out file as modified (measured in the live Claude Code run:
+        ``git status`` listed untouched files and ``git rm`` would refuse them).
+        Only these two content-semantics keys are written, with values Git
+        itself reported for this checkout.
+        """
+
+        for key in ("core.autocrlf", "core.eol"):
+            current = self._ws_git(record, ["config", "--get", key])
+            value = _text(current).lower()
+            if current.returncode != 0 or not value:
+                continue
+            if self._ws_git(record, ["config", "--local", key, value]).returncode != 0:
+                raise workspace_clone_failed("the workspace line-ending settings could not be set")
 
     # ------------------------------------------------------------------ run lease
 
