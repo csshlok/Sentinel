@@ -138,6 +138,32 @@ def test_repository_confirmation_fails_closed_when_git_cannot_answer(tmp_path, m
     assert enclosing_git_worktree(tmp_path / "plain" / DATABASE_FILENAME) is None
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        [("core.repositoryformatversion", "99")],
+        # Git only enforces extensions from repository format version 1.
+        [("core.repositoryformatversion", "1"), ("extensions.sentinelUnknown", "true")],
+    ],
+)
+def test_repository_git_refuses_to_open_still_refuses_the_store(tmp_path, settings) -> None:
+    """A repository Git recognises but will not open fails closed, not open."""
+
+    import subprocess
+
+    repo = make_repo(tmp_path / "repo")
+    for key, value in settings:
+        subprocess.run(["git", "-C", str(repo), "config", key, value],
+                       check=True, capture_output=True)
+    refused = subprocess.run(["git", "-C", str(repo / ".git"), "rev-parse", "--absolute-git-dir"],
+                             capture_output=True)
+    assert refused.returncode != 0  # positive control: Git really refuses this repository
+
+    assert enclosing_git_worktree(repo / "state" / DATABASE_FILENAME) == repo
+    with pytest.raises(AppError):
+        ensure_store_outside_repository(repo / "state" / DATABASE_FILENAME)
+
+
 def test_confirmation_never_accepts_an_outer_repository_found_by_upward_discovery(tmp_path) -> None:
     outer = make_repo(tmp_path / "outer")
     inner = outer / "inner"

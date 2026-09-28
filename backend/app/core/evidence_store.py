@@ -14,8 +14,10 @@ harness must confirm it (`rev-parse --absolute-git-dir` run against that Git
 directory reports exactly that directory). An empty or broken `.git` that Git
 itself would not treat as a repository no longer refuses the store, so a
 stray `.git` directory is not a denial of service. When Git cannot be run to
-confirm (not installed, the harness refuses the configuration), a
-structurally real `.git` still refuses: the check fails closed.
+confirm (not installed, the harness refuses the configuration), or Git
+recognises the repository but refuses to open it (anything other than its
+"not a git repository" verdict), a structurally real `.git` still refuses:
+the check fails closed.
 
 The default directory's DACL is restricted to the current user and SYSTEM with
 inheritance removed (`prepare_store_directory`). That call refuses any
@@ -138,7 +140,11 @@ def _git_confirms_repository(git_dir: Path) -> bool:
     if result.timed_out or result.incomplete:
         return True
     if result.returncode != 0:
-        return False
+        # Only Git's own "not a git repository" verdict clears structural
+        # evidence. Any other refusal (for example an agent-planted
+        # `core.repositoryformatversion` or unknown `extensions.*`) means Git
+        # recognised a repository it will not open: fail closed.
+        return b"not a git repository" not in result.stderr.lower()
     try:
         reported = Path(result.stdout.decode("utf-8").strip())
     except UnicodeDecodeError:
