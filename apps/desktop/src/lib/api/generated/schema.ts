@@ -2780,6 +2780,8 @@ export interface components {
              * @constant
              */
             schema_version: 2;
+            /** Signer Provider */
+            signer_provider?: ("TPM" | "SOFTWARE") | null;
         };
         /**
          * PathCategory

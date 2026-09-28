@@ -1252,6 +1252,7 @@ class PassportV2Payload(ContractModel):
     runs_later: Literal["UNKNOWN"] = "UNKNOWN"
     limitations: list[ShortText] = Field(default_factory=list, max_length=32)
     issued_at: AwareDatetime
+    signer_provider: Literal["TPM", "SOFTWARE"] | None = None
 
 
 class PassportV2Issued(ContractModel):

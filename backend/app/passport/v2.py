@@ -229,13 +229,14 @@ class PassportV2Issuer:
 
     def issue(self, change_id: UUID) -> PassportV2Issued:
         """No payload argument exists: CNG signs only this freshly built snapshot."""
-        payload = self.snapshot(change_id)
-        message = canonical_payload(payload)
+        source_payload = self.snapshot(change_id)
         with CngKey.open(name=self._key_name) as key:
+            payload = self._with_provider(source_payload, key.provider)
+            message = canonical_payload(payload)
             spki = key.public_spki()
             signature = key.sign(message)
             latest = self.snapshot(change_id)
-            if latest.model_dump(exclude={"issued_at"}) != payload.model_dump(exclude={"issued_at"}):
+            if latest.model_dump(exclude={"issued_at"}) != source_payload.model_dump(exclude={"issued_at"}):
                 raise AppError("PASSPORT_RECORDS_MOVED",
                                "Change records moved during Passport signing.", status_code=409)
             return PassportV2Issued(
@@ -246,3 +247,14 @@ class PassportV2Issuer:
                 signer_identity=f"Sentinel installation {self._label}",
                 signature_b64=base64.b64encode(signature).decode("ascii"),
             )
+
+    @staticmethod
+    def _with_provider(payload: PassportV2Payload, provider: str) -> PassportV2Payload:
+        limitations = list(payload.limitations)
+        if provider == "SOFTWARE":
+            limitations.append(
+                "Software KSP key is non-exportable via CNG but recoverable by a same-user process via DPAPI."
+            )
+        return PassportV2Payload.model_validate({**payload.model_dump(),
+                                                 "signer_provider": provider,
+                                                 "limitations": limitations})

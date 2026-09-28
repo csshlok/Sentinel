@@ -192,7 +192,10 @@ def _validate_claims(passport: dict[str, object], manifest: dict[str, object],
     if set(passport) != {"schema_version", "claims", "signer"} or passport["schema_version"] != 2:
         raise ValueError("Unsupported Passport schema")
     claims = PassportV2Payload.model_validate(passport["claims"])
-    if canonicalize(claims.model_dump(mode="json")) != canonicalize(passport["claims"]):
+    normalized = claims.model_dump(mode="json")
+    if "signer_provider" not in passport["claims"]:
+        normalized.pop("signer_provider")  # pre-additive v2 bundles remain verifiable
+    if canonicalize(normalized) != canonicalize(passport["claims"]):
         raise ValueError("Passport claim normalization mismatch")
     if str(claims.change_id) != manifest["change_id"]:
         raise ValueError("Passport Change ID mismatch")

@@ -82,6 +82,7 @@ class BundleExporter:
         journal = self._journal_links(change_id, expected_count=claims.journal_event_count,
                                       expected_head=claims.journal_head)
         with CngKey.open(name=self._key_name) as key:
+            claims = self._issuer._with_provider(claims, key.provider)
             spki = key.public_spki()
             signer_fp = fingerprint(spki)
             passport = {

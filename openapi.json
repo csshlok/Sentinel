@@ -4168,6 +4168,21 @@
             "default": 2,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "signer_provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "TPM",
+                  "SOFTWARE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signer Provider"
           }
         },
         "required": [

@@ -65,6 +65,7 @@ def test_issue_uses_database_only_and_binds_journal_and_launch(tmp_path: Path) -
         assert issued.payload.execution_boundary == "UNKNOWN"
         assert issued.payload.runs_later == "UNKNOWN"
         assert issued.signer_identity == "Sentinel installation Lab"
+        assert issued.payload.signer_provider == issued.signer_provider
         assert "private output" not in issued.model_dump_json()
         spki = base64.b64decode(issued.signer_public_spki_b64)
         signature = base64.b64decode(issued.signature_b64)
@@ -122,6 +123,16 @@ def test_v2_rejects_missing_and_contradictory_launch_rows(tmp_path: Path) -> Non
         connection.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
     with pytest.raises(AppError, match="Launch records and journal differ"):
         issuer.snapshot(change.id)
+
+
+def test_software_provider_limitation_is_inside_signed_payload(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    payload = PassportV2Issuer(database).snapshot(change.id)
+    signed = PassportV2Issuer._with_provider(payload, "SOFTWARE")
+    assert signed.signer_provider == "SOFTWARE"
+    assert any("DPAPI" in line for line in signed.limitations)
+    assert b"DPAPI" in canonical_payload(signed)
 
 
 def test_http_rejects_caller_supplied_payload(tmp_path: Path) -> None:
