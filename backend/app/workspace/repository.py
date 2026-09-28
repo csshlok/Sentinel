@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from uuid import UUID
 
 from backend.app.contracts.models import WorkspaceState
@@ -43,18 +44,22 @@ class WorkspaceRepository:
         self, record: WorkspaceRecord, *, expected_state: WorkspaceState,
         connection: sqlite3.Connection | None = None,
     ) -> WorkspaceRecord:
-        """Compare-and-set on ``state``: a concurrent transition raises a conflict."""
+        """Compare-and-set on ``state``: a concurrent transition raises a conflict.
+
+        ``active_run_id`` is never written here: the run lease is owned by
+        :meth:`begin_run` / :meth:`end_run`, so a record read before a run began
+        can never release that run's lease by being saved.
+        """
 
         with self.database.connection_or(connection, immediate=True) as conn:
             cursor = conn.execute(
                 """
                 UPDATE change_workspaces
-                SET state = ?, active_run_id = ?, payload_json = ?, updated_at = ?
+                SET state = ?, payload_json = ?, updated_at = ?
                 WHERE id = ? AND state = ?
                 """,
                 (
                     record.state.value,
-                    record.active_run_id,
                     record.to_json(),
                     record.updated_at.isoformat(),
                     str(record.id),
@@ -69,6 +74,38 @@ class WorkspaceRepository:
                     row["state"] if row is not None else "MISSING", "update"
                 )
         return record
+
+    def begin_run(
+        self, workspace_id: UUID, run_id: UUID | str, *, updated_at: datetime,
+        connection: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Take the single-run lease: True only if the workspace was READY and free."""
+
+        with self.database.connection_or(connection, immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE change_workspaces SET active_run_id = ?, updated_at = ?
+                WHERE id = ? AND state = 'READY' AND active_run_id IS NULL
+                """,
+                (str(run_id), updated_at.isoformat(), str(workspace_id)),
+            )
+            return cursor.rowcount == 1
+
+    def end_run(
+        self, workspace_id: UUID, run_id: UUID | str, *, updated_at: datetime,
+        connection: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Release the lease only when ``run_id`` still holds it."""
+
+        with self.database.connection_or(connection, immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE change_workspaces SET active_run_id = NULL, updated_at = ?
+                WHERE id = ? AND active_run_id = ?
+                """,
+                (updated_at.isoformat(), str(workspace_id), str(run_id)),
+            )
+            return cursor.rowcount == 1
 
     def get(
         self, workspace_id: UUID, *, connection: sqlite3.Connection | None = None

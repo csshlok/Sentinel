@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
 import sqlite3
-from collections.abc import Callable, Sequence
+import stat
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -47,20 +49,36 @@ from backend.app.git.safe_exec import RECOVERY_IDENTITY, GitIdentity, run_git
 from backend.app.workspace.errors import (
     workspace_apply_failed,
     workspace_approval_invalid,
+    workspace_base_mismatch,
+    workspace_busy,
     workspace_cleanup_failed,
+    workspace_cleanup_pending,
     workspace_clone_failed,
+    workspace_git_tampered,
     workspace_not_found,
     workspace_seal_failed,
+    workspace_source_alternates,
+    workspace_source_detached,
+    workspace_source_dirty,
+    workspace_source_mismatch,
     workspace_state_conflict,
 )
 from backend.app.workspace.models import ApplyPreview, ApplyRefusal, WorkspaceRecord
 from backend.app.workspace.repository import WorkspaceRepository
+
+LOGGER = logging.getLogger(__name__)
 
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _STDERR_KEEP = 4096
 _WORKSPACE_DIRECTORY = "ws"
 _CONTAINER_SUBDIRECTORIES = ("ws", "home", "tools", "Temp")
 PROFILE_DISPLAY_NAME = "Sentinel workspace"
+
+UNTRACKED_SOURCE_LIMITATION = (
+    "Untracked files in the source repository are not present in the workspace.")
+NO_BASELINE_LIMITATION = (
+    "No BASELINE checkpoint existed when the workspace was created; evidence comparisons "
+    "may not describe the workspace base.")
 
 
 def _digest(token: str) -> str:
@@ -76,18 +94,52 @@ def _same_path(left: str | Path, right: str | Path) -> bool:
             == os.path.normcase(os.path.realpath(right)))
 
 
+def _reparse_attributes(info: os.stat_result) -> bool:
+    attributes = getattr(info, "st_file_attributes", 0)
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) or stat.S_ISLNK(info.st_mode)
+
+
+def _is_reparse(path: str | Path) -> bool:
+    """Whether ``path`` itself is a junction, symbolic link or other reparse point."""
+
+    return _reparse_attributes(os.lstat(path))
+
+
+def _reparse_point_below(root: Path) -> bool:
+    """Whether any entry below ``root`` is a reparse point (never follows one)."""
+
+    pending = [os.fspath(root)]
+    while pending:
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                if _reparse_attributes(info):
+                    return True
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(entry.path)
+    return False
+
+
 class WorkspaceManager:
     """Owns the lifecycle of per-Change workspace clones and their AppContainer profiles."""
 
     def __init__(
         self, database: Database, *, profile_prefix: str = "sentinel.w.",
         git_timeout: float = 300.0, clock: Callable[[], datetime] = utc_now,
+        baseline_head: Callable[[UUID], str | None] | None = None,
+        credential_purger: Callable[[Path], bool] | None = None,
     ) -> None:
         validate_profile_name(profile_prefix + "0" * 32)
         self.repository = WorkspaceRepository(database)
         self._prefix = profile_prefix
         self._git_timeout = git_timeout
         self._clock = clock
+        self._baseline_head = baseline_head
+        self._credential_purger = credential_purger
+        # Runs started by THIS process; the sweep treats any other recorded run
+        # as interrupted (its Job Object died with the process that owned it).
+        self._live_runs: set[str] = set()
 
     # ------------------------------------------------------------------ queries
 
@@ -136,51 +188,91 @@ class WorkspaceManager:
     ) -> WorkspaceRecord:
         updated = replace(record, updated_at=self._clock(), **changes)
         self.repository.update(updated, expected_state=expected)
-        return updated
+        # The run lease column is authoritative; never hand back a stale copy of it.
+        return self.repository.get(updated.id) or updated
 
-    def _source_head(self, source: Path) -> tuple[str, str]:
-        top = self._git(source, ["rev-parse", "--show-toplevel"])
-        if top.returncode != 0:
-            raise workspace_clone_failed("the source is not a Git repository")
-        if not _same_path(_text(top), source):
-            raise workspace_clone_failed("the source is not the repository top level")
-        branch = self._git(source, ["symbolic-ref", "-q", "HEAD"])
-        if branch.returncode == 1:
-            raise workspace_clone_failed("the source repository HEAD is detached")
-        if branch.returncode != 0 or not _text(branch).startswith("refs/heads/"):
-            raise workspace_clone_failed("the source branch could not be read")
-        head = self._git(source, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
-        sha = _text(head)
-        if head.returncode != 0 or not _SHA.fullmatch(sha):
-            raise workspace_clone_failed("the source repository has no commit")
-        return _text(branch), sha
+    # ------------------------------------------------------------------ source checks
 
-    # ------------------------------------------------------------------ create
-
-    def create(self, change_id: UUID, source_repository: str | Path) -> WorkspaceRecord:
-        """Clone ``source_repository`` into a new AppContainer profile's storage folder."""
-
+    @staticmethod
+    def _resolve_source(source_repository: str | Path) -> Path:
         try:
             source = Path(source_repository).resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             raise workspace_clone_failed("the source repository does not exist") from exc
         if not source.is_dir():
             raise workspace_clone_failed("the source repository is not a directory")
-        live = self.repository.live_for_change(change_id)
-        if live is not None:
-            raise workspace_state_conflict(live.state.value, "create")
+        return source
+
+    def _check_source(self, source: Path) -> tuple[str, str, bool]:
+        """(branch ref, HEAD sha, has untracked files) of a launchable source.
+
+        Refuses a non-top-level or non-repository source, a detached HEAD
+        (D-03 needs a branch to fast-forward), tracked modifications (D-03: the
+        workspace only contains committed content) and object alternates (D-04:
+        a ``--no-hardlinks`` clone would still depend on the borrowed store).
+        Read-only: every command inspects, none writes.
+        """
+
         try:
-            base_branch, base_sha = self._source_head(source)
+            top = self._git(source, ["rev-parse", "--show-toplevel"])
+            if top.returncode != 0:
+                raise workspace_clone_failed("the source is not a Git repository")
+            if not _same_path(_text(top), source):
+                raise workspace_clone_failed("the source is not the repository top level")
+            branch = self._git(source, ["symbolic-ref", "-q", "HEAD"])
+            if branch.returncode == 1:
+                raise workspace_source_detached()
+            if branch.returncode != 0 or not _text(branch).startswith("refs/heads/"):
+                raise workspace_clone_failed("the source branch could not be read")
+            head = self._git(source, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+            sha = _text(head)
+            if head.returncode != 0 or not _SHA.fullmatch(sha):
+                raise workspace_clone_failed("the source repository has no commit")
+            tracked = self._git(source, ["status", "--porcelain=v1", "--untracked-files=no"])
+            if tracked.returncode != 0:
+                raise workspace_clone_failed("the source status could not be read")
+            if tracked.stdout.strip():
+                raise workspace_source_dirty()
+            untracked = self._git(
+                source, ["status", "--porcelain=v1", "--untracked-files=normal"])
+            if untracked.returncode != 0:
+                raise workspace_clone_failed("the source status could not be read")
+            alternates = self._git(source, ["rev-parse", "--git-path", "objects/info/alternates"])
+            if alternates.returncode != 0 or not _text(alternates):
+                raise workspace_clone_failed("the source object store could not be read")
+            if os.path.lexists(source / _text(alternates)):
+                raise workspace_source_alternates()
         except AppError as exc:
             if exc.code.startswith("WORKSPACE_"):
                 raise
             raise workspace_clone_failed("the source repository could not be read") from exc
+        return _text(branch), sha, bool(untracked.stdout.strip())
 
+    # ------------------------------------------------------------------ create
+
+    def create(self, change_id: UUID, source_repository: str | Path) -> WorkspaceRecord:
+        """Clone ``source_repository`` into a new AppContainer profile's storage folder."""
+
+        source = self._resolve_source(source_repository)
+        live = self.repository.live_for_change(change_id)
+        if live is not None:
+            raise workspace_state_conflict(live.state.value, "create")
+        base_branch, base_sha, untracked = self._check_source(source)
+        return self._create(
+            change_id, source, base_branch, base_sha,
+            (UNTRACKED_SOURCE_LIMITATION,) if untracked else (),
+        )
+
+    def _create(
+        self, change_id: UUID, source: Path, base_branch: str, base_sha: str,
+        limitations: tuple[str, ...],
+    ) -> WorkspaceRecord:
         now = self._clock()
         record = WorkspaceRecord(
             id=uuid4(), change_id=change_id, state=WorkspaceState.CREATING,
             profile_name=self._prefix + uuid4().hex, created_at=now, updated_at=now,
             source_repository=source, base_branch=base_branch, base_sha=base_sha,
+            limitations=limitations,
         )
         # Write-ahead: the row names the profile before the profile exists, so a
         # crash between the two is always discoverable by the DB-driven sweep.
@@ -220,6 +312,136 @@ class WorkspaceManager:
             code = exc.code if isinstance(exc, AppError) else type(exc).__name__
             raise workspace_clone_failed(f"workspace creation failed ({code})") from exc
 
+    # ------------------------------------------------------------------ run lease
+
+    def ensure(
+        self, change_id: UUID, source_repository: str, *, run_id: UUID,
+    ) -> WorkspaceRecord:
+        """The Change's workspace, leased to ``run_id`` (created on first use).
+
+        The source preconditions are re-checked on every launch (D-03 applies
+        "at launch"). Only one run holds a workspace at a time; the lease is
+        a compare-and-set on ``active_run_id`` and is released by
+        :meth:`finish_run` (or by the sweep after a crash).
+        """
+
+        source = self._resolve_source(source_repository)
+        base_branch, base_sha, untracked = self._check_source(source)
+        live = self.repository.live_for_change(change_id)
+        if live is None:
+            limitations: list[str] = []
+            if self._baseline_head is not None:
+                baseline = self._baseline_head(change_id)
+                if baseline is None:
+                    limitations.append(NO_BASELINE_LIMITATION)
+                elif baseline != base_sha:
+                    raise workspace_base_mismatch()
+            else:
+                limitations.append(NO_BASELINE_LIMITATION)
+            if untracked:
+                limitations.append(UNTRACKED_SOURCE_LIMITATION)
+            try:
+                record = self._create(change_id, source, base_branch, base_sha,
+                                      tuple(limitations))
+            except AppError as exc:
+                if exc.code == "WORKSPACE_STATE_CONFLICT":  # a concurrent ensure won
+                    raise workspace_busy() from exc
+                raise
+        else:
+            record = live
+            if record.state == WorkspaceState.CREATING:
+                raise workspace_busy()
+            if record.state in (WorkspaceState.APPLIED, WorkspaceState.DISCARDED,
+                                WorkspaceState.CLEANUP_FAILED):
+                raise workspace_cleanup_pending(record.state.value)
+            if record.source_repository is None or not _same_path(
+                    record.source_repository, source):
+                raise workspace_source_mismatch()
+            if record.active_run_id is not None:
+                raise workspace_busy()
+            changes: dict[str, Any] = {}
+            if record.state in (WorkspaceState.SEALED, WorkspaceState.APPLY_REFUSED):
+                # A new run changes the content: every earlier approval is void.
+                changes.update(state=WorkspaceState.READY, approval_digest=None,
+                               approved_base_sha=None, approved_sealed_sha=None,
+                               refusal_reason=None)
+            if untracked and UNTRACKED_SOURCE_LIMITATION not in record.limitations:
+                changes["limitations"] = record.limitations + (UNTRACKED_SOURCE_LIMITATION,)
+            if changes:
+                record = self._save(record, record.state, **changes)
+        if not self.repository.begin_run(record.id, run_id, updated_at=self._clock()):
+            raise workspace_busy()
+        self._live_runs.add(str(run_id))
+        LOGGER.info("workspace %s leased to run %s", record.id, run_id)
+        return self.get(record.id)
+
+    def finish_run(
+        self, workspace_id: UUID, run_id: UUID, *, facts: Mapping[str, object] | None,
+        status: str, limitations: Sequence[str] = (),
+    ) -> None:
+        """Record the run's outcome and release its lease (idempotent)."""
+
+        key = str(run_id)
+        record = self.get(workspace_id)
+        if not any(run.get("run_id") == key for run in record.runs):
+            entry = {
+                "run_id": key,
+                "status": status,
+                "facts": dict(facts) if facts is not None else None,
+                "limitations": list(limitations),
+                "finished_at": self._clock().isoformat(),
+            }
+            self._save(record, record.state, runs=record.runs + (entry,))
+        self.repository.end_run(workspace_id, key, updated_at=self._clock())
+        self._live_runs.discard(key)
+        LOGGER.info("workspace %s released by run %s (%s)", workspace_id, run_id, status)
+
+    # ------------------------------------------------------------------ .git validation
+
+    def _validate_workspace_git(self, record: WorkspaceRecord) -> None:
+        """Refuse a workspace whose agent-controlled ``.git`` could steer host-side Git.
+
+        Runs before every host-side Git call on the workspace. It is only
+        meaningful while no agent process runs (the run lease plus the
+        kill-on-close Job end every agent process before seal/preview/apply).
+        """
+
+        if record.workspace_path is None or record.container_path is None:
+            raise workspace_state_conflict(record.state.value, "git")
+        container = Path(record.container_path)
+        workspace = Path(record.workspace_path)
+        expected_ws = os.path.join(os.path.realpath(container), _WORKSPACE_DIRECTORY)
+        try:
+            if (_is_reparse(workspace) or not workspace.is_dir()
+                    or not _same_path(workspace.resolve(strict=True), expected_ws)):
+                raise workspace_git_tampered("workspace_path")
+        except OSError as exc:
+            raise workspace_git_tampered("workspace_path") from exc
+        git_dir = workspace / ".git"
+        try:
+            info = os.lstat(git_dir)
+        except OSError as exc:
+            raise workspace_git_tampered("git_dir_type") from exc
+        if not stat.S_ISDIR(info.st_mode) or _is_reparse(git_dir):
+            raise workspace_git_tampered("git_dir_type")
+        expected_git = os.path.join(expected_ws, ".git")
+        if not _same_path(git_dir, expected_git):
+            raise workspace_git_tampered("git_dir_location")
+        if os.path.lexists(git_dir / "commondir"):
+            raise workspace_git_tampered("commondir")
+        info_dir = git_dir / "objects" / "info"
+        if (os.path.lexists(info_dir / "alternates")
+                or os.path.lexists(info_dir / "http-alternates")):
+            raise workspace_git_tampered("alternates")
+        if _reparse_point_below(git_dir):
+            raise workspace_git_tampered("git_dir_links")
+        worktree = self._ws_git(record, ["config", "--get", "core.worktree"])
+        if worktree.returncode != 1:
+            raise workspace_git_tampered("core_worktree")
+        absolute = self._ws_git(record, ["rev-parse", "--absolute-git-dir"])
+        if absolute.returncode != 0 or not _same_path(_text(absolute), expected_git):
+            raise workspace_git_tampered("absolute_git_dir")
+
     # ------------------------------------------------------------------ seal + preview
 
     def _live(self, change_id: UUID) -> WorkspaceRecord:
@@ -237,6 +459,7 @@ class WorkspaceManager:
         if record.active_run_id is not None:
             raise workspace_state_conflict(record.state.value, "preview")
         base = record.base_sha or ""
+        self._validate_workspace_git(record)
         try:
             if self._ws_git(record, ["add", "-A"]).returncode != 0:
                 raise workspace_seal_failed("git add failed")
@@ -302,18 +525,24 @@ class WorkspaceManager:
         """Fast-forward the user's branch to the approved sealed commit, or refuse."""
 
         record = self._live(change_id)
-        if record.state != WorkspaceState.SEALED or record.active_run_id is not None:
+        if record.active_run_id is not None:
             raise workspace_state_conflict(record.state.value, "apply")
+        # A cleared approval (a newer run or preview voided it) is an invalid
+        # approval, whatever state the workspace moved to since.
         if (not isinstance(approval_token, str) or not approval_token
                 or not record.approval_digest
-                or not hmac.compare_digest(_digest(approval_token), record.approval_digest)
-                or record.approved_base_sha != record.base_sha
+                or not hmac.compare_digest(_digest(approval_token), record.approval_digest)):
+            raise workspace_approval_invalid()
+        if record.state != WorkspaceState.SEALED:
+            raise workspace_state_conflict(record.state.value, "apply")
+        if (record.approved_base_sha != record.base_sha
                 or record.approved_sealed_sha != record.sealed_sha
                 or record.sealed_sha is None):
             raise workspace_approval_invalid()
         source = record.source_repository
         if source is None or record.workspace_path is None or record.container_path is None:
             raise workspace_state_conflict(record.state.value, "apply")
+        self._validate_workspace_git(record)
 
         # Read-only checks against the user repository come first.
         try:

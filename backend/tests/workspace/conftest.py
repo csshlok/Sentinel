@@ -183,10 +183,43 @@ def workspace_manager(workspace_database: Database):
 
     manager = WorkspaceManager(workspace_database, profile_prefix=TEST_PROFILE_PREFIX)
     yield manager
+    teardown_workspaces(manager)
+
+
+def teardown_workspaces(manager) -> None:
+    """Release any leftover run lease and clean every unclean workspace (best effort)."""
+
+    from backend.app.contracts.models import utc_now
+
     for record in manager.repository.list_unclean():
         try:
             if record.active_run_id is not None:
-                continue
+                manager.repository.end_run(record.id, record.active_run_id, updated_at=utc_now())
             manager.cleanup(record.id)
         except Exception:
             pass
+
+
+def registered_test_profiles() -> set[str]:
+    """The ``sentinel.test.*`` AppContainer monikers currently registered for this user."""
+
+    return set(_test_profiles())
+
+
+def create_junction(target: Path, link: Path) -> None:
+    """A directory junction ``link`` -> ``target`` (what an agent could plant)."""
+
+    import _winapi
+
+    _winapi.CreateJunction(str(target), str(link))
+
+
+def has_object(repo: Path, sha: str) -> bool:
+    """Whether ``repo``'s object store contains ``sha`` (plain git, read-only)."""
+
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"],
+        capture_output=True,
+    ).returncode == 0
