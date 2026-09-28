@@ -401,6 +401,43 @@ def test_local_header_method_mismatch_is_invalid(tmp_path: Path) -> None:
     assert "compression" in result.reason
 
 
+@pytest.mark.parametrize("field,offset,value", [
+    ("local version", 4, 1),
+    ("local DOS time", 10, 1),
+    ("local extra", 28, 1),
+    ("local crc", 14, 1),
+    ("local stored size", 18, 1),
+    ("local flags", 6, 2),
+    ("local name", 30, ord("X")),
+    ("central extra", 30, 1),
+    ("central made-by", 4, 1),
+    ("central internal attributes", 36, 1),
+    ("central comment", 32, 1),
+    ("central flags", 8, 2),
+    ("central crc", 16, 1),
+    ("EOCD count", 8, 1),
+    ("EOCD directory size", 12, 1),
+])
+def test_each_unsigned_zip_header_field_is_rejected(
+    tmp_path: Path, field: str, offset: int, value: int,
+) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    if field.startswith("local"):
+        start = 0
+    elif field.startswith("central"):
+        start = raw.find(b"PK\x01\x02")
+    else:
+        start = len(raw) - 22
+    assert start >= 0
+    raw[start + offset] ^= value
+    target = tmp_path / "mutated.sentinel"
+    target.write_bytes(raw)
+    result = verify_bundle(target, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", (field, result.reason)
+    assert any(reason in result.reason for reason in ("ZIP", "BadZipFile")), (
+        field, result.reason)
+
+
 def test_claim_type_coercion_cannot_make_card_and_verifier_disagree() -> None:
     with zipfile.ZipFile(GOLDEN) as archive:
         content = {name: archive.read(name) for name in archive.namelist()}
