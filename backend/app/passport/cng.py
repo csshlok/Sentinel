@@ -11,8 +11,10 @@ import ctypes
 import hashlib
 import os
 import struct
+from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
+from typing import Iterator
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -22,7 +24,7 @@ PLATFORM_PROVIDER = "Microsoft Platform Crypto Provider"
 SOFTWARE_PROVIDER = "Microsoft Software Key Storage Provider"
 DEFAULT_KEY_NAME = "Sentinel Passport v2 ES256"
 _BAD_KEYSET = 0x80090016
-_PLATFORM_UNAVAILABLE_FOR_KEY = {0x80090029, 0x80290405}  # unsupported, not a transient TPM error
+_PLATFORM_UNAVAILABLE_FOR_KEY = {0x80090029, 0x80290405}
 _ECC_P256_PUBLIC_MAGIC = 0x31534345  # ECS1
 _EXPORT_POLICY = "Export Policy"
 
@@ -73,6 +75,37 @@ def _api() -> ctypes.WinDLL:
     return dll
 
 
+@contextmanager
+def _creation_mutex(name: str) -> Iterator[None]:
+    """Serialize CNG's non-atomic create/finalize pair across processes."""
+    if os.name != "nt":
+        yield
+        return
+    kernel = ctypes.WinDLL("kernel32.dll", use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+    kernel.ReleaseMutex.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    identifier = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    handle = kernel.CreateMutexW(None, False, f"Local\\Sentinel-CNG-{identifier}")
+    if not handle:
+        raise OSError("CNG identity lock is unavailable")
+    try:
+        status = kernel.WaitForSingleObject(handle, 30_000)
+        if status not in (0, 0x80):
+            raise OSError("CNG identity lock timed out")
+        try:
+            yield
+        finally:
+            kernel.ReleaseMutex(handle)
+    finally:
+        kernel.CloseHandle(handle)
+
+
 @dataclass(slots=True)
 class CngKey:
     """An opened persistent P-256 key; use as a context manager."""
@@ -87,6 +120,11 @@ class CngKey:
     def open(cls, *, name: str = DEFAULT_KEY_NAME) -> CngKey:
         if not name or len(name) > 200 or "\\" in name or "/" in name:
             raise ValueError("Invalid CNG key name")
+        with _creation_mutex(name):
+            return cls._open_unlocked(name=name)
+
+    @classmethod
+    def _open_unlocked(cls, *, name: str) -> CngKey:
         dll = _api()
         providers: list[tuple[str, ctypes.c_void_p]] = []
         platform_open_error: int | None = None
@@ -152,6 +190,16 @@ class CngKey:
                     _checked("NCryptFinalizeKey", dll.NCryptFinalizeKey(key, 0))
                     chosen = cls(dll, handle, key, _provider_label(label), name)
                     chosen._assert_nonexportable()
+                    reopened = ctypes.c_void_p()
+                    _checked("NCryptOpenKey(after finalize)", dll.NCryptOpenKey(
+                        handle, ctypes.byref(reopened), name, 0, 0))
+                    try:
+                        persisted = cls(dll, handle, reopened, _provider_label(label), name)
+                        persisted._assert_nonexportable()
+                        if persisted.public_spki() != chosen.public_spki():
+                            raise RuntimeError("CNG signing identity changed during creation")
+                    finally:
+                        dll.NCryptFreeObject(reopened)
                     for other_label, other in providers:
                         if other_label != label:
                             dll.NCryptFreeObject(other)

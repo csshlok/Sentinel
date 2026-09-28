@@ -6,6 +6,8 @@ import base64
 import ctypes
 import hashlib
 import os
+import threading
+import time
 from uuid import uuid4
 
 import pytest
@@ -109,6 +111,51 @@ def test_transient_platform_creation_failure_does_not_create_software_key(
     with pytest.raises(cng.CngError, match="NCryptCreatePersistedKey\\(Platform\\)"):
         CngKey.open(name=f"Sentinel disposable test {uuid4()}")
     assert attempted == ["platform"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_first_use_key_open_is_serialized_across_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = CngKey._open_unlocked.__func__
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+    name = f"Sentinel disposable test {uuid4()}"
+    identities: list[bytes] = []
+    errors: list[Exception] = []
+
+    def observed(cls, *, name: str):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.15)
+            return original(cls, name=name)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(CngKey, "_open_unlocked", classmethod(observed))
+
+    def worker() -> None:
+        try:
+            with CngKey.open(name=name) as key:
+                identities.append(key.public_spki())
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    try:
+        assert not errors and len(identities) == 2
+        assert identities[0] == identities[1]
+        assert peak == 1
+    finally:
+        with CngKey.open(name=name) as key:
+            key.delete_for_test()
 
 
 def test_fingerprint_is_sha256_of_spki() -> None:
