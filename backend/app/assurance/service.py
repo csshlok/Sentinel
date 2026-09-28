@@ -28,6 +28,7 @@ from backend.app.contracts.models import (
     AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan, AssuranceRun,
     ChangeView, ContractModel, DependencyReport, EnvironmentDrift, EnvironmentPassport,
     GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass, utc_now,
+    DiffCoverageResult,
 )
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -480,14 +481,39 @@ class EvidenceService:
             evaluation = self.evaluate(change, stored.plan.id)
         except AppError as exc:
             return AssuranceFacts(reasons=[exc.message])
+        coverage_ok, coverage_reason = self._diff_coverage_gate(change)
         return AssuranceFacts(
-            required_assurance_passed=evaluation.required_assurance_passed,
-            assurance_fresh=evaluation.assurance_fresh,
+            required_assurance_passed=evaluation.required_assurance_passed and coverage_ok,
+            assurance_fresh=evaluation.assurance_fresh and coverage_ok,
             deviations_resolved=evaluation.deviations_resolved,
-            required_evidence_complete=evaluation.required_evidence_complete,
+            required_evidence_complete=evaluation.required_evidence_complete and coverage_ok,
             reasons=[*evaluation.freshness_reasons,
                      *[f"Required check '{c}' has no passing result." for c in evaluation.missing_required],
-                     *[f"Check '{c}' failed." for c in evaluation.failed]][:64])
+                     *[f"Check '{c}' failed." for c in evaluation.failed],
+                     *([coverage_reason] if coverage_reason else [])][:64])
+
+    def save_diff_coverage(self, result: DiffCoverageResult) -> None:
+        self._store.save_diff_coverage(result)
+
+    def _diff_coverage_gate(self, change: ChangeView) -> tuple[bool, str | None]:
+        rule = change.contract.diff_coverage_rule
+        if rule is None or not rule.required:
+            return True, None
+        result = self._store.latest_diff_coverage(change.id)
+        if result is None:
+            return False, "Required diff coverage has not been measured."
+        if result.contract_digest != contract_digest(change):
+            return False, "Required diff coverage belongs to an earlier Change Contract."
+        if result.diff_exercised != "PASS" or result.freshness != "CURRENT" or not result.gate_satisfied:
+            return False, f"Required diff coverage is {result.diff_exercised}."
+        try:
+            current = self._git.capture(change.id, "diff-gate", change.repository_path,
+                                        self._revision(change), 1_048_576)
+        except AppError:
+            return False, "Required diff coverage freshness could not be confirmed."
+        if current.head_sha != result.head_sha or current.status_digest != result.status_digest:
+            return False, "Required diff coverage is stale for the current repository."
+        return True, None
 
     # -- journal --------------------------------------------------------------
 

@@ -252,7 +252,7 @@ class VerificationResult(ContractModel):
 
 
 class ChangeContract(ContractModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     allowed_paths: list[PathPattern] = Field(default_factory=lambda: ["**"], max_length=256)
     forbidden_paths: list[PathPattern] = Field(default_factory=list, max_length=256)
     expected_outcomes: list[ShortText] = Field(default_factory=list, max_length=128)
@@ -261,6 +261,13 @@ class ChangeContract(ContractModel):
     allowed_provider_operations: list[CapabilityScope] = Field(default_factory=list, max_length=64)
     max_risk: RiskLevel = RiskLevel.MEDIUM
     recovery_allowed: bool = True
+    diff_coverage_rule: DiffCoverageRule | None = None
+
+    @model_validator(mode="after")
+    def coverage_rule_requires_v2(self) -> ChangeContract:
+        if self.diff_coverage_rule is not None and self.schema_version != 2:
+            raise ValueError("diff_coverage_rule requires Change Contract schema version 2")
+        return self
 
     @field_validator(
         "allowed_paths",
@@ -1135,7 +1142,7 @@ class DiffCoverageRule(ContractModel):
     required: bool = False
     minimum_percent: float = Field(default=0, ge=0, le=100)
     per_file: bool = False
-    policy_version: ShortText = "advisory-v1"
+    policy_version: ShortText = "diff-coverage-v1"
 
 
 class DiffCoverageRequest(ContractModel):

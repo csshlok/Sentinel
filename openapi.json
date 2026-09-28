@@ -1124,6 +1124,16 @@
             "title": "Authority Ceiling",
             "type": "array"
           },
+          "diff_coverage_rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiffCoverageRule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "expected_outcomes": {
             "items": {
               "maxLength": 256,
@@ -1164,8 +1174,11 @@
             "type": "array"
           },
           "schema_version": {
-            "const": 1,
             "default": 1,
+            "enum": [
+              1,
+              2
+            ],
             "title": "Schema Version",
             "type": "integer"
           }
@@ -2731,7 +2744,7 @@
             "type": "boolean"
           },
           "policy_version": {
-            "default": "advisory-v1",
+            "default": "diff-coverage-v1",
             "maxLength": 256,
             "minLength": 1,
             "title": "Policy Version",

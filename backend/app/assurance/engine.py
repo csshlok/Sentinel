@@ -47,7 +47,11 @@ _STATUS = {
 
 
 def contract_digest(change: ChangeView) -> str:
-    body = json.dumps(change.contract.model_dump(mode="json"), sort_keys=True,
+    payload = change.contract.model_dump(mode="json")
+    if change.contract.schema_version == 1:
+        # Preserve hashes of pre-v2 plans stored before this optional field existed.
+        payload.pop("diff_coverage_rule", None)
+    body = json.dumps(payload, sort_keys=True,
                       separators=(",", ":"))
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 

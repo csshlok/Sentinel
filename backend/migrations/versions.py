@@ -593,6 +593,22 @@ def migration_010_descendant_processes(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_011_diff_coverage_results(connection: sqlite3.Connection) -> None:
+    """Persist immutable, checkpoint-bound coverage measurements."""
+
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS diff_coverage_results ("
+        "id TEXT PRIMARY KEY, "
+        "change_id TEXT NOT NULL REFERENCES changes(id) ON DELETE CASCADE, "
+        "payload_json TEXT NOT NULL, "
+        "completed_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_diff_coverage_change_completed "
+        "ON diff_coverage_results(change_id, completed_at DESC)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -604,6 +620,7 @@ MIGRATIONS = (
     Migration(8, "agent_run_pause_fields", migration_008_agent_run_pause_fields),
     Migration(9, "change_fork_columns", migration_009_change_fork_columns),
     Migration(10, "descendant_processes", migration_010_descendant_processes),
+    Migration(11, "diff_coverage_results", migration_011_diff_coverage_results),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

@@ -15,13 +15,13 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from typing import TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
 from backend.app.contracts.models import (
     AgentRun, AssurancePlan, AssuranceRun, DependencyReport, EnvironmentPassport,
-    GitCheckpoint,
+    GitCheckpoint, DiffCoverageResult,
 )
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
@@ -206,6 +206,24 @@ class EvidenceStore:
     def list_runs(self, plan_id: UUID) -> list[AssuranceRun]:
         return self._many("SELECT payload_json FROM assurance_runs WHERE plan_id = ? "
                           "ORDER BY completed_at ASC, id ASC", (str(plan_id),), AssuranceRun)
+
+    def save_diff_coverage(self, result: DiffCoverageResult) -> None:
+        """Retain the measured result; later UNKNOWN results supersede earlier PASSes."""
+
+        with self._db.connection(immediate=True) as connection:
+            connection.execute(
+                "INSERT INTO diff_coverage_results (id, change_id, payload_json, completed_at) "
+                "VALUES (?, ?, ?, ?)",
+                (str(uuid4()), str(result.change_id), result.model_dump_json(),
+                 result.completed_at.isoformat()),
+            )
+
+    def latest_diff_coverage(self, change_id: UUID) -> DiffCoverageResult | None:
+        return self._one(
+            "SELECT payload_json FROM diff_coverage_results WHERE change_id = ? "
+            "ORDER BY completed_at DESC, rowid DESC LIMIT 1",
+            (str(change_id),), DiffCoverageResult,
+        )
 
     # -- helpers ------------------------------------------------------------
 
