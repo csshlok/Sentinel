@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -20,8 +21,12 @@ from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.card import card_facts, render_html, render_svg
 from backend.app.passport.cng import CngKey
 from backend.app.passport.jcs import parse_canonical
+from backend.app.git.state import GitStateTracker
 from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.passport.test_v2 import _launch
+from backend.tests.support_kb import make_repo, write
+from backend.app.passport.verify import verify_bundle
+from backend.app.passport.trust import TrustRegistry
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
@@ -98,6 +103,49 @@ def test_stale_diff_result_remains_stale_in_card(tmp_path: Path) -> None:
             assert passport["claims"]["diff_coverage"]["freshness"] == "STALE"
             assert b"STALE" in archive.read("visuals/passport.html")
             assert b"STALE" in archive.read("visuals/passport.svg")
+    finally:
+        with CngKey.open(name=key_name) as key:
+            key.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_repo_movement_after_measurement_becomes_stale_in_every_view(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "VALUE = 1\n"})
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    with database.connection() as connection:
+        connection.execute("UPDATE changes SET repository_path = ? WHERE id = ?",
+                           (str(root), str(change.id)))
+    captured = GitStateTracker().capture(change.id, "measured", str(root), 1, 1_048_576)
+    now = datetime.now(UTC)
+    result = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=uuid4(), tested_checkpoint_id=uuid4(),
+        head_sha=captured.head_sha, status_digest=captured.status_digest,
+        contract_digest="c" * 64, started_at=now, completed_at=now,
+        collector_status="OK", checks_passed=True, diff_exercised="PASS",
+        freshness="CURRENT", changed_executable_lines=1, executed_changed_lines=1,
+        measured_percent=100,
+    )
+    EvidenceStore(database).save_diff_coverage(result)
+    write(root, "module.py", "VALUE = 2\n")
+    key_name = f"Sentinel disposable test {uuid4()}"
+    try:
+        bundle = BundleExporter(database, key_name=key_name).export(change.id)
+        path = tmp_path / bundle.filename
+        path.write_bytes(bundle.content)
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            passport = parse_canonical(archive.read("passport.json"))
+            signature = parse_canonical(archive.read("signature.json"))
+            assert b"STALE" in archive.read("visuals/passport.svg")
+        diff = passport["claims"]["diff_coverage"]
+        assert diff["freshness"] == "STALE" and diff["diff_exercised"] == "STALE"
+        spki = base64.b64decode(signature["public_spki_b64"])
+        trust = TrustRegistry(tmp_path / "trusted_keys.json")
+        trust.add(spki=spki, label="Lab")
+        verdict = verify_bundle(path, trust=trust)
+        assert verdict.verdict == "VALID"
+        assert verdict.claims["freshness"] == "STALE"
+        assert verdict.claims["diff_exercised"] == "STALE"
     finally:
         with CngKey.open(name=key_name) as key:
             key.delete_for_test()
