@@ -502,6 +502,9 @@ class EvidenceService:
         result = self._store.latest_diff_coverage(change.id)
         if result is None:
             return False, "Required diff coverage has not been measured."
+        baseline = self._store.named_checkpoint(change.id, BASELINE)
+        if baseline is None or result.baseline_checkpoint_id != baseline.id:
+            return False, "Required diff coverage was not measured from the Change baseline."
         if result.contract_digest != contract_digest(change):
             return False, "Required diff coverage belongs to an earlier Change Contract."
         if result.diff_exercised != "PASS" or result.freshness != "CURRENT" or not result.gate_satisfied:

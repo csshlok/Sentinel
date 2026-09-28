@@ -128,6 +128,15 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         result.error = "Baseline is not clean or checkpoint patch was truncated."
         return result
     try:
+        ancestry = run_git(
+            tested.repository_root,
+            ["merge-base", "--is-ancestor", baseline.head_sha, tested.head_sha],
+            limit=4096,
+        )
+        if (ancestry.returncode != 0 or ancestry.incomplete or ancestry.timed_out
+                or ancestry.truncated):
+            result.error = "Baseline commit is not proven to precede the tested HEAD."
+            return result
         captured = run_git(
             tested.repository_root,
             ["-c", "color.diff=false", "-c", "diff.interHunkContext=0", "diff",

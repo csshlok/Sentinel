@@ -46,3 +46,20 @@ def test_repository_color_and_inter_hunk_config_cannot_change_mapping(tmp_path: 
     mapped = map_diff(baseline=baseline, tested=tested)
     assert mapped.error is None
     assert mapped.lines == {"module.py": {1, 12}}
+
+
+def test_diverged_baseline_commit_is_not_a_valid_diff_origin(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "value = 1\n"})
+    tracker = GitStateTracker()
+    change_id = uuid4()
+    git(root, "checkout", "-q", "-b", "side")
+    write(root, "module.py", "value = 2\n")
+    git(root, "add", "module.py")
+    git(root, "commit", "-q", "-m", "side")
+    baseline = tracker.capture(change_id, "baseline", str(root), 1, 1_048_576)
+    git(root, "checkout", "-q", "main")
+    write(root, "module.py", "value = 3\n")
+    git(root, "add", "module.py")
+    git(root, "commit", "-q", "-m", "main")
+    tested = tracker.capture(change_id, "tested", str(root), 1, 1_048_576)
+    assert "not proven" in map_diff(baseline=baseline, tested=tested).error

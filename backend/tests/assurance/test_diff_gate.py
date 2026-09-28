@@ -38,13 +38,14 @@ def _fixture(tmp_path: Path) -> tuple[EvidenceService, ChangeView, object]:
         created_at=change.created_at, updated_at=change.updated_at, last_refreshed_at=None,
         git_summary=None, verification=None, contract=contract,
     ))
-    checkpoint = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    checkpoint = GitStateTracker().capture(change.id, "baseline", str(root), 1, 1_048_576)
+    EvidenceStore(database).save_checkpoint(checkpoint)
     return EvidenceService(EvidenceStore(database)), change, checkpoint
 
 
 def _result(change: ChangeView, checkpoint: object, state: str) -> DiffCoverageResult:
     return DiffCoverageResult(
-        change_id=change.id, baseline_checkpoint_id=uuid4(), tested_checkpoint_id=checkpoint.id,
+        change_id=change.id, baseline_checkpoint_id=checkpoint.id, tested_checkpoint_id=checkpoint.id,
         head_sha=checkpoint.head_sha, status_digest=checkpoint.status_digest,
         contract_digest=contract_digest(change), started_at=utc_now(), completed_at=utc_now(),
         collector_status="COLLECTED", checks_passed=True, diff_exercised=state,
@@ -93,6 +94,18 @@ def test_contract_change_invalidates_prior_pass(tmp_path: Path) -> None:
     changed = change.model_copy(update={"contract": ChangeContract(
         schema_version=2, diff_coverage_rule=DiffCoverageRule(required=True, minimum_percent=90))})
     assert evidence._diff_coverage_gate(changed)[0] is False
+
+
+def test_later_caller_chosen_baseline_cannot_open_required_gate(tmp_path: Path) -> None:
+    evidence, change, checkpoint = _fixture(tmp_path)
+    later = checkpoint.model_copy(update={"id": uuid4(), "name": "mid"})
+    evidence._store.save_checkpoint(later)
+    forged = _result(change, checkpoint, "PASS").model_copy(
+        update={"baseline_checkpoint_id": later.id})
+    evidence.save_diff_coverage(forged)
+    allowed, reason = evidence._diff_coverage_gate(change)
+    assert allowed is False
+    assert "Change baseline" in reason
 
 
 def test_required_rule_blocks_otherwise_passing_assurance_facts(
