@@ -260,6 +260,29 @@ def test_self_ignoring_untracked_gitignore_cannot_hide_imported_source(
     assert result.gate_satisfied is False
 
 
+def test_repo_pytest_collection_rules_cannot_hide_failing_tests(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "LIMIT = 5\n\ndef old():\n    return 1\n",
+        "tests/test_old.py": "from module import LIMIT, old\n\ndef test_old():\n"
+                             "    assert old() == 1\n\ndef test_limit():\n"
+                             "    assert LIMIT == 5\n",
+    })
+    change = ChangeView(id=uuid4(), title="pytest config", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "LIMIT = 50\n\ndef old():\n    return 1\n")
+    write(root, "pyproject.toml", '[tool.pytest.ini_options]\npython_functions = "test_old"\n')
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is False
+    assert result.gate_satisfied is False
+    assert any("sentinel-pytest.ini" in token for token in result.command)
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")

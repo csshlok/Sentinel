@@ -215,11 +215,20 @@ def collect_diff_coverage(
             data = evidence / "coverage.data"
             artifact = evidence / "coverage.json"
             junit = evidence / "pytest-results.xml"
+            pytest_config = evidence / "sentinel-pytest.ini"
             config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
+            pytest_config.write_text(
+                "[pytest]\naddopts =\npython_files = test_*.py *_test.py\n"
+                "python_classes = Test*\npython_functions = test_*\n"
+                "testpaths =\nnorecursedirs = .git .venv venv node_modules "
+                ".tox .nox __pycache__\n",
+                encoding="utf-8",
+            )
             argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
                     "-m", "coverage", "run", "--rcfile", str(config),
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
-                    "-o", "addopts=", f"--junitxml={junit}", *test_args]
+                    *test_args, "-c", str(pytest_config), f"--rootdir={root}",
+                    "-o", "addopts=", f"--junitxml={junit}"]
             result = result.model_copy(update={"command": argv})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
             if run.timed_out or run.incomplete:
