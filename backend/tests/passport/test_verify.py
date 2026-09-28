@@ -227,3 +227,17 @@ def test_oversized_zip_bomb_missing_and_malformed_are_invalid(signed_bundle) -> 
     unsupported = _rewrite(path, root / "unsupported.sentinel",
                            replacement={"manifest.json": canonicalize(manifest)})
     assert verify_bundle(unsupported).verdict == "INVALID"
+
+
+def test_unsupported_public_key_algorithm_returns_invalid(tmp_path: Path) -> None:
+    with zipfile.ZipFile(GOLDEN) as archive:
+        signature = parse_canonical(archive.read("signature.json"))
+    # SubjectPublicKeyInfo with an unsupported algorithm OID (1.2.3.4).
+    signature["public_spki_b64"] = base64.b64encode(
+        bytes.fromhex("300c300706032a030403020000")
+    ).decode("ascii")
+    target = _rewrite(GOLDEN, tmp_path / "unknown-algorithm.sentinel",
+                      replacement={"signature.json": canonicalize(signature)})
+    result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
+    assert result.verdict == "INVALID"
+    assert "UnsupportedAlgorithm" in result.reason or "ValueError" in result.reason

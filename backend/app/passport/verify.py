@@ -289,3 +289,7 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
     except (OSError, ValueError, TypeError, KeyError, AssertionError, RuntimeError,
             RecursionError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
         return _invalid(f"Portable Passport invalid: {type(exc).__name__}: {exc}")
+    except Exception as exc:
+        # Parsing untrusted archives must always produce a verdict, including for
+        # decompressor and cryptography exceptions outside the list above.
+        return _invalid(f"Portable Passport invalid: {type(exc).__name__}")
