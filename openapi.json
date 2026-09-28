@@ -2556,6 +2556,17 @@
             ],
             "title": "Checks Passed"
           },
+          "collection_boundary": {
+            "const": "UNCONFINED_IN_PROCESS",
+            "default": "UNCONFINED_IN_PROCESS",
+            "title": "Collection Boundary",
+            "type": "string"
+          },
+          "collection_caveat": {
+            "default": "Tests and coverage share a process at user authority; agent-authored code can influence coverage data.",
+            "title": "Collection Caveat",
+            "type": "string"
+          },
           "collector_id": {
             "const": "coverage.py-json-v1",
             "default": "coverage.py-json-v1",

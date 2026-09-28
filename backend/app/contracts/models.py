@@ -1188,6 +1188,10 @@ class DiffCoverageResult(ContractModel):
     started_at: AwareDatetime
     completed_at: AwareDatetime
     collector_status: ShortText
+    collection_boundary: Literal["UNCONFINED_IN_PROCESS"] = "UNCONFINED_IN_PROCESS"
+    collection_caveat: str = (
+        "Tests and coverage share a process at user authority; agent-authored code can influence coverage data."
+    )
     checks_passed: bool | None = None
     diff_exercised: Literal["PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"]
     freshness: Literal["CURRENT", "STALE", "UNKNOWN"]

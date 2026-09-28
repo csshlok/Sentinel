@@ -53,6 +53,8 @@ def test_unrelated_passing_suite_reports_zero_exercise_and_uncovered_lines(tmp_p
     assert result.changed_executable_lines and result.changed_executable_lines > 0
     assert result.files[0].uncovered_lines
     assert result.freshness == "CURRENT"
+    assert result.collection_boundary == "UNCONFINED_IN_PROCESS"
+    assert "influence coverage data" in result.collection_caveat
 
 
 def test_new_passing_tests_cannot_cover_unexecuted_production_diff(tmp_path: Path) -> None:
