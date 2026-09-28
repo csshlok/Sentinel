@@ -1183,9 +1183,11 @@ class DiffCoverageResult(ContractModel):
     status_digest: Digest
     contract_digest: Digest
     collector_id: Literal["coverage.py-json-v1"] = "coverage.py-json-v1"
+    collector_version: ShortText | None = None
     command: list[str] = Field(default_factory=list, max_length=64)
     run_ids: list[UUID] = Field(default_factory=list, max_length=256)
     artifact_digest: Digest | None = None
+    artifact_retained: bool = False
     started_at: AwareDatetime
     completed_at: AwareDatetime
     collector_status: ShortText

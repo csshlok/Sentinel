@@ -9,7 +9,6 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 from backend.app.assurance.diff_map import map_diff
 from backend.app.contracts.models import (
@@ -183,7 +182,7 @@ def collect_diff_coverage(
             argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
                     "-m", "coverage", "run", "--rcfile", str(config),
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
-            result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
+            result = result.model_copy(update={"command": argv})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
             if run.timed_out or run.incomplete:
                 reasons.append("Test command timed out or output capture was incomplete.")
@@ -207,6 +206,10 @@ def collect_diff_coverage(
                     if isinstance(parsed, dict):
                         report = parsed
                         collector_status = "COLLECTED"
+                        meta = parsed.get("meta")
+                        version = meta.get("version") if isinstance(meta, dict) else None
+                        if isinstance(version, str) and len(version) <= 256:
+                            result = result.model_copy(update={"collector_version": version})
                     else:
                         reasons.append("Coverage report is malformed.")
     except Exception as exc:

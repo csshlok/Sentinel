@@ -2518,6 +2518,11 @@
             ],
             "title": "Artifact Digest"
           },
+          "artifact_retained": {
+            "default": false,
+            "title": "Artifact Retained",
+            "type": "boolean"
+          },
           "assertion_quality": {
             "const": "NOT_MEASURED",
             "default": "NOT_MEASURED",
@@ -2583,6 +2588,19 @@
             "minLength": 1,
             "title": "Collector Status",
             "type": "string"
+          },
+          "collector_version": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collector Version"
           },
           "command": {
             "items": {
