@@ -93,6 +93,21 @@ def test_failed_pytest_can_measure_execution_but_never_open_required_gate(tmp_pa
     assert result.gate_satisfied is False
 
 
+def test_changed_pragma_exclusions_count_as_uncovered(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():  # pragma: no cover\n"
+          "    return 2\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "FAIL"
+    assert result.gate_satisfied is False
+    assert result.files[0].excluded_by_pragma_lines
+    assert set(result.files[0].excluded_by_pragma_lines) <= set(result.files[0].uncovered_lines)
+    assert result.files[0].reason == "excluded-by-pragma"
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")

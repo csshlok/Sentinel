@@ -2397,6 +2397,13 @@
             "title": "Changed Lines",
             "type": "array"
           },
+          "excluded_by_pragma_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Excluded By Pragma Lines",
+            "type": "array"
+          },
           "executable_lines": {
             "items": {
               "type": "integer"

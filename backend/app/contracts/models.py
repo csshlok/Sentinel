@@ -1169,6 +1169,7 @@ class DiffCoverageFile(ContractModel):
     executable_lines: list[int] = Field(default_factory=list)
     executed_lines: list[int] = Field(default_factory=list)
     uncovered_lines: list[int] = Field(default_factory=list)
+    excluded_by_pragma_lines: list[int] = Field(default_factory=list)
     reason: ShortText | None = None
 
 

@@ -57,18 +57,24 @@ def evaluate_report(
                                              "excluded": excluded})
         executed = item.get("executed_lines")
         missing = item.get("missing_lines")
+        pragma_excluded = item.get("excluded_lines", [])
         if (not isinstance(executed, list) or not isinstance(missing, list)
-                or any(type(n) is not int or n < 1 for n in executed + missing)):
+                or not isinstance(pragma_excluded, list)
+                or any(type(n) is not int or n < 1
+                       for n in executed + missing + pragma_excluded)):
             return result.model_copy(update={"reasons": [f"Malformed coverage lines: {path}."],
                                              "excluded": excluded})
-        executable = set(executed) | set(missing)
+        excluded_changed = lines & set(pragma_excluded)
+        executable = set(executed) | set(missing) | set(pragma_excluded)
         target = lines & executable
-        hit = target & set(executed)
+        hit = target & set(executed) - excluded_changed
         total += len(target)
         executed_total += len(hit)
         measured.append(DiffCoverageFile(
             path=path, changed_lines=sorted(lines), executable_lines=sorted(target),
             executed_lines=sorted(hit), uncovered_lines=sorted(target - hit),
+            excluded_by_pragma_lines=sorted(excluded_changed),
+            reason="excluded-by-pragma" if excluded_changed else None,
         ))
     if not changed and excluded:
         state = "UNKNOWN" if any(v == "unsupported language or non-source file" for v in excluded.values()) else "NOT_APPLICABLE"
