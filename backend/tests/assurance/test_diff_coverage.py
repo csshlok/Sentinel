@@ -663,6 +663,34 @@ def test_unknown_source_extensions_cannot_use_docs_only_gate(tmp_path: Path) -> 
     assert result.excluded["package-lock.json"] == "lockfile"
 
 
+@pytest.mark.parametrize("path,classification,phrase", [
+    ("Deploy.psm1", "unsupported language", "Unsupported or unmeasured"),
+    ("hidden.py", "untracked outside checkpoint", "outside the checkpoint"),
+    ("pkg/.gitignore", "ignore rules changed", "ignore rules"),
+    ("generated.py", "generated", "Generated Python"),
+    ("pricing_test.py", "test code", "not a collected test"),
+])
+def test_unknown_overrides_explain_their_cause(
+    tmp_path: Path, path: str, classification: str, phrase: str,
+) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    initial = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id,
+        tested_checkpoint_id=tested.id, head_sha=tested.head_sha,
+        status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(),
+        collector_status="COLLECTED", collector_version="7.0",
+        checks_passed=True, diff_exercised="UNKNOWN", freshness="CURRENT",
+        gate_satisfied=False,
+    )
+    result = evaluate_report(
+        result=initial, changed={}, excluded={path: classification},
+        report={"files": {}}, root=root, rule=_request(baseline, tested, required=True),
+    )
+    assert result.diff_exercised == "UNKNOWN"
+    assert any(phrase in reason and path in reason for reason in result.reasons)
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)

@@ -75,6 +75,7 @@ def evaluate_report(
     measured: list[DiffCoverageFile] = []
     total = executed_total = 0
     unmeasured_code: list[str] = []
+    override_reasons: list[str] = []
     for path, lines in sorted(changed.items()):
         item = files.get(path)
         if item is None:
@@ -131,31 +132,42 @@ def evaluate_report(
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
     if unmeasured_code:
         state = "UNKNOWN"
+        override_reasons.append("Changed code lines lack exact coverage data: "
+                                + ", ".join(unmeasured_code[:8]) + ".")
     if unsupported and state == "PASS":
         state = "UNKNOWN"
-    if any(reason in {"untracked outside checkpoint", "ignore rules changed"}
-           for reason in excluded.values()):
+    if unsupported:
+        paths = [path for path, reason in excluded.items()
+                 if reason.startswith("unsupported language") or reason == "configuration"
+                 or reason == "binary"]
+        override_reasons.append("Unsupported or unmeasured changed files: "
+                                + ", ".join(paths[:8]) + ".")
+    unbound = [path for path, reason in excluded.items()
+               if reason in {"untracked outside checkpoint", "ignore rules changed"}]
+    if unbound:
         state = "UNKNOWN"
-    if rule.rule.required and any(
+        override_reasons.append("Changed files are outside the checkpoint or alter ignore rules: "
+                                + ", ".join(unbound[:8]) + ".")
+    generated = [path for path, reason in excluded.items() if (
         path.lower().endswith(".py") and reason == "generated"
-        for path, reason in excluded.items()
-    ):
+    )]
+    if rule.rule.required and generated:
         state = "UNKNOWN"
+        override_reasons.append("Generated Python source is unmeasured: "
+                                + ", ".join(generated[:8]) + ".")
     uncollected_test_code = [path for path, reason in excluded.items()
                              if path.lower().endswith(".py") and reason == "test code"
                              and path not in (collected_test_paths or set())]
     if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and uncollected_test_code:
         state = "UNKNOWN"
+    if rule.rule.required and uncollected_test_code:
+        override_reasons.append("Changed test-named Python file is not a collected test: "
+                                + ", ".join(uncollected_test_code[:8]) + ".")
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
     return DiffCoverageResult.model_validate({**result.model_dump(), **{
         "files": measured, "excluded": excluded, "diff_exercised": state,
-        "reasons": [*result.reasons, *(["Changed code lines lack exact coverage data: "
-                                    + ", ".join(unmeasured_code[:8]) + "."]
-                                   if unmeasured_code else []),
-                    *(["Changed test-named Python file is not a collected test: "
-                       + ", ".join(uncollected_test_code[:8]) + "."]
-                      if rule.rule.required and uncollected_test_code else [])],
+        "reasons": [*result.reasons, *override_reasons],
         "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,

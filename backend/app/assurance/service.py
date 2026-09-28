@@ -572,6 +572,7 @@ class EvidenceService:
         if (not acceptable_state or result.freshness != "CURRENT"
                 or result.checks_passed is not True or not result.gate_satisfied):
             return False, (f"Required diff coverage is {result.diff_exercised}; "
+                           f"{result.reasons[0] if result.reasons else 'Evidence is insufficient.'} "
                            f"NOT_APPLICABLE satisfies policy: {rule.not_applicable_satisfies}.")
         try:
             hidden = hidden_index_paths(change.repository_path, limit=self._patch_limit)
