@@ -264,6 +264,18 @@ def test_store_is_immutable_for_evidence_and_replaces_agent_runs(tmp_path):
     assert store.get_agent_run(running.id).completed_at == NOW
 
 
+def test_store_rejects_rewriting_terminal_agent_run(tmp_path):
+    h = Harness(tmp_path)
+    store = EvidenceStore(h.db)
+    running = h.service().attach_agent(
+        h.view(), AgentAttachRequest(adapter="claude", external_run_id="e"))
+    terminal = running.model_copy(update={"status": AgentRunStatus.FAILED,
+                                          "completed_at": NOW})
+    store.save_agent_run(terminal)
+    with pytest.raises(AppError, match="cannot be rewritten"):
+        store.save_agent_run(terminal.model_copy(update={"stdout": "forged"}))
+
+
 def test_runs_keep_history_but_evaluation_uses_the_latest(tmp_path):
     h = Harness(tmp_path, required_checks=["pytest"])
     change = h.view()

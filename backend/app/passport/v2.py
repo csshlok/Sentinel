@@ -69,6 +69,24 @@ class PassportV2Issuer:
             raise AppError("PASSPORT_EVIDENCE_LIMIT", "Too many journal or launch records to bind.",
                            status_code=409)
         head = self._verify_journal(change_id, journal)
+        events: dict[str, dict[str, object]] = {}
+        for event in journal:
+            kind = event["event_type"]
+            if kind not in {"agent.launched", "agent.completed"}:
+                continue
+            if event["subject_type"] != "agent_run" or not event["subject_id"]:
+                raise AppError("PASSPORT_LAUNCH_INVALID", "Launch journal subject is invalid.",
+                               status_code=409)
+            run_events = events.setdefault(event["subject_id"], {})
+            if kind in run_events:
+                raise AppError("PASSPORT_LAUNCH_INVALID", "Duplicate launch journal event.",
+                               status_code=409)
+            run_events[kind] = json.loads(event["payload_json"])
+        if set(events) != {row["id"] for row in launches} or any(
+                set(value) != {"agent.launched", "agent.completed"}
+                for value in events.values()):
+            raise AppError("PASSPORT_LAUNCH_INVALID", "Launch records and journal differ.",
+                           status_code=409)
         bindings: list[PassportV2LaunchBinding] = []
         for row in launches:
             raw = row["payload_json"]
@@ -79,13 +97,24 @@ class PassportV2Issuer:
             except (ValueError, RecursionError) as exc:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch record is malformed.",
                                status_code=409) from exc
-            if not isinstance(parsed, dict) or str(parsed.get("id")) != row["id"]:
+            if (not isinstance(parsed, dict) or str(parsed.get("id")) != row["id"]
+                    or str(parsed.get("change_id")) != str(change_id)):
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch record identity mismatch.",
                                status_code=409)
-            bindings.append(PassportV2LaunchBinding(
-                run_id=UUID(row["id"]), status=row["status"],
-                record_digest=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
-            ))
+            status = parsed.get("status")
+            completed = events[row["id"]]["agent.completed"]
+            if (not isinstance(completed, dict) or status != row["status"]
+                    or completed.get("status") != status):
+                raise AppError("PASSPORT_LAUNCH_INVALID", "Launch status differs from journal.",
+                               status_code=409)
+            try:
+                bindings.append(PassportV2LaunchBinding(
+                    run_id=UUID(row["id"]), status=status,
+                    record_digest=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+                ))
+            except (ValueError, TypeError) as exc:
+                raise AppError("PASSPORT_LAUNCH_INVALID", "Launch record is malformed.",
+                               status_code=409) from exc
         diff_claim, diff_limit = self._coverage_claim(coverage)
         limitations = [
             "Execution boundary evidence is not yet structured; UNKNOWN.",

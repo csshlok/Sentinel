@@ -37,6 +37,12 @@ def _launch(database, change_id) -> str:
             "VALUES (?, ?, ?, ?, ?)",
             (str(run_id), str(change_id), "SUCCEEDED", payload, now),
         )
+    JournalWriter(database).append(change_id, JournalEventType.AGENT_LAUNCHED,
+                                   subject_type="agent_run", subject_id=run_id,
+                                   payload={"adapter": "test", "executable": "test"})
+    JournalWriter(database).append(change_id, JournalEventType.AGENT_COMPLETED,
+                                   subject_type="agent_run", subject_id=run_id,
+                                   payload={"status": "SUCCEEDED", "exit_code": 0})
     return str(run_id)
 
 
@@ -51,7 +57,8 @@ def test_issue_uses_database_only_and_binds_journal_and_launch(tmp_path: Path) -
     issuer = PassportV2Issuer(database, key_name=key_name, installation_label="Lab")
     try:
         issued = issuer.issue(change.id)
-        assert issued.payload.journal_head == event.event_hash
+        assert issued.payload.journal_head != event.event_hash
+        assert issued.payload.journal_event_count == 3
         assert issued.payload.journal_integrity == "PASS"
         assert [str(item.run_id) for item in issued.payload.launch_records] == [run_id]
         assert issued.payload.execution_boundary == "UNKNOWN"
@@ -99,6 +106,21 @@ def test_launch_record_mutation_changes_bound_digest(tmp_path: Path) -> None:
                            (json.dumps(changed), run_id))
     second = issuer.snapshot(change.id).launch_records[0].record_digest
     assert first != second
+
+
+def test_v2_rejects_missing_and_contradictory_launch_rows(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    run_id = _launch(database, change.id)
+    issuer = PassportV2Issuer(database)
+    with database.connection() as connection:
+        connection.execute("UPDATE agent_runs SET status = 'FAILED' WHERE id = ?", (run_id,))
+    with pytest.raises(AppError, match="Launch status differs"):
+        issuer.snapshot(change.id)
+    with database.connection() as connection:
+        connection.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
+    with pytest.raises(AppError, match="Launch records and journal differ"):
+        issuer.snapshot(change.id)
 
 
 def test_http_rejects_caller_supplied_payload(tmp_path: Path) -> None:

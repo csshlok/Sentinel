@@ -4,8 +4,8 @@ Writes ``agent_runs``, ``git_checkpoints``, ``environment_passports``,
 ``dependency_reports``, ``assurance_plans`` and ``assurance_runs`` through the
 frozen contract models' own JSON serialization, and nothing else. Schema and
 ``Database`` belong to ``[SD]`` and are only used, never changed. Evidence rows
-are immutable (a repeated save of the same id is ignored); agent runs are
-replaced as their status changes. Timestamps are stored as ISO-8601 text so
+are immutable (a repeated save of the same id is ignored); agent runs may advance
+until terminal, then become immutable. Timestamps are stored as ISO-8601 text so
 other readers (the Passport builder) can order by them.
 """
 
@@ -56,11 +56,28 @@ class EvidenceStore:
 
     def save_agent_run(self, run: AgentRun, *, connection: sqlite3.Connection | None = None) -> None:
         with self._db.connection_or(connection, immediate=True) as c:
+            existing = c.execute(
+                "SELECT change_id, status, payload_json, started_at FROM agent_runs WHERE id = ?",
+                (str(run.id),),
+            ).fetchone()
+            payload = run.model_dump_json()
+            terminal = {"PASSED", "FAILED", "TIMED_OUT", "CANCELLED", "ERROR"}
+            if existing is not None:
+                if (existing["change_id"] != str(run.change_id)
+                        or existing["started_at"] != run.started_at.isoformat()
+                        or existing["status"] in terminal
+                        and existing["payload_json"] != payload):
+                    raise AppError("AGENT_RUN_IMMUTABLE", "Stored agent run cannot be rewritten.",
+                                   status_code=409)
+                if existing["payload_json"] == payload:
+                    return
             c.execute(
-                "INSERT OR REPLACE INTO agent_runs "
+                "INSERT INTO agent_runs "
                 "(id, change_id, status, payload_json, started_at, completed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (str(run.id), str(run.change_id), run.status.value, run.model_dump_json(),
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET status=excluded.status, "
+                "payload_json=excluded.payload_json, completed_at=excluded.completed_at",
+                (str(run.id), str(run.change_id), run.status.value, payload,
                  run.started_at.isoformat(),
                  run.completed_at.isoformat() if run.completed_at else None))
             for process in run.descendant_processes:
