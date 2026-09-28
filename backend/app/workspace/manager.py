@@ -44,7 +44,10 @@ from backend.app.contracts.models import WorkspaceState, utc_now
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.execution._process import CapturedProcess
-from backend.app.execution.agent_ports import CredentialFingerprint
+from backend.app.execution.agent_ports import (
+    CredentialFingerprint,
+    contains_credential_material,
+)
 from backend.app.execution.appcontainer import (
     delete_profile,
     ensure_profile,
@@ -72,8 +75,10 @@ from backend.app.workspace.errors import (
     workspace_state_conflict,
 )
 from backend.app.workspace.models import (
+    CREDENTIAL_FLAG,
     PREVIEW_COMMIT_LIMIT,
     PREVIEW_PATCH_LIMIT,
+    SECRET_SCAN_LIMIT,
     ApplyPreview,
     ApplyRefusal,
     SweepReport,
@@ -106,6 +111,14 @@ PREVIEW_LIMITATIONS: tuple[str, ...] = (
     "Only files committed at the base commit were present in the workspace; uncommitted, "
     "untracked and ignored files (for example node_modules or .env) were absent.",
 )
+CREDENTIAL_DETECTION_LIMITATION = (
+    "Credential detection covers verbatim, base64 and hex copies of the staged credential only.")
+CREDENTIAL_IN_DIFF_LIMITATION = (
+    "Sentinel found the staged model credential in the workspace changes; apply-back is "
+    "refused. Detection covers verbatim, base64 and hex copies only.")
+DIFF_TOO_LARGE_TO_SCAN_LIMITATION = (
+    "The workspace changes are larger than Sentinel scans for the staged model credential "
+    f"({SECRET_SCAN_LIMIT // 1_048_576} MiB); apply-back is refused rather than applied unscanned.")
 
 
 def _digest(token: str) -> str:
@@ -179,6 +192,85 @@ def _followable_link_in_worktree(workspace: Path) -> bool:
                     pending.append(entry.path)
         top = False
     return False
+
+
+_C_ESCAPES = {ord("a"): 7, ord("b"): 8, ord("t"): 9, ord("n"): 10, ord("v"): 11,
+              ord("f"): 12, ord("r"): 13, ord('"'): 34, ord("\\"): 92}
+_DIFF_HEADER = b"diff --git "
+
+
+def _unquote_c(data: bytes) -> tuple[bytes, int] | None:
+    """(value, index after the closing quote) of a Git C-quoted string at ``data[0]``."""
+
+    if not data.startswith(b'"'):
+        return None
+    out = bytearray()
+    index = 1
+    while index < len(data):
+        byte = data[index]
+        if byte == ord('"'):
+            return bytes(out), index + 1
+        if byte == ord("\\") and index + 1 < len(data):
+            following = data[index + 1]
+            if following in _C_ESCAPES:
+                out.append(_C_ESCAPES[following])
+                index += 2
+                continue
+            octal = data[index + 1:index + 4]
+            if len(octal) == 3 and all(ord("0") <= item <= ord("7") for item in octal):
+                out.append(int(octal, 8) & 0xFF)
+                index += 4
+                continue
+            return None
+        out.append(byte)
+        index += 1
+    return None
+
+
+def _header_path(line: bytes) -> str | None:
+    """The path named by a ``diff --git a/P b/P`` header (renames are disabled), or None."""
+
+    rest = line[len(_DIFF_HEADER):].rstrip(b"\r")
+    if rest.startswith(b'"'):
+        parsed = _unquote_c(rest)
+        if parsed is None or not parsed[0].startswith(b"a/"):
+            return None
+        return parsed[0][2:].decode("utf-8", errors="replace")
+    if len(rest) < 5 or (len(rest) - 5) % 2:
+        return None
+    size = (len(rest) - 5) // 2
+    path = rest[2:2 + size]
+    if rest[:2] != b"a/" or rest[2 + size:5 + size] != b" b/" or rest[5 + size:] != path:
+        return None
+    return path.decode("utf-8", errors="replace")
+
+
+def _patch_additions(patch: bytes) -> list[tuple[str | None, bytes]]:
+    """(path, scannable bytes) per file section of a ``git diff -a`` patch.
+
+    The scannable bytes of a section are its header lines (a path can carry
+    material too) and its added hunk lines; removed and context lines came from
+    the base commit and are skipped. Text before the first header is kept with
+    path None.
+    """
+
+    sections: list[tuple[str | None, list[bytes]]] = [(None, [])]
+    in_hunk = False
+    for line in patch.split(b"\n"):
+        if line.startswith(_DIFF_HEADER):
+            sections.append((_header_path(line), [line]))
+            in_hunk = False
+            continue
+        lines = sections[-1][1]
+        if len(sections) == 1:
+            lines.append(line)
+        elif line.startswith(b"@@"):
+            in_hunk = True
+        elif not in_hunk:
+            lines.append(line)
+        elif line.startswith(b"+"):
+            lines.append(line[1:])
+    return [(path, b"\n".join(lines)) for path, lines in sections if lines]
 
 
 class WorkspaceManager:
@@ -565,8 +657,10 @@ class WorkspaceManager:
     def _describe(
         self, record: WorkspaceRecord, base: str, sealed: str,
     ) -> tuple[bool, tuple[tuple[str, str, str], ...], bool,
-               tuple[tuple[str, str, str, str, tuple[str, ...]], ...], str, bool]:
-        """(diverged, commits, commits truncated, changed paths, patch, patch truncated)."""
+               tuple[tuple[str, str, str, str, tuple[str, ...]], ...], str, bool,
+               dict[str, str]]:
+        """(diverged, commits, commits truncated, changed paths, patch, patch truncated,
+        new blob id per changed path)."""
 
         ancestor = self._ws_git(record, ["merge-base", "--is-ancestor", base, sealed])
         diverged = ancestor.returncode != 0
@@ -590,6 +684,7 @@ class WorkspaceManager:
             raise workspace_seal_failed("the changed paths could not be listed")
         items = raw.stdout.decode("utf-8", errors="replace").split("\0")
         changed: list[tuple[str, str, str, str, tuple[str, ...]]] = []
+        blobs: dict[str, str] = {}
         index = 0
         while index + 1 < len(items):
             meta, path = items[index], items[index + 1]
@@ -597,9 +692,11 @@ class WorkspaceManager:
             parts = meta.lstrip(":").split()
             if len(parts) != 5:
                 raise workspace_seal_failed("the changed paths could not be parsed")
-            old_mode, new_mode, _old, _new, status = parts
+            old_mode, new_mode, _old, new, status = parts
             changed.append((status[:1], path, old_mode, new_mode,
                             path_flags(path, old_mode, new_mode)))
+            if new.strip("0"):  # an all-zero id means the path was deleted
+                blobs[path] = new.lower()
         patch = self._ws_git(
             record, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", base, sealed],
             limit=PREVIEW_PATCH_LIMIT,
@@ -607,7 +704,48 @@ class WorkspaceManager:
         if patch.returncode != 0:
             raise workspace_seal_failed("the patch could not be produced")
         return (diverged, commits[:PREVIEW_COMMIT_LIMIT], commits_truncated, tuple(changed),
-                patch.stdout.decode("utf-8", errors="replace"), patch.truncated)
+                patch.stdout.decode("utf-8", errors="replace"), patch.truncated, blobs)
+
+    def _scan_for_credentials(
+        self, record: WorkspaceRecord, base: str, sealed: str, blobs: Mapping[str, str],
+    ) -> tuple[ApplyRefusal | None, frozenset[str]]:
+        """(refusal, paths carrying credential material) of the sealed diff.
+
+        Only runs when a credential was staged for this workspace. One bounded
+        ``git diff -a`` of ``base..sealed`` is read; a diff too large to read
+        completely fails closed (``DIFF_TOO_LARGE_TO_SCAN``). Each changed
+        path's new blob id and the added lines of each file's patch section are
+        compared, by digest only, against every recorded fingerprint. The
+        scanned text is neither logged nor stored.
+        """
+
+        fingerprints = [CredentialFingerprint.from_payload(item)
+                        for item in record.credential_fingerprints]
+        if not fingerprints:
+            return None, frozenset()
+        flagged: set[str] = {
+            path for path, blob in blobs.items()
+            if any(contains_credential_material(item, blob_ids=(blob,))
+                   for item in fingerprints)
+        }
+        scan = self._ws_git(
+            record,
+            ["-c", "core.quotePath=false", "diff", "-a", "--no-color", "--no-ext-diff",
+             "--no-textconv", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+             base, sealed],
+            limit=SECRET_SCAN_LIMIT,
+        )
+        if scan.truncated:
+            return ApplyRefusal.DIFF_TOO_LARGE_TO_SCAN, frozenset(flagged)
+        if scan.returncode != 0:
+            raise workspace_seal_failed("the changes could not be scanned")
+        hit = bool(flagged)
+        for path, added in _patch_additions(scan.stdout):
+            if any(contains_credential_material(item, text=added) for item in fingerprints):
+                hit = True
+                if path is not None:
+                    flagged.add(path)
+        return (ApplyRefusal.CREDENTIAL_IN_DIFF if hit else None), frozenset(flagged)
 
     def _user_state(self, source: Path) -> tuple[bool, str | None, str | None]:
         """(HEAD detached, branch ref, HEAD sha) of the user repository -- read-only."""
@@ -655,15 +793,31 @@ class WorkspaceManager:
         self._validate_workspace_git(record)
         try:
             sealed = self._seal(record, change_id)
-            diverged, commits, commits_truncated, changed, patch, patch_truncated = (
+            diverged, commits, commits_truncated, changed, patch, patch_truncated, blobs = (
                 self._describe(record, base, sealed))
+            scan_refusal, flagged = self._scan_for_credentials(record, base, sealed, blobs)
         except AppError as exc:
             if exc.code.startswith("WORKSPACE_"):
                 raise
             raise workspace_seal_failed("Git failed while sealing") from exc
+        extra: list[str] = []
+        if record.credential_fingerprints:
+            extra.append(CREDENTIAL_DETECTION_LIMITATION)
+        if scan_refusal is ApplyRefusal.CREDENTIAL_IN_DIFF:
+            extra.append(CREDENTIAL_IN_DIFF_LIMITATION)
+        elif scan_refusal is ApplyRefusal.DIFF_TOO_LARGE_TO_SCAN:
+            extra.append(DIFF_TOO_LARGE_TO_SCAN_LIMITATION)
+        if flagged:
+            changed = tuple(
+                (status, path, old_mode, new_mode,
+                 flags + ((CREDENTIAL_FLAG,) if path in flagged else ()))
+                for status, path, old_mode, new_mode, flags in changed)
         detached, user_branch, user_head = self._user_state(record.source_repository)
-        refusal = (ApplyRefusal.WORKSPACE_HISTORY_DIVERGED if diverged
-                   else self._user_refusal(record, detached, user_branch, user_head))
+        # A credential-bearing (or unscannable) diff is refused before anything else:
+        # the user can fix a moved branch, but never un-leak a sealed secret.
+        refusal = (scan_refusal
+                   or (ApplyRefusal.WORKSPACE_HISTORY_DIVERGED if diverged
+                       else self._user_refusal(record, detached, user_branch, user_head)))
         token: str | None = None
         if refusal is None:
             token = secrets.token_urlsafe(32)
@@ -687,7 +841,8 @@ class WorkspaceManager:
             user_branch=user_branch, user_head=user_head,
             fast_forward_possible=refusal is None,
             patch=patch, patch_truncated=patch_truncated, commits_truncated=commits_truncated,
-            limitations=tuple(dict.fromkeys(record.limitations + PREVIEW_LIMITATIONS)),
+            limitations=tuple(dict.fromkeys(
+                record.limitations + PREVIEW_LIMITATIONS + tuple(extra))),
         )
 
     # ------------------------------------------------------------------ apply
@@ -738,6 +893,10 @@ class WorkspaceManager:
             raise workspace_not_found(str(change_id))
         if record.active_run_id is not None:
             raise workspace_state_conflict(record.state.value, "apply")
+        # Defense in depth: no token is ever issued for a refused preview, and a
+        # record carrying a refusal is never applied whatever token is offered.
+        if record.refusal_reason is not None:
+            raise workspace_approval_invalid()
         # A cleared approval (a newer run or preview voided it) is an invalid
         # approval, whatever state the workspace moved to since.
         if not self._token_matches(record, approval_token):

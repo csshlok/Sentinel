@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import os
 import shutil
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -184,6 +186,65 @@ def workspace_manager(workspace_database: Database):
     manager = WorkspaceManager(workspace_database, profile_prefix=TEST_PROFILE_PREFIX)
     yield manager
     teardown_workspaces(manager)
+
+
+FAKE_NODE_ADAPTER = "fake-node"
+DUMMY_CREDENTIAL_KIND = "claude-oauth-file"
+DUMMY_ACCESS_TOKEN = "sk-ant-oat01-DUMMYcanaryLEAKtoken-0123456789abcdef"
+DUMMY_REFRESH_TOKEN = "sk-ant-ort01-DUMMYcanaryREFRESH-9876543210"
+
+
+@dataclass(frozen=True)
+class FakeNodeLauncher:
+    """An ``AgentLauncher`` whose "fake-node" adapter runs node in the workspace AppContainer.
+
+    The profile mirrors ``claude`` (internetClient, staged home, the
+    claude-oauth-file credential) without the tool snapshot. The broker stages
+    ``credential_path`` -- a dummy file under ``tmp_path``, never ``~/.claude``.
+    """
+
+    launcher: object
+    broker: object
+    credential_path: Path
+    access_token: str
+
+    def launch(self, change_id, repository: Path, script: str, *, timeout: int = 60,
+               output_limit: int = 65_536):
+        from backend.app.contracts.models import AgentLaunchRequest
+
+        return self.launcher.launch(change_id, str(repository), AgentLaunchRequest(
+            adapter=FAKE_NODE_ADAPTER, executable="node", args=["-e", script],
+            timeout_seconds=timeout), output_limit)
+
+
+def dummy_credential_bytes() -> bytes:
+    return json.dumps({"claudeAiOauth": {
+        "accessToken": DUMMY_ACCESS_TOKEN, "refreshToken": DUMMY_REFRESH_TOKEN,
+        "expiresAt": 1893456000000, "scopes": ["user:inference"],
+    }}).encode("utf-8")
+
+
+@pytest.fixture
+def fake_node_launcher(workspace_manager, tmp_path: Path, node_exe: str) -> FakeNodeLauncher:
+    from backend.app.credentials.broker import CredentialBroker
+    from backend.app.credentials.memory_store import InMemoryCredentialStore
+    from backend.app.execution.agent_profiles import BoundaryKind, RuntimeProfile
+    from backend.app.execution.launcher import AgentAdapter, AgentLauncher
+
+    credential = tmp_path / "fake-node-home" / ".claude" / ".credentials.json"
+    credential.parent.mkdir(parents=True)
+    credential.write_bytes(dummy_credential_bytes())
+    broker = CredentialBroker(InMemoryCredentialStore(),
+                              agent_credential_sources={DUMMY_CREDENTIAL_KIND: credential})
+    launcher = AgentLauncher(
+        adapters={FAKE_NODE_ADAPTER: AgentAdapter(FAKE_NODE_ADAPTER, frozenset({"node"}))},
+        profiles={FAKE_NODE_ADAPTER: RuntimeProfile(
+            FAKE_NODE_ADAPTER, BoundaryKind.APPCONTAINER, capabilities=("internetClient",),
+            staged_home=True, credential_kind=DUMMY_CREDENTIAL_KIND, tool_snapshot=False,
+        )},
+        workspaces=workspace_manager, credentials=broker,
+    )
+    return FakeNodeLauncher(launcher, broker, credential, DUMMY_ACCESS_TOKEN)
 
 
 def teardown_workspaces(manager) -> None:

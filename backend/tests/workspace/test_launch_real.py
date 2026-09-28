@@ -31,7 +31,7 @@ from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.app.main import create_app
 from backend.app.workspace.manager import WorkspaceManager
 from backend.tests.support_kb import git
-from backend.tests.workspace.conftest import repo_fingerprint
+from backend.tests.workspace.conftest import FakeNodeLauncher, repo_fingerprint
 
 pytestmark = pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only")
 
@@ -69,26 +69,16 @@ def dummy_credential(tmp_path: Path) -> Path:
 
 
 def test_node_agent_runs_in_the_workspace_appcontainer_through_the_launcher(
-    workspace_manager: WorkspaceManager, user_repo: Path, node_exe: str,
-    dummy_credential: Path,
+    workspace_manager: WorkspaceManager, user_repo: Path,
+    fake_node_launcher: FakeNodeLauncher,
 ) -> None:
-    broker = CredentialBroker(InMemoryCredentialStore(),
-                              agent_credential_sources={KIND: dummy_credential})
-    launcher = AgentLauncher(
-        adapters={"fake-node": AgentAdapter("fake-node", frozenset({"node"}))},
-        profiles={"fake-node": RuntimeProfile(
-            "fake-node", BoundaryKind.APPCONTAINER, capabilities=("internetClient",),
-            staged_home=True, credential_kind=KIND, tool_snapshot=False,
-        )},
-        workspaces=workspace_manager, credentials=broker,
-    )
+    access = fake_node_launcher.access_token
+    dummy_credential = fake_node_launcher.credential_path
     change_id = uuid4()
     before = repo_fingerprint(user_repo)
     source_bytes = dummy_credential.read_bytes()
 
-    run = launcher.launch(change_id, str(user_repo), AgentLaunchRequest(
-        adapter="fake-node", executable="node", args=["-e", AGENT_SCRIPT],
-        timeout_seconds=60), 65_536)
+    run = fake_node_launcher.launch(change_id, user_repo, AGENT_SCRIPT)
 
     record = workspace_manager.live_for_change(change_id)
     assert record is not None
@@ -103,7 +93,7 @@ def test_node_agent_runs_in_the_workspace_appcontainer_through_the_launcher(
     assert all("restricted Windows token" not in text for text in run.limitations)
     # The agent saw the staged credential during the run, and its output is redacted.
     assert "credential-present=true" in run.stdout
-    assert ACCESS not in run.stdout and ACCESS not in run.stderr
+    assert access not in run.stdout and access not in run.stderr
     assert "token=[REDACTED] done" in run.stdout
     # After the run: the staged credential is gone, the source is untouched.
     staged = record.container_path / "home" / ".claude" / ".credentials.json"
@@ -124,7 +114,7 @@ def test_node_agent_runs_in_the_workspace_appcontainer_through_the_launcher(
     assert list(record.credential_fingerprints) == [expected]
     workspace_manager.record_credential(record.id, CredentialFingerprint.from_payload(expected))
     assert len(workspace_manager.get(record.id).credential_fingerprints) == 1  # stored once
-    assert ACCESS not in record.to_json()
+    assert access not in record.to_json()
     # The user's repository was not touched by the run.
     assert repo_fingerprint(user_repo) == before
 

@@ -21,11 +21,19 @@ class ApplyRefusal(StrEnum):
     SEALED_COMMIT_MISMATCH = "SEALED_COMMIT_MISMATCH"
     USER_HEAD_DETACHED = "USER_HEAD_DETACHED"
     WORKSPACE_HISTORY_DIVERGED = "WORKSPACE_HISTORY_DIVERGED"
+    # The sealed diff carries the staged model credential (research Pitfall 8).
+    CREDENTIAL_IN_DIFF = "CREDENTIAL_IN_DIFF"
+    # A credential was staged and the diff is too large to scan completely (fail closed).
+    DIFF_TOO_LARGE_TO_SCAN = "DIFF_TOO_LARGE_TO_SCAN"
 
 
 # Preview bounds (threat T-01-25: excess is reported as truncated, never loaded).
 PREVIEW_PATCH_LIMIT = 262_144
 PREVIEW_COMMIT_LIMIT = 256
+# Bound of the patch scanned for staged-credential material (threat T-01-38).
+SECRET_SCAN_LIMIT = 8 * 1_048_576
+# Path flag of a changed path that carries staged-credential material.
+CREDENTIAL_FLAG = "credential"
 
 SYMLINK_MODE = "120000"
 GITLINK_MODE = "160000"
