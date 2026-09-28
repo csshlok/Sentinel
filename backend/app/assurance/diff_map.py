@@ -12,6 +12,9 @@ from backend.app.core.errors import AppError
 from backend.app.git.safe_exec import run_git
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
+_ENVIRONMENT_DIRS = frozenset({".venv", "venv", ".tox", ".nox", "node_modules",
+                               "__pycache__", ".pytest_cache", ".mypy_cache",
+                               ".ruff_cache"})
 
 
 @dataclass(slots=True)
@@ -261,6 +264,8 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         path = path.replace("\\", "/")
         if path in result.lines or path in result.excluded:
             continue
+        if path.split("/", 1)[0].lower() in _ENVIRONMENT_DIRS:
+            continue  # environment/dependency tree, outside the source diff scope
         classification = _classification(path, Path(tested.repository_root))
         bound_to_checkpoint = path in checkpoint_untracked
         if path.lower().endswith("/.gitignore") or path.lower() == ".gitignore":
