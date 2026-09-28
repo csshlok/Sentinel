@@ -17,9 +17,42 @@ from backend.app.passport.format import MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.passport.verify import verify_bundle
+from backend.app.passport.card import card_facts
 from backend.app.contracts.models import JournalEventType
 from backend.app.core.journal import JournalWriter
 from backend.tests.passport.test_builder import _database, _seed_change
+
+GOLDEN = Path(__file__).parent / "fixtures" / "golden-v2.sentinel"
+GOLDEN_CHANGE = "cd12e3f4-2eed-4bf3-8505-ecc145cb4db5"
+GOLDEN_PAYLOAD = "30e1a6b04055c17a8eb73d4a26ff85f3f1ac2e4f120ec128b5c06fcfc7b41612"
+
+
+def test_committed_golden_bundle_card_and_verifier_agree(tmp_path: Path) -> None:
+    with zipfile.ZipFile(GOLDEN) as archive:
+        signature = parse_canonical(archive.read("signature.json"))
+        passport = parse_canonical(archive.read("passport.json"))
+        html = archive.read("visuals/passport.html").decode("utf-8")
+        svg = archive.read("visuals/passport.svg").decode("utf-8")
+    trust = TrustRegistry(tmp_path / "trusted_keys.json")
+    trust.add(spki=base64.b64decode(signature["public_spki_b64"]), label="Golden fixture")
+    result = verify_bundle(GOLDEN, trust=trust)
+    assert result.verdict == "VALID", result.reason
+    assert result.change_id == GOLDEN_CHANGE
+    assert result.payload_sha256 == GOLDEN_PAYLOAD
+    expected = {
+        "Change": GOLDEN_CHANGE, "Payload SHA-256": GOLDEN_PAYLOAD,
+        "Checks passed": "UNKNOWN", "Freshness": "UNKNOWN",
+        "Execution boundary": "UNKNOWN", "Runs later": "UNKNOWN",
+    }
+    facts = dict(card_facts(passport, payload_digest=GOLDEN_PAYLOAD))
+    for label, value in expected.items():
+        assert facts[label] == value
+        assert value in html and value in svg
+    assert result.claims["freshness"] == facts["Freshness"]
+    assert result.claims["execution_boundary"] == facts["Execution boundary"]
+    assert result.claims["runs_later"] == facts["Runs later"]
+    for limitation in result.claims["limitations"]:
+        assert limitation in html and limitation in svg
 
 
 @pytest.fixture(scope="module")

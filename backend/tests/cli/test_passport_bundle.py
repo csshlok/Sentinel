@@ -99,6 +99,8 @@ def test_cli_export_and_offline_verify_exit_codes(tmp_path: Path,
         assert exported.exit_code == 0, exported.output
         assert json.loads(exported.stdout)["payload_sha256"] == artifact.payload_sha256
         assert output.read_bytes() == artifact.content
+        for db_file in tmp_path.glob("*.sqlite3*"):
+            db_file.unlink()
         assert runner.invoke(cli_app, ["verify", str(output), "--json"]).exit_code == 2
         trusted = TrustRegistry().add(spki=spki, label="Lab")
         verified = runner.invoke(cli_app, ["verify", str(output), "--json"])
