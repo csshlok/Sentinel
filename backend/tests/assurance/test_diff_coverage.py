@@ -194,6 +194,12 @@ def test_unexecuted_multiline_continuation_never_gets_inferred_credit(tmp_path: 
 
 @pytest.mark.parametrize("baseline_source,changed_source", [
     (
+        "def old():\n    flag = False\n    if flag:\n        return 2\n    return 1\n",
+        "def old():\n    flag = False\n    if flag:\n"
+        "        # one\n        # two\n        # three\n        # four\n"
+        "        return 3\n    return 1\n",
+    ),
+    (
         "def old():\n    return 1\n\ndef rarely():\n    return 2\n",
         "def old():\n    return 1\n\ndef rarely():\n"
         "    # a\n    # b\n    # c\n    # d\n    return 3\n",
