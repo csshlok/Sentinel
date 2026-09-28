@@ -171,17 +171,17 @@ def collect_diff_coverage(
     checks_passed: bool | None = None
     collector_status = "ERROR"
     reasons: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="sentinel-diff-") as temporary:
-        evidence = Path(temporary)
-        config = evidence / "coveragerc"
-        data = evidence / "coverage.data"
-        artifact = evidence / "coverage.json"
-        config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
-        argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
-                "-m", "coverage", "run", "--rcfile", str(config),
-                "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
-        result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix="sentinel-diff-") as temporary:
+            evidence = Path(temporary)
+            config = evidence / "coveragerc"
+            data = evidence / "coverage.data"
+            artifact = evidence / "coverage.json"
+            config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
+            argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
+                    "-m", "coverage", "run", "--rcfile", str(config),
+                    "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
+            result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
             checks_passed = run.returncode == 0 and not run.timed_out and not run.incomplete
             if run.timed_out or run.incomplete:
@@ -205,8 +205,8 @@ def collect_diff_coverage(
                         collector_status = "COLLECTED"
                     else:
                         reasons.append("Coverage report is malformed.")
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            reasons.append(f"Coverage collection failed: {type(exc).__name__}.")
+    except Exception as exc:
+        reasons.append(f"Coverage collection failed: {type(exc).__name__}.")
     try:
         after = tracker.capture(change.id, "diff-post-run", str(root),
                                 tested.evidence_revision, PATCH_LIMIT)

@@ -228,6 +228,38 @@ def test_oversized_report_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "oversized" in result.reasons[0]
 
 
+def test_evidence_config_write_failure_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    original = Path.write_text
+
+    def fail_config(path: Path, *args: object, **kwargs: object) -> int:
+        if path.name == "coveragerc":
+            raise OSError("synthetic evidence directory failure")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_config)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.checks_passed is None
+    assert result.gate_satisfied is False
+    assert "OSError" in result.reasons[0]
+
+
+def test_recursive_report_json_is_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+
+    def recursive_json(_: bytes) -> object:
+        raise RecursionError("synthetic deeply nested report")
+
+    monkeypatch.setattr("backend.app.assurance.diff_coverage.json.loads", recursive_json)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    assert "RecursionError" in result.reasons[0]
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)
