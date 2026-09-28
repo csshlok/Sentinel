@@ -46,6 +46,10 @@ def test_wrong_fingerprint_and_malformed_registry_fail_closed(tmp_path: Path) ->
     path.write_text("{broken", encoding="utf-8")
     with pytest.raises(ValueError, match="malformed"):
         registry.decision(spki=first)
+    path.write_text('{"schema_version":1,"keys":{},"keys":{},"revoked":{},"rotations":[]}',
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="malformed"):
+        registry.decision(spki=first)
     with pytest.raises(ValueError):
         normalize_fingerprint("not a fingerprint")
 

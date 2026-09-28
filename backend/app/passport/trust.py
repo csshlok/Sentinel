@@ -63,6 +63,15 @@ def _rotation_body(*, old_fingerprint: str, new_fingerprint: str, new_spki: byte
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate trust registry field")
+        result[key] = value
+    return result
+
+
 class TrustRegistry:
     """Bounded, atomic recipient trust registry with injectable path."""
 
@@ -75,8 +84,9 @@ class TrustRegistry:
         if self.path.stat().st_size > _MAX_STORE_BYTES:
             raise ValueError("Trust registry is oversized")
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            data = json.loads(self.path.read_text(encoding="utf-8"),
+                              object_pairs_hook=_unique_object)
+        except (OSError, UnicodeError, ValueError, RecursionError) as exc:
             raise ValueError("Trust registry is malformed") from exc
         if not isinstance(data, dict) or data.get("schema_version") != 1:
             raise ValueError("Unsupported trust registry schema")
