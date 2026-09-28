@@ -228,7 +228,9 @@ class TrustRegistry:
             "label": label.strip(),
             "spki": base64.b64encode(spki).decode("ascii") if spki is not None else (
                 previous.get("spki") if isinstance(previous, dict) else None),
-            "added_at": datetime.now(UTC).isoformat(),
+            "added_at": previous.get("added_at", datetime.now(UTC).isoformat()) if isinstance(previous, dict) else datetime.now(UTC).isoformat(),
+            **({field: previous[field] for field in ("rotated_from", "superseded_by")
+                if field in previous} if isinstance(previous, dict) else {}),
         }
         self._write(data)
         return chosen
@@ -238,15 +240,25 @@ class TrustRegistry:
         keys = data["keys"]
         revoked = data["revoked"]
         assert isinstance(keys, dict) and isinstance(revoked, dict)
-        return [{**value, "fingerprint": key, "revoked": key in revoked}
-                for key, value in sorted(keys.items()) if isinstance(value, dict)]
+        result: list[dict[str, object]] = []
+        for key, value in sorted(keys.items()):
+            if not isinstance(value, dict):
+                continue
+            status = self._status(data, key)
+            result.append({**value, "fingerprint": key, "revoked": status == "REVOKED",
+                           "status": status})
+        return result
 
     @_locked_mutation
     def remove(self, value: str) -> bool:
         data = self._read()
         keys = data["keys"]
         assert isinstance(keys, dict)
-        removed = keys.pop(normalize_fingerprint(value), None) is not None
+        chosen = normalize_fingerprint(value)
+        if any(isinstance(record, dict) and record.get("rotated_from") == chosen
+               for record in keys.values()):
+            raise ValueError("Cannot remove a key with rotation descendants")
+        removed = keys.pop(chosen, None) is not None
         if removed:
             self._write(data)
         return removed
@@ -270,27 +282,13 @@ class TrustRegistry:
         spki = _canonical_spki(spki)
         data = self._read()
         keys = data["keys"]
-        revoked = data["revoked"]
-        assert isinstance(keys, dict) and isinstance(revoked, dict)
-        if key in revoked:
-            return "REVOKED", None
+        assert isinstance(keys, dict)
+        status = self._status(data, key)
+        if status != "TRUSTED":
+            return status, None
         record = keys.get(key)
         if not isinstance(record, dict):
             return "UNTRUSTED", None
-        if record.get("superseded_by"):
-            return "UNTRUSTED", None
-        ancestor = record.get("rotated_from")
-        seen = {key}
-        while ancestor is not None:
-            if not isinstance(ancestor, str) or ancestor in seen:
-                return "REVOKED", None
-            seen.add(ancestor)
-            if ancestor in revoked:
-                return "REVOKED", None
-            parent = keys.get(ancestor)
-            if not isinstance(parent, dict):
-                return "REVOKED", None
-            ancestor = parent.get("rotated_from")
         pinned = record.get("spki")
         if pinned is not None and pinned != base64.b64encode(spki).decode("ascii"):
             return "MISMATCH", None
@@ -298,6 +296,32 @@ class TrustRegistry:
         if not isinstance(label, str) or not label:
             return "UNTRUSTED", None
         return "TRUSTED", f"Sentinel installation {label}"
+
+    @staticmethod
+    def _status(data: dict[str, object], key: str) -> Literal["TRUSTED", "UNTRUSTED", "REVOKED"]:
+        keys = data["keys"]
+        revoked = data["revoked"]
+        assert isinstance(keys, dict) and isinstance(revoked, dict)
+        if key in revoked:
+            return "REVOKED"
+        record = keys.get(key)
+        if not isinstance(record, dict):
+            return "UNTRUSTED"
+        if record.get("superseded_by"):
+            return "UNTRUSTED"
+        ancestor = record.get("rotated_from")
+        seen = {key}
+        while ancestor is not None:
+            if not isinstance(ancestor, str) or ancestor in seen:
+                return "REVOKED"
+            seen.add(ancestor)
+            if ancestor in revoked:
+                return "REVOKED"
+            parent = keys.get(ancestor)
+            if not isinstance(parent, dict):
+                return "REVOKED"
+            ancestor = parent.get("rotated_from")
+        return "TRUSTED"
 
     def sign_rotation(self, *, old_key: CngKey, new_spki: bytes) -> dict[str, str]:
         old_spki = old_key.public_spki()
