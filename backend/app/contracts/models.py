@@ -1264,3 +1264,16 @@ class PassportV2Issued(ContractModel):
     signer_provider: Literal["TPM", "SOFTWARE"]
     signer_identity: ShortText
     signature_b64: str = Field(max_length=512)
+
+
+class WorkspaceState(StrEnum):
+    """Lifecycle of a Sentinel-owned AppContainer workspace clone for one Change."""
+
+    CREATING = "CREATING"
+    READY = "READY"
+    SEALED = "SEALED"
+    APPLIED = "APPLIED"
+    APPLY_REFUSED = "APPLY_REFUSED"
+    DISCARDED = "DISCARDED"
+    CLEANED = "CLEANED"
+    CLEANUP_FAILED = "CLEANUP_FAILED"

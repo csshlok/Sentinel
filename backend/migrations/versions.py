@@ -609,6 +609,35 @@ def migration_011_diff_coverage_results(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_012_change_workspaces(connection: sqlite3.Connection) -> None:
+    """Sentinel-owned AppContainer workspace clones, one live workspace per Change.
+
+    Deliberately no foreign key to ``changes``: this row is the only durable
+    record of an AppContainer profile and its folder, so it must outlive a
+    Change delete (deleting a Change with a live workspace is refused, D-08).
+    """
+
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS change_workspaces ("
+        "id TEXT PRIMARY KEY, "
+        "change_id TEXT NOT NULL, "
+        "profile_name TEXT NOT NULL UNIQUE, "
+        "state TEXT NOT NULL, "
+        "active_run_id TEXT NULL, "
+        "payload_json TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_change_workspaces_live_change "
+        "ON change_workspaces(change_id) WHERE state != 'CLEANED'"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_change_workspaces_state "
+        "ON change_workspaces(state)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -621,6 +650,7 @@ MIGRATIONS = (
     Migration(9, "change_fork_columns", migration_009_change_fork_columns),
     Migration(10, "descendant_processes", migration_010_descendant_processes),
     Migration(11, "diff_coverage_results", migration_011_diff_coverage_results),
+    Migration(12, "change_workspaces", migration_012_change_workspaces),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
