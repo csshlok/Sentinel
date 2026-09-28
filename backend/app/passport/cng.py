@@ -22,6 +22,7 @@ PLATFORM_PROVIDER = "Microsoft Platform Crypto Provider"
 SOFTWARE_PROVIDER = "Microsoft Software Key Storage Provider"
 DEFAULT_KEY_NAME = "Sentinel Passport v2 ES256"
 _BAD_KEYSET = 0x80090016
+_PLATFORM_UNAVAILABLE_FOR_KEY = {0x80090029, 0x80290405}  # unsupported, not a transient TPM error
 _ECC_P256_PUBLIC_MAGIC = 0x31534345  # ECS1
 _EXPORT_POLICY = "Export Policy"
 
@@ -88,12 +89,15 @@ class CngKey:
             raise ValueError("Invalid CNG key name")
         dll = _api()
         providers: list[tuple[str, ctypes.c_void_p]] = []
+        platform_open_error: int | None = None
         try:
             for label in (PLATFORM_PROVIDER, SOFTWARE_PROVIDER):
                 handle = ctypes.c_void_p()
                 status = dll.NCryptOpenStorageProvider(ctypes.byref(handle), label, 0)
                 if status == 0:
                     providers.append((label, handle))
+                elif label == PLATFORM_PROVIDER:
+                    platform_open_error = status & 0xFFFFFFFF
                 elif label == SOFTWARE_PROVIDER:
                     _checked("NCryptOpenStorageProvider", status)
             # An existing software identity stays stable if a TPM becomes available later.
@@ -115,13 +119,17 @@ class CngKey:
                     _checked("NCryptOpenKey", status)
             # Platform creation can fail on machines with no usable TPM. Software is
             # the only fallback; never replace an existing key after an open error.
+            if platform_open_error is not None:
+                raise CngError("NCryptOpenStorageProvider(Platform)", platform_open_error)
             for label, handle in providers:
                 key = ctypes.c_void_p()
                 status = dll.NCryptCreatePersistedKey(
                     handle, ctypes.byref(key), "ECDSA_P256", name, 0, 0)
                 if status:
                     if label == PLATFORM_PROVIDER:
-                        continue
+                        if status & 0xFFFFFFFF in _PLATFORM_UNAVAILABLE_FOR_KEY:
+                            continue
+                        _checked("NCryptCreatePersistedKey(Platform)", status)
                     _checked("NCryptCreatePersistedKey", status)
                 try:
                     policy = wintypes.DWORD(0)
