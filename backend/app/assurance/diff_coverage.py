@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import os
@@ -54,23 +53,6 @@ def _report_path(root: Path, raw: str) -> str | None:
     return relative.as_posix()
 
 
-def _statement_starts(root: Path, path: str, lines: set[int]) -> dict[int, int]:
-    """Map changed continuation lines to the smallest enclosing Python statement."""
-    source = (root / path).read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=path)
-    statements = [node for node in ast.walk(tree) if isinstance(node, ast.stmt)
-                  and hasattr(node, "end_lineno")]
-    starts: dict[int, int] = {}
-    for line in lines:
-        containing = [node for node in statements
-                      if node.lineno <= line <= node.end_lineno]
-        if containing:
-            node = min(containing, key=lambda item: (item.end_lineno - item.lineno,
-                                                     -item.lineno))
-            starts[line] = node.lineno
-    return starts
-
-
 def evaluate_report(
     *, result: DiffCoverageResult, changed: dict[str, set[int]],
     excluded: dict[str, str], report: dict[str, object], root: Path,
@@ -91,6 +73,7 @@ def evaluate_report(
             files[path] = item
     measured: list[DiffCoverageFile] = []
     total = executed_total = 0
+    unmeasured_code: list[str] = []
     for path, lines in sorted(changed.items()):
         item = files.get(path)
         if item is None:
@@ -105,11 +88,18 @@ def evaluate_report(
                        for n in executed + missing + pragma_excluded)):
             return result.model_copy(update={"reasons": [f"Malformed coverage lines: {path}."],
                                              "excluded": excluded})
-        starts = _statement_starts(root, path, lines)
+        source_lines = (root / path).read_text(encoding="utf-8-sig").splitlines()
         executable = set(executed) | set(missing) | set(pragma_excluded)
-        target = {line for line, start in starts.items() if start in executable}
-        excluded_changed = {line for line in target if starts[line] in pragma_excluded}
-        hit = {line for line in target if starts[line] in executed} - excluded_changed
+        target = lines & executable
+        excluded_changed = target & set(pragma_excluded)
+        hit = target & set(executed) - excluded_changed
+        for line in sorted(lines - executable):
+            if line > len(source_lines):
+                unmeasured_code.append(f"{path}:{line}")
+                continue
+            stripped = source_lines[line - 1].strip()
+            if stripped and not stripped.startswith("#"):
+                unmeasured_code.append(f"{path}:{line}")
         total += len(target)
         executed_total += len(hit)
         measured.append(DiffCoverageFile(
@@ -131,6 +121,8 @@ def evaluate_report(
             for f in measured
         )
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
+    if unmeasured_code:
+        state = "UNKNOWN"
     if unsupported and state == "PASS":
         state = "UNKNOWN"
     if any(reason in {"untracked outside checkpoint", "ignore rules changed"}
@@ -150,6 +142,9 @@ def evaluate_report(
             and result.checks_passed is True) if rule.rule.required else None
     return DiffCoverageResult.model_validate({**result.model_dump(), **{
         "files": measured, "excluded": excluded, "diff_exercised": state,
+        "reasons": [*result.reasons, *(["Changed code lines lack exact coverage data: "
+                                    + ", ".join(unmeasured_code[:8]) + "."]
+                                   if unmeasured_code else [])],
         "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,

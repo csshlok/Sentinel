@@ -178,7 +178,7 @@ def test_changed_pragma_exclusions_count_as_uncovered(tmp_path: Path) -> None:
     assert result.files[0].reason == "excluded-by-pragma"
 
 
-def test_unexecuted_multiline_continuation_counts_as_uncovered(tmp_path: Path) -> None:
+def test_unexecuted_multiline_continuation_never_gets_inferred_credit(tmp_path: Path) -> None:
     root, change, baseline, _ = _case(tmp_path)
     write(root, "module.py", "def old():\n    return 1\n\ndef new():\n"
           "    return max(\n        __import__('os').getpid())\n")
@@ -186,9 +186,49 @@ def test_unexecuted_multiline_continuation_counts_as_uncovered(tmp_path: Path) -
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True))
     assert result.checks_passed is True
-    assert result.diff_exercised == "FAIL"
+    assert result.diff_exercised in {"FAIL", "UNKNOWN"}
     assert result.gate_satisfied is False
-    assert 6 in result.files[0].uncovered_lines
+    assert (6 in result.files[0].uncovered_lines
+            or any("module.py:6" in reason for reason in result.reasons))
+
+
+@pytest.mark.parametrize("baseline_source,changed_source", [
+    (
+        "def old():\n    return 1\n\ndef rarely():\n    return 2\n",
+        "def old():\n    return 1\n\ndef rarely():\n"
+        "    # a\n    # b\n    # c\n    # d\n    return 3\n",
+    ),
+    (
+        "def old():\n    try:\n        return 1\n    except ValueError:\n        return 2\n",
+        "def old():\n    try:\n        return 1\n    except (ValueError, TypeError):\n        return 2\n",
+    ),
+    (
+        "def old():\n    match 1:\n        case 1:\n            return 1\n"
+        "        case 2:\n            return 2\n",
+        "def old():\n    match 1:\n        case 1:\n            return 1\n"
+        "        case 2 | 3:\n            return 2\n",
+    ),
+])
+def test_changed_lines_never_inherit_compound_header_execution(
+    tmp_path: Path, baseline_source: str, changed_source: str,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": baseline_source,
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="line credit", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", changed_source)
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised != "PASS"
+    assert result.gate_satisfied is False
 
 
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
