@@ -54,6 +54,36 @@ def test_zip64_record_is_rejected_even_with_valid_signed_members(tmp_path: Path)
     assert "ZIP" in result.reason
 
 
+def test_stored_member_size_slack_cannot_hide_unsigned_bytes(tmp_path: Path) -> None:
+    """One extractor must not see extra passport bytes that the verifier omits."""
+    with zipfile.ZipFile(GOLDEN) as archive:
+        members = [(info.filename, archive.read(info)) for info in archive.infolist()]
+    locals_ = bytearray()
+    directory = bytearray()
+    slack = b"PK\x03\x04UNSIGNED-FORGED-CARD"
+    for name, body in members:
+        raw_name = name.encode("ascii")
+        offset = len(locals_)
+        crc = zipfile.crc32(body)
+        extra = slack if name == "passport.json" else b""
+        stored_size = len(body) + len(extra)
+        locals_ += struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, 0, 0, 0x21,
+                               crc, stored_size, len(body), len(raw_name), 0)
+        locals_ += raw_name + body + extra
+        directory += struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 0x0314, 20,
+                                 0, 0, 0, 0x21, crc, stored_size, len(body),
+                                 len(raw_name), 0, 0, 0, 0, 0o100644 << 16, offset)
+        directory += raw_name
+    offset = len(locals_)
+    eocd = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(members), len(members),
+                       len(directory), offset, 0)
+    hostile = tmp_path / "stored-slack.sentinel"
+    hostile.write_bytes(locals_ + directory + eocd)
+    result = verify_bundle(hostile, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", result.reason
+    assert "ZIP" in result.reason
+
+
 def test_committed_golden_bundle_card_and_verifier_agree(tmp_path: Path) -> None:
     with zipfile.ZipFile(GOLDEN) as archive:
         signature = parse_canonical(archive.read("signature.json"))
