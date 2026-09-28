@@ -79,8 +79,13 @@ def _parse_patch(patch: str, result: DiffMap) -> None:
             path = line[4:]
             if path == "/dev/null":
                 path = None
+            elif path.startswith("b/"):
+                path = path[2:]
             elif path.startswith('"') or "\t" in path:
                 result.error = "Diff contains a path that cannot be mapped safely."
+                return
+            else:
+                result.error = "Diff has an unexpected destination prefix."
                 return
         elif line.startswith("@@"):
             match = _HUNK.match(line)
@@ -120,8 +125,10 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     try:
         captured = run_git(
             tested.repository_root,
-            ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--no-prefix",
-             "--unified=0", baseline.head_sha, "--"],
+            ["-c", "color.diff=false", "-c", "diff.interHunkContext=0", "diff",
+             "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames",
+             "--inter-hunk-context=0", "--no-relative", "--src-prefix=a/",
+             "--dst-prefix=b/", "--unified=0", baseline.head_sha, "--"],
             limit=limit,
         )
     except (AppError, OSError, RuntimeError, ValueError) as exc:
