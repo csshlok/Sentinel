@@ -100,6 +100,11 @@ class CngKey:
                     platform_open_error = status & 0xFFFFFFFF
                 elif label == SOFTWARE_PROVIDER:
                     _checked("NCryptOpenStorageProvider", status)
+            # If the Platform KSP itself cannot be queried, an existing TPM
+            # identity may be hidden. Even an existing software key cannot
+            # prove which of the two identities is active in this condition.
+            if platform_open_error is not None:
+                raise CngError("NCryptOpenStorageProvider(Platform)", platform_open_error)
             # An existing software identity stays stable if a TPM becomes available later.
             for label, handle in providers:
                 key = ctypes.c_void_p()
@@ -108,6 +113,17 @@ class CngKey:
                     chosen = cls(dll, handle, key, _provider_label(label), name)
                     try:
                         chosen._assert_nonexportable()
+                        for other_label, other in providers:
+                            if other_label == label:
+                                continue
+                            other_key = ctypes.c_void_p()
+                            other_status = dll.NCryptOpenKey(
+                                other, ctypes.byref(other_key), name, 0, 0)
+                            if other_status == 0:
+                                dll.NCryptFreeObject(other_key)
+                                raise RuntimeError("Multiple CNG providers hold this signing identity")
+                            if other_status & 0xFFFFFFFF != _BAD_KEYSET:
+                                _checked("NCryptOpenKey(other provider)", other_status)
                     except Exception:
                         dll.NCryptFreeObject(key)
                         raise
@@ -119,8 +135,6 @@ class CngKey:
                     _checked("NCryptOpenKey", status)
             # Platform creation can fail on machines with no usable TPM. Software is
             # the only fallback; never replace an existing key after an open error.
-            if platform_open_error is not None:
-                raise CngError("NCryptOpenStorageProvider(Platform)", platform_open_error)
             for label, handle in providers:
                 key = ctypes.c_void_p()
                 status = dll.NCryptCreatePersistedKey(

@@ -62,6 +62,25 @@ def test_unavailable_platform_provider_fails_closed_before_new_identity(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_platform_outage_cannot_switch_an_existing_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = f"Sentinel disposable test {uuid4()}"
+    with CngKey.open(name=name) as original:
+        original_spki = original.public_spki()
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(cng, "PLATFORM_PROVIDER", "Unavailable Sentinel test KSP")
+            with pytest.raises(cng.CngError, match="NCryptOpenStorageProvider\\(Platform\\)"):
+                CngKey.open(name=name)
+        with CngKey.open(name=name) as reopened:
+            assert reopened.public_spki() == original_spki
+    finally:
+        with CngKey.open(name=name) as key:
+            key.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
 def test_transient_platform_creation_failure_does_not_create_software_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
