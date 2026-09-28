@@ -49,7 +49,9 @@ STARTF_USESTDHANDLES = 0x00000100
 HANDLE_FLAG_INHERIT = 0x00000001
 # ProcThreadAttributeValue(number, thread=FALSE, input=TRUE, additive=FALSE).
 PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x00020009  # verified: spike 001
-# Verified by backend/tests/execution/test_appcontainer.py (concurrent-run EOF test).
+# A1 settled (2026-09-28, Windows 11 26200): 0x00020002 is accepted alongside
+# SECURITY_CAPABILITIES in one list, and an unlisted inheritable handle is not
+# inherited (test_appcontainer.py::test_appcontainer_child_does_not_inherit_unlisted_handles).
 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
 SE_GROUP_ENABLED = 0x00000004
 
@@ -57,7 +59,8 @@ SE_GROUP_ENABLED = 0x00000004
 TOKEN_QUERY = 0x0008
 TokenIntegrityLevel = 25
 TokenIsAppContainer = 29
-# Verified by the capability positive control in test_appcontainer.py.
+# A2 settled: class 30 returns exactly the requested capability SIDs (S-1-15-3-1
+# for internetClient, none for a zero-capability launch) -- test_appcontainer.py.
 TokenCapabilities = 30
 TokenAppContainerSid = 31
 LOW_INTEGRITY_RID = 0x1000
@@ -707,6 +710,8 @@ def _assign_to_job(job: int, process_handle: int) -> None:
 
 
 def _process_in_job(process_handle: int, job: int) -> bool:
+    # A3 settled: IsProcessInJob answers for a suspended lowbox child from the
+    # medium-IL parent; the pid-list fallback is not needed on Windows 11 26200.
     result = wintypes.BOOL()
     if _kernel32.IsProcessInJob(process_handle, job, ctypes.byref(result)):
         return bool(result.value)

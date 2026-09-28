@@ -33,6 +33,14 @@ variable is out of reach of this scan; the behavioral planted-binary tests in
 ``backend/tests/execution/test_acl.py`` and ``test_signature.py`` cover the
 two Windows tools Sentinel starts outside the resolver (icacls, signtool).
 
+A third rule covers native process creation, which the AST scan cannot see:
+a ctypes call such as ``kernel32.CreateProcessW`` is an ordinary attribute
+call. No non-allowlisted module may contain the identifier ``CreateProcess``
+(which also covers ``CreateProcessW``/``CreateProcessAsUserW``) or
+``CreateAppContainerProfile`` anywhere in its source text, so every native
+process start and every AppContainer profile creation stays in
+``backend/app/execution/`` (``process_supervisor.py``, ``appcontainer.py``).
+
 Limit: non-literal dynamic imports (``importlib.import_module(name)`` with a
 computed name, ``getattr(os, "sys" + "tem")``) are out of reach of static
 analysis and are left to code review.
@@ -276,7 +284,56 @@ def test_bare_executable_scanner_allows_absolute_forms(form: str) -> None:
     assert find_bare_executable_violations(ABSOLUTE_EXECUTABLE_SOURCES[form], filename="s.py") == []
 
 
+_NATIVE_PROCESS_IDENTIFIERS = ("CreateProcess", "CreateAppContainerProfile")
+
+
+def find_native_process_creation(source: str, *, filename: str) -> list[str]:
+    """Lines naming a native (ctypes) process-creation or AppContainer-profile API."""
+
+    found: list[str] = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        for identifier in _NATIVE_PROCESS_IDENTIFIERS:
+            if identifier in line:
+                found.append(f"{filename}:{number}: {identifier}")
+    return found
+
+
+def test_no_module_outside_execution_names_native_process_creation() -> None:
+    files = _scanned_files()
+    violations: list[str] = []
+    for path in files:
+        relative = path.relative_to(APP_ROOT.parents[1]).as_posix()
+        violations.extend(
+            find_native_process_creation(path.read_text(encoding="utf-8"), filename=relative))
+    assert len(files) >= 50, f"scan covered only {len(files)} files"
+    assert not violations, (
+        "Native process creation outside backend/app/execution/:\n" + "\n".join(violations))
+
+
+NATIVE_VIOLATING_SOURCES = {
+    "CreateProcessW": "kernel32.CreateProcessW(None, cmd, None, None, True, 0, None, None, si, pi)\n",
+    "CreateProcessAsUserW": "advapi32.CreateProcessAsUserW(token, exe, cmd)\n",
+    "getattr CreateProcessW": "create = getattr(kernel32, 'CreateProcessW')\n",
+    "CreateAppContainerProfile": "userenv.CreateAppContainerProfile(name, name, name, None, 0, sid)\n",
+}
+
+
+@pytest.mark.parametrize("form", sorted(NATIVE_VIOLATING_SOURCES))
+def test_native_process_scanner_detects_each_form(form: str) -> None:
+    assert find_native_process_creation(NATIVE_VIOLATING_SOURCES[form], filename="n.py")
+
+
+def test_native_process_scanner_allows_benign_source() -> None:
+    benign = (
+        "from backend.app.execution.appcontainer import ensure_profile\n"
+        "profile, created = ensure_profile(name, display_name='x')\n"
+        "kernel32.CreateFileW('NUL', 0, 0, None, 3, 0, None)\n"
+    )
+    assert find_native_process_creation(benign, filename="b.py") == []
+
+
 def test_allowlist_entries_exist() -> None:
     assert EXECUTION_DIR.is_dir()
     assert (EXECUTION_DIR / "_process.py").is_file()
     assert SAFE_EXEC.is_file()
+    assert (EXECUTION_DIR / "appcontainer.py").is_file()
