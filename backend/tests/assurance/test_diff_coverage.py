@@ -691,6 +691,20 @@ def test_unknown_overrides_explain_their_cause(
     assert any(phrase in reason and path in reason for reason in result.reasons)
 
 
+def test_utf8_bom_python_source_is_measured(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    (root / "module.py").write_bytes(
+        b"\xef\xbb\xbfdef old():\n    return 1  # covered edit\n\n"
+        b"def new():\n    return 1\n"
+    )
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "PASS", result.reasons
+    assert result.gate_satisfied is True
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)
