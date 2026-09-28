@@ -3,13 +3,34 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import asdict
 from pathlib import Path
+from uuid import UUID
 
 import typer
+from typer._click.exceptions import UsageError
+from typer.core import TyperCommand
 
 from backend.app.passport.trust import TrustRegistry, load_public_key
+from backend.app.passport.trust import normalize_fingerprint
+from backend.app.passport.verify import verify_bundle
+from backend.app.passport.format import MAX_BUNDLE_BYTES
+from backend.app.cli.client import ApiClient
+from backend.app.providers.http_transport import TransportTimeout
 
 trust_app = typer.Typer(no_args_is_help=True)
+
+
+class VerifyUsageCommand(TyperCommand):
+    """Give verifier syntax errors the documented standalone exit code 3."""
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        try:
+            return super().parse_args(ctx, args)
+        except UsageError as exc:
+            exc.exit_code = 3
+            raise
 
 
 def _output(value: object, *, as_json: bool) -> None:
@@ -88,3 +109,67 @@ def trust_rotate(statement: Path, json_: bool = typer.Option(False, "--json")) -
     except (OSError, ValueError, RecursionError) as exc:
         _fail(exc)
     _output({"fingerprint": value, "rotated": True}, as_json=json_)
+
+
+def verify_command(
+    bundle: Path | None = typer.Argument(None, metavar="BUNDLE"),
+    key: str | None = typer.Option(None, "--key", help="Explicit expected signer fingerprint."),
+    json_: bool = typer.Option(False, "--json"),
+) -> None:
+    """Verify a saved .sentinel bundle offline with recipient trust."""
+    if bundle is None or not bundle.is_file():
+        _output({"verdict": "USAGE_ERROR", "reason": "Provide an existing bundle path."},
+                as_json=json_)
+        raise typer.Exit(3)
+    if key is not None:
+        try:
+            key = normalize_fingerprint(key)
+        except ValueError as exc:
+            _output({"verdict": "USAGE_ERROR", "reason": str(exc)}, as_json=json_)
+            raise typer.Exit(3) from exc
+    result = verify_bundle(bundle, expected_fingerprint=key)
+    _output(asdict(result), as_json=json_)
+    raise typer.Exit({"VALID": 0, "INVALID": 1, "INDETERMINATE": 2}[result.verdict])
+
+
+def export_passport_command(
+    change_id: UUID, *, api_url: str, output: Path | None, as_json: bool,
+) -> None:
+    """Ask the authenticated local API for a Change-ID-built ZIP and save it."""
+    client = ApiClient(api_url)
+    headers = {"Accept": "application/vnd.sentinel.passport+zip"}
+    if client.token:
+        headers["Authorization"] = f"Bearer {client.token}"
+    try:
+        response = client.transport.request(
+            "POST", f"{client.base_url}/api/v1/changes/{change_id}/passport/v2/bundle",
+            headers=headers, body=None, timeout_seconds=client.timeout_seconds,
+        )
+    except TransportTimeout as exc:
+        _output({"error": "CONNECTION_ERROR", "message": str(exc)}, as_json=as_json)
+        raise typer.Exit(2) from exc
+    if response.status_code != 200:
+        try:
+            error = json.loads(response.body).get("error", {})
+        except (ValueError, TypeError):
+            error = {}
+        _output({"error": error.get("code", "EXPORT_FAILED"),
+                 "message": error.get("message", "Passport export failed")}, as_json=as_json)
+        raise typer.Exit(1)
+    if len(response.body) > MAX_BUNDLE_BYTES or not response.body.startswith(b"PK\x03\x04"):
+        _output({"error": "INVALID_EXPORT", "message": "API returned an invalid bundle."},
+                as_json=as_json)
+        raise typer.Exit(1)
+    destination = output or Path.cwd() / f"change-{change_id}.sentinel"
+    try:
+        with destination.open("xb") as stream:
+            stream.write(response.body)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        _output({"error": "WRITE_FAILED", "message": str(exc)}, as_json=as_json)
+        raise typer.Exit(1) from exc
+    digest = next((value for name, value in response.headers.items()
+                   if name.lower() == "x-sentinel-payload-sha256"), None)
+    _output({"path": str(destination), "payload_sha256": digest,
+             "size": len(response.body)}, as_json=as_json)

@@ -8065,6 +8065,61 @@
         ]
       }
     },
+    "/api/v1/changes/{change_id}/passport/v2/bundle": {
+      "post": {
+        "operationId": "export_passport_v2_bundle_api_v1_changes__change_id__passport_v2_bundle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.sentinel.passport+zip": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Passport V2 Bundle",
+        "tags": [
+          "passport"
+        ]
+      }
+    },
     "/api/v1/changes/{change_id}/passport/v2/issue": {
       "post": {
         "operationId": "issue_passport_v2_api_v1_changes__change_id__passport_v2_issue_post",

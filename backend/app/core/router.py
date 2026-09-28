@@ -75,6 +75,7 @@ from backend.app.core.change_service import ChangeService
 from backend.app.core.runtime_service import RuntimeServices
 from backend.app.core.errors import AppError
 from backend.app.passport.v2 import PassportV2Issuer
+from backend.app.passport.bundle import BundleExporter
 
 
 IdempotencyHeader = Annotated[
@@ -464,6 +465,27 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
                            "Passport v2 is issued only from Sentinel's Change records.")
         service.get(change_id)
         return PassportV2Issuer(service.repository.database).issue(change_id)
+
+    @router.post(
+        "/changes/{change_id}/passport/v2/bundle",
+        response_class=Response,
+        tags=["passport"],
+        responses={200: {"content": {"application/vnd.sentinel.passport+zip": {}}}},
+    )
+    async def export_passport_v2_bundle(change_id: UUID, request: Request) -> Response:
+        if await request.body():
+            raise AppError("PASSPORT_PAYLOAD_FORBIDDEN",
+                           "Portable Passport is exported only from Sentinel's Change records.")
+        service.get(change_id)
+        artifact = BundleExporter(service.repository.database).export(change_id)
+        return Response(
+            content=artifact.content,
+            media_type="application/vnd.sentinel.passport+zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+                "X-Sentinel-Payload-SHA256": artifact.payload_sha256,
+            },
+        )
 
     @router.get(
         "/identity/signing-key",

@@ -22,7 +22,9 @@ import typer
 from rich.console import Console
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
-from backend.app.cli.passport_commands import trust_app
+from backend.app.cli.passport_commands import (
+    VerifyUsageCommand, export_passport_command, trust_app, verify_command,
+)
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
     default_database_path,
@@ -53,6 +55,7 @@ app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(passport_app, name="passport")
 app.add_typer(trust_app, name="trust")
+app.command("verify", cls=VerifyUsageCommand)(verify_command)
 app.add_typer(identity_app, name="identity")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(agent_app, name="agent")
@@ -421,13 +424,11 @@ def passport_show(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = Js
 
 
 @passport_app.command("export")
-def passport_export(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
-    """Sign the latest already-built Passport and print the signed export.
-
-    Requires a Passport to already exist for this Change (`passport build`
-    first) -- this signs what was already built, it does not build one.
-    """
-    _run(lambda: ApiClient(api_url).export_signed_passport(change_id), as_json=json_, no_color=no_color)
+def passport_export(change_id: UUID, api_url: str = ApiUrlOption,
+                    output: Path | None = typer.Option(None, "--output"),
+                    json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
+    """Save the signed portable Passport v2 bundle for this Change."""
+    export_passport_command(change_id, api_url=api_url, output=output, as_json=json_)
 
 
 @identity_app.command("signing-key")
