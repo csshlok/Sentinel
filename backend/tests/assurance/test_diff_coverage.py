@@ -515,6 +515,7 @@ def test_documentation_only_diff_is_not_applicable_when_policy_allows_it(tmp_pat
 
 def test_advisory_threshold_is_reported_and_used(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
+    write(root, "module.py", "".join(f"LINE_{number} = {number}\n" for number in range(1, 21)))
     initial = DiffCoverageResult(
         change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
         head_sha=tested.head_sha, status_digest=tested.status_digest, contract_digest="0" * 64,
