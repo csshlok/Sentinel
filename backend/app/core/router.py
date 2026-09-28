@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
@@ -34,6 +35,9 @@ from backend.app.contracts.models import (
     DiffCoverageResult,
     GitCheckpointComparison,
     GitCheckpointListResponse,
+    GitHubAppConfigurationStatus,
+    GitHubAppFlowRequest,
+    GitHubAppFlowResult,
     CapabilitiesResponse,
     ChangeCancelRequest,
     ChangeContractUpdateRequest,
@@ -77,6 +81,7 @@ from backend.app.core.runtime_service import RuntimeServices
 from backend.app.core.errors import AppError
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.passport.bundle import BundleExporter
+from backend.app.providers.github_app import GitHubAppManifestFlows, app_provider_name
 
 
 IdempotencyHeader = Annotated[
@@ -92,6 +97,7 @@ IdempotencyHeader = Annotated[
 
 def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+    github_app_flows = GitHubAppManifestFlows(runtime.credentials.broker)
 
     @router.get(
         "/capabilities",
@@ -316,6 +322,47 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     def github_status() -> ProviderConnectionStatus:
         return ProviderConnectionStatus(
             provider="github", configured=runtime.credentials.is_configured("github")
+        )
+
+    @router.post(
+        "/providers/github/app/flows",
+        response_model=GitHubAppFlowResult,
+        status_code=status.HTTP_201_CREATED,
+        tags=["providers"],
+    )
+    def create_github_app_flow(request: GitHubAppFlowRequest) -> GitHubAppFlowResult:
+        try:
+            view = github_app_flows.create(owner=request.owner,
+                                           account_kind=request.account_kind)
+        except ValueError as exc:
+            raise AppError("GITHUB_APP_FLOW_INVALID", str(exc), status_code=422) from exc
+        return GitHubAppFlowResult.model_validate(asdict(view))
+
+    @router.get(
+        "/providers/github/app/flows/{flow_id}",
+        response_model=GitHubAppFlowResult,
+        tags=["providers"],
+    )
+    def get_github_app_flow(flow_id: str) -> GitHubAppFlowResult:
+        view = github_app_flows.get(flow_id)
+        if view is None:
+            raise AppError("GITHUB_APP_FLOW_NOT_FOUND", "GitHub App flow not found.",
+                           status_code=404)
+        return GitHubAppFlowResult.model_validate(asdict(view))
+
+    @router.get(
+        "/providers/github/app/status/{owner}",
+        response_model=GitHubAppConfigurationStatus,
+        tags=["providers"],
+    )
+    def github_app_status(owner: str) -> GitHubAppConfigurationStatus:
+        try:
+            provider = app_provider_name(owner)
+        except ValueError as exc:
+            raise AppError("GITHUB_APP_OWNER_INVALID", "Invalid GitHub account name.",
+                           status_code=422) from exc
+        return GitHubAppConfigurationStatus(
+            owner=owner, configured=runtime.credentials.is_configured(provider),
         )
 
     @router.post(

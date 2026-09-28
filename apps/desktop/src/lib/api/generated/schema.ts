@@ -957,6 +957,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/github/app/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Github App Flow */
+        post: operations["create_github_app_flow_api_v1_providers_github_app_flows_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/github/app/flows/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Github App Flow */
+        get: operations["get_github_app_flow_api_v1_providers_github_app_flows__flow_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/github/app/status/{owner}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Github App Status */
+        get: operations["github_app_status_api_v1_providers_github_app_status__owner__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/github/connect": {
         parameters: {
             query?: never;
@@ -2431,6 +2482,44 @@ export interface components {
             count: number;
             /** Items */
             items: components["schemas"]["GitCheckpoint"][];
+        };
+        /** GitHubAppConfigurationStatus */
+        GitHubAppConfigurationStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Owner */
+            owner: string;
+        };
+        /**
+         * GitHubAppFlowRequest
+         * @description Start a per-account GitHub App manifest registration.
+         */
+        GitHubAppFlowRequest: {
+            /**
+             * Account Kind
+             * @enum {string}
+             */
+            account_kind: "user" | "organization";
+            /** Owner */
+            owner: string;
+        };
+        /** GitHubAppFlowResult */
+        GitHubAppFlowResult: {
+            /** App Slug */
+            app_slug?: string | null;
+            /** Flow Id */
+            flow_id: string;
+            /** Owner */
+            owner: string;
+            /** Reason */
+            reason?: string | null;
+            /** Registration Url */
+            registration_url?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "PENDING" | "COMPLETE" | "FAILED" | "EXPIRED";
         };
         /** GitSummary */
         GitSummary: {
@@ -5362,6 +5451,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SigningPublicKeyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_github_app_flow_api_v1_providers_github_app_flows_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubAppFlowRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppFlowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_github_app_flow_api_v1_providers_github_app_flows__flow_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppFlowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_app_status_api_v1_providers_github_app_status__owner__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                owner: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppConfigurationStatus"];
                 };
             };
             /** @description Validation Error */

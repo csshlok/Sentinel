@@ -1278,3 +1278,24 @@ class WorkspaceState(StrEnum):
     DISCARDED = "DISCARDED"
     CLEANED = "CLEANED"
     CLEANUP_FAILED = "CLEANUP_FAILED"
+
+
+class GitHubAppFlowRequest(ContractModel):
+    """Start a per-account GitHub App manifest registration."""
+
+    owner: Annotated[str, StringConstraints(min_length=1, max_length=39)]
+    account_kind: Literal["user", "organization"]
+
+
+class GitHubAppFlowResult(ContractModel):
+    flow_id: Annotated[str, StringConstraints(min_length=16, max_length=100)]
+    owner: str
+    status: Literal["PENDING", "COMPLETE", "FAILED", "EXPIRED"]
+    registration_url: str | None = None
+    app_slug: str | None = None
+    reason: str | None = None
+
+
+class GitHubAppConfigurationStatus(ContractModel):
+    owner: str
+    configured: bool

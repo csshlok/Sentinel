@@ -3358,6 +3358,116 @@
         "title": "GitCheckpointListResponse",
         "type": "object"
       },
+      "GitHubAppConfigurationStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "configured"
+        ],
+        "title": "GitHubAppConfigurationStatus",
+        "type": "object"
+      },
+      "GitHubAppFlowRequest": {
+        "additionalProperties": false,
+        "description": "Start a per-account GitHub App manifest registration.",
+        "properties": {
+          "account_kind": {
+            "enum": [
+              "user",
+              "organization"
+            ],
+            "title": "Account Kind",
+            "type": "string"
+          },
+          "owner": {
+            "maxLength": 39,
+            "minLength": 1,
+            "title": "Owner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "account_kind"
+        ],
+        "title": "GitHubAppFlowRequest",
+        "type": "object"
+      },
+      "GitHubAppFlowResult": {
+        "additionalProperties": false,
+        "properties": {
+          "app_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Slug"
+          },
+          "flow_id": {
+            "maxLength": 100,
+            "minLength": 16,
+            "title": "Flow Id",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "registration_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registration Url"
+          },
+          "status": {
+            "enum": [
+              "PENDING",
+              "COMPLETE",
+              "FAILED",
+              "EXPIRED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id",
+          "owner",
+          "status"
+        ],
+        "title": "GitHubAppFlowResult",
+        "type": "object"
+      },
       "GitSummary": {
         "additionalProperties": false,
         "properties": {
@@ -9470,6 +9580,181 @@
         "summary": "Get Signing Public Key",
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/api/v1/providers/github/app/flows": {
+      "post": {
+        "operationId": "create_github_app_flow_api_v1_providers_github_app_flows_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubAppFlowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppFlowResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Github App Flow",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/providers/github/app/flows/{flow_id}": {
+      "get": {
+        "operationId": "get_github_app_flow_api_v1_providers_github_app_flows__flow_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppFlowResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Github App Flow",
+        "tags": [
+          "providers"
+        ]
+      }
+    },
+    "/api/v1/providers/github/app/status/{owner}": {
+      "get": {
+        "operationId": "github_app_status_api_v1_providers_github_app_status__owner__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "title": "Owner",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAppConfigurationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github App Status",
+        "tags": [
+          "providers"
         ]
       }
     },
