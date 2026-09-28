@@ -89,6 +89,7 @@ class PassportV2Issuer:
             "Execution boundary evidence is not yet structured; UNKNOWN.",
             "Execution-bearing files that run later are not measured; UNKNOWN.",
             "An executed line does not prove an assertion verified behavior.",
+            "Offline journal export contains hash links, not event payloads; original event hashes cannot be recomputed offline.",
         ]
         if not journal:
             limitations.append("No journal events exist for this Change.")
