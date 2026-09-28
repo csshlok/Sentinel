@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 import backend.app.core.router as router_module
 
-from backend.app.contracts.models import DiffCoverageResult, JournalEventType
+from backend.app.contracts.models import AgentAttachRequest, DiffCoverageResult, JournalEventType
 from backend.app.core.config import Settings
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -22,6 +22,7 @@ from backend.app.main import create_app
 from backend.app.passport.cng import CngKey, verify_signature
 from backend.app.passport.v2 import PassportV2Issuer, canonical_payload
 from backend.app.assurance.store import EvidenceStore
+from backend.app.assurance.service import EvidenceService
 from backend.app.git.state import GitStateTracker
 from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.support_kb import make_repo, write
@@ -45,6 +46,18 @@ def _launch(database, change_id) -> str:
                                    subject_type="agent_run", subject_id=run_id,
                                    payload={"status": "SUCCEEDED", "exit_code": 0})
     return str(run_id)
+
+
+def test_real_attached_run_can_be_bound_to_passport_snapshot(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    evidence = EvidenceService(EvidenceStore(database), journal=JournalWriter(database))
+    attached = evidence.attach_agent(
+        change, AgentAttachRequest(adapter="claude", external_run_id="external-1"))
+    payload = PassportV2Issuer(database).snapshot(change.id)
+    assert len(payload.launch_records) == 1
+    assert payload.launch_records[0].run_id == attached.id
+    assert payload.launch_records[0].status == "ATTACHED"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
