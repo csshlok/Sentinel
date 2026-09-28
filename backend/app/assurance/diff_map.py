@@ -148,6 +148,8 @@ def _parse_patch(patch: str, result: DiffMap, root: Path | None = None) -> None:
                 return
             try:
                 binary_path = _destination_path(pair[1])
+                if binary_path is None and pair[0].startswith("a/"):
+                    binary_path = _destination_path("b/" + pair[0][2:])
             except ValueError:
                 result.error = "Binary diff path could not be identified."
                 return

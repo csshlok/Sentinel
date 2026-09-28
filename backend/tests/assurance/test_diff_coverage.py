@@ -253,6 +253,25 @@ def test_deletion_only_file_does_not_require_coverage_record(tmp_path: Path) -> 
     assert result.diff_exercised == "NOT_APPLICABLE"
 
 
+def test_deleted_binary_asset_does_not_abort_python_mapping(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "logo.png": "PNG\x00binary",
+        "module.py": "VALUE = 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="binary delete", intent="measure",
+                        repository_path=str(root), created_at=utc_now(), updated_at=utc_now(),
+                        review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    (root / "logo.png").unlink()
+    write(root, "module.py", "VALUE = 2\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.excluded["logo.png"] == "binary"
+    assert mapped.lines["module.py"] == {1}
+
+
 def test_committed_staged_unstaged_and_classified_files(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")
