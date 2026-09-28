@@ -161,13 +161,23 @@ def test_one_byte_member_change_is_invalid(signed_bundle, member: str) -> None:
 
 
 @pytest.mark.parametrize("unsafe", [
-    "../escape", "/absolute", "C:/drive", "bad\\slash", "evidence/../escape",
+    "../escape", "/absolute", "C:/drive", "evidence/../escape",
+    "passport.json:stream",
 ])
 def test_unsafe_member_path_is_invalid(signed_bundle, unsafe: str) -> None:
     path, _, root = signed_bundle
     target = _rewrite(path, root / f"unsafe-{uuid4()}.sentinel",
                       omit={"signature.json"}, append=[(unsafe, b"x", 0o100644)])
-    assert verify_bundle(target, trust=TrustRegistry(root / "empty.json")).verdict == "INVALID"
+    result = verify_bundle(target, trust=TrustRegistry(root / "empty.json"))
+    assert result.verdict == "INVALID"
+    assert "Unsafe ZIP member path" in result.reason
+
+
+def test_backslash_member_name_is_rejected_before_signature(tmp_path: Path) -> None:
+    raw = GOLDEN.read_bytes().replace(b"signature.json", b"signature\\json")
+    target = tmp_path / "backslash.sentinel"
+    target.write_bytes(raw)
+    assert "Unsafe ZIP member path" in verify_bundle(target).reason
 
 
 def test_symlink_and_duplicate_normalized_names_are_invalid(signed_bundle) -> None:
@@ -211,7 +221,7 @@ def test_oversized_zip_bomb_missing_and_malformed_are_invalid(signed_bundle) -> 
     path, _, root = signed_bundle
     oversized = _rewrite(path, root / "oversized.sentinel", omit={"signature.json"},
                          append=[("signature.json", b"x" * (MAX_MEMBER_BYTES + 1), 0o100644)])
-    assert verify_bundle(oversized).verdict == "INVALID"
+    assert "Oversized ZIP member" in verify_bundle(oversized).reason
     bomb = root / "bomb.sentinel"
     with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", b"A" * 50_000)
@@ -264,7 +274,7 @@ def test_local_header_method_mismatch_is_invalid(tmp_path: Path) -> None:
     target.write_bytes(raw)
     result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
     assert result.verdict == "INVALID"
-    assert "Local ZIP header" in result.reason
+    assert "compression" in result.reason
 
 
 def test_claim_type_coercion_cannot_make_card_and_verifier_disagree() -> None:

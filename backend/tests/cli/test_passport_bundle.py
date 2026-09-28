@@ -115,6 +115,9 @@ def test_cli_export_and_offline_verify_exit_codes(tmp_path: Path,
         malformed = tmp_path / "malformed.sentinel"
         malformed.write_bytes(b"not a zip")
         assert runner.invoke(cli_app, ["verify", str(malformed)]).exit_code == 1
+        invalid_json = runner.invoke(cli_app, ["verify", str(malformed), "--json"])
+        assert invalid_json.exit_code == 1
+        assert json.loads(invalid_json.stdout)["verdict"] == "INVALID"
     finally:
         with CngKey.open(name=key_name) as key:
             key.delete_for_test()

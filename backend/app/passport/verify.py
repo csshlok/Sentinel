@@ -111,6 +111,10 @@ def _validate_local_headers(raw: bytes, infos: list[zipfile.ZipInfo],
             raise ValueError("ZIP has hidden data between members")
         (magic, _version, flags, method, _time, _date, crc, compressed,
          uncompressed, name_size, extra_size) = struct.unpack_from("<IHHHHHIIIHH", raw, position)
+        if flags & 1:
+            raise ValueError("Encrypted ZIP member")
+        if method != zipfile.ZIP_STORED:
+            raise ValueError("Unsupported ZIP compression")
         if magic != 0x04034B50 or flags != info.flag_bits or flags & ~0x800:
             raise ValueError("Local ZIP header differs from central directory")
         if (method != zipfile.ZIP_STORED or method != info.compress_type
@@ -118,6 +122,8 @@ def _validate_local_headers(raw: bytes, infos: list[zipfile.ZipInfo],
                 (info.CRC, info.compress_size, info.file_size) or extra_size):
             raise ValueError("Local ZIP header differs from central directory")
         name = raw[position + 30:position + 30 + name_size]
+        if b"\\" in name or b":" in name:
+            raise ValueError("Unsafe ZIP member path")
         expected = info.filename.encode("utf-8")
         if name != expected:
             raise ValueError("Local ZIP name differs from central directory")
@@ -264,10 +270,10 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
             if archive.comment:
                 raise ValueError("Unexpected ZIP archive comment")
             infos = archive.infolist()
-            names = _safe_names(infos)
             if int.from_bytes(raw_zip[-12:-10], "little") != len(infos):
                 raise ValueError("ZIP central directory entry count mismatch")
             _validate_local_headers(raw_zip, infos, directory_offset)
+            names = _safe_names(infos)
             content = _read_members(archive, infos)
         manifest = _object(content["manifest.json"], name="Manifest")
         payload_digest = _validate_manifest(manifest, content, names)
