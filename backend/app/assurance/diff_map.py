@@ -34,8 +34,17 @@ def _classification(path: str, root: Path | None = None) -> str | None:
         return "documentation"
     if not lower.endswith(".py"):
         if lower.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-                           ".java", ".go", ".rs", ".cs", ".rb")):
+                           ".java", ".go", ".rs", ".cs", ".rb", ".pyw", ".pyx",
+                           ".pyi", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cc",
+                           ".cpp", ".h", ".hpp")):
             return "unsupported language"
+        if root is not None:
+            try:
+                with (root / path).open("rb") as stream:
+                    if stream.read(2) == b"#!":
+                        return "unsupported language"
+            except OSError:
+                pass
         return "non-source file"
     if root is not None:
         source = root / path

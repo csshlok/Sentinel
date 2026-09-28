@@ -398,6 +398,24 @@ def test_unsupported_source_is_listed_and_unknown_when_alone(tmp_path: Path) -> 
     assert result.excluded["app.ts"] == "unsupported language"
 
 
+def test_unmeasured_script_stays_unknown_with_docs_only_gate(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n    return 1\n")
+    write(root, "deploy.ps1", "Write-Output hello\n")
+    write(root, "tool.pyw", "print('hello')\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        rule=DiffCoverageRule(required=True, minimum_percent=80,
+                              not_applicable_satisfies=True),
+    )
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=request)
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    assert result.excluded["deploy.ps1"] == "unsupported language"
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)

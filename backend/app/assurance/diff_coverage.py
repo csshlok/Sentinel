@@ -119,10 +119,11 @@ def evaluate_report(
             excluded_by_pragma_lines=sorted(excluded_changed),
             reason="excluded-by-pragma" if excluded_changed else None,
         ))
+    unsupported = any(v.startswith("unsupported language") for v in excluded.values())
     if not changed and excluded:
-        state = "UNKNOWN" if any(v.startswith("unsupported language") for v in excluded.values()) else "NOT_APPLICABLE"
+        state = "UNKNOWN" if unsupported else "NOT_APPLICABLE"
     elif total == 0:
-        state = "NOT_APPLICABLE"
+        state = "UNKNOWN" if unsupported else "NOT_APPLICABLE"
     else:
         minimum = rule.rule.minimum_percent or 100.0
         percent = 100.0 * executed_total / total
@@ -131,6 +132,8 @@ def evaluate_report(
             for f in measured
         )
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
+    if unsupported and state == "PASS":
+        state = "UNKNOWN"
     if rule.rule.required and any(
         path.lower().endswith(".py") and reason == "generated"
         for path, reason in excluded.items()
