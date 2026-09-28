@@ -88,6 +88,11 @@ def evaluate_report(
             for f in measured
         )
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
+    if rule.rule.required and any(
+        path.lower().endswith(".py") and reason == "generated"
+        for path, reason in excluded.items()
+    ):
+        state = "UNKNOWN"
     gate = (state == "PASS" and result.checks_passed is True) if rule.rule.required else None
     return result.model_copy(update={
         "files": measured, "excluded": excluded, "diff_exercised": state,
