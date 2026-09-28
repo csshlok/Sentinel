@@ -124,6 +124,18 @@ def test_failed_pytest_can_measure_execution_but_never_open_required_gate(tmp_pa
     assert result.gate_satisfied is False
 
 
+def test_collect_only_addopts_cannot_claim_passing_checks(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "pyproject.toml", '[tool.pytest.ini_options]\naddopts = "--collect-only"\n')
+    write(root, "module.py", "def old():\n    return 2\n\ndef new():\n    return 2\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert "addopts=" in result.command
+    assert result.checks_passed is False
+    assert result.gate_satisfied is False
+
+
 def test_changed_pragma_exclusions_count_as_uncovered(tmp_path: Path) -> None:
     root, change, baseline, _ = _case(tmp_path)
     write(root, "module.py", "def old():\n    return 1\n\ndef new():  # pragma: no cover\n"

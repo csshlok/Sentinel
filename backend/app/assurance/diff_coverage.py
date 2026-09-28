@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from backend.app.assurance.diff_map import map_diff
@@ -200,10 +201,12 @@ def collect_diff_coverage(
             config = evidence / "coveragerc"
             data = evidence / "coverage.data"
             artifact = evidence / "coverage.json"
+            junit = evidence / "pytest-results.xml"
             config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
             argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
                     "-m", "coverage", "run", "--rcfile", str(config),
-                    "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
+                    "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
+                    "-o", "addopts=", f"--junitxml={junit}", *test_args]
             result = result.model_copy(update={"command": argv})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
             if run.timed_out or run.incomplete:
@@ -211,7 +214,22 @@ def collect_diff_coverage(
             elif not data.is_file():
                 reasons.append("Coverage data is missing; test execution could not be confirmed.")
             else:
-                checks_passed = run.returncode == 0
+                if not junit.is_file() or junit.stat().st_size > ARTIFACT_LIMIT:
+                    reasons.append("Pytest execution report is missing or oversized.")
+                else:
+                    suite = ET.fromstring(junit.read_bytes())
+                    if suite.tag == "testsuites":
+                        suites = list(suite.findall("testsuite"))
+                    elif suite.tag == "testsuite":
+                        suites = [suite]
+                    else:
+                        suites = []
+                    executed_tests = sum(int(item.attrib["tests"]) - int(item.attrib.get("skipped", 0))
+                                         for item in suites)
+                    if executed_tests <= 0:
+                        reasons.append("Pytest did not execute any tests.")
+                    else:
+                        checks_passed = run.returncode == 0
                 exported = run_verification_command(
                     [interpreter, "-m", "coverage", "json", "--rcfile", str(config),
                      "--data-file", str(data), "-o", str(artifact)],
