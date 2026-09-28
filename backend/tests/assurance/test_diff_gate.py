@@ -42,6 +42,17 @@ def test_index_flags_cannot_hide_changed_source_from_measurement_or_gate(
     assert reason is not None and "index hides worktree state" in reason
 
 
+def test_new_hidden_source_invalidates_saved_coverage_gate(tmp_path: Path) -> None:
+    evidence, change, baseline = _fixture(tmp_path)
+    EvidenceStore(evidence._store.database).save_diff_coverage(_result(change, baseline, "PASS"))
+    root = Path(change.repository_path)
+    write(root, "pkg/.gitignore", ".gitignore\nhidden_impl.py\n")
+    write(root, "pkg/hidden_impl.py", "def hidden():\n    return 1\n")
+    allowed, reason = evidence._diff_coverage_gate(change)
+    assert allowed is False
+    assert reason is not None and "ignore rules changed" in reason
+
+
 def _fixture(tmp_path: Path) -> tuple[EvidenceService, ChangeView, object]:
     root = make_repo(tmp_path / "repo", {"module.py": "value = 1\n"})
     database = Database(tmp_path / "state" / "db.sqlite3")

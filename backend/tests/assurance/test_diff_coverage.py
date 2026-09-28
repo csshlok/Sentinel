@@ -231,6 +231,35 @@ def test_changed_lines_never_inherit_compound_header_execution(
     assert result.gate_satisfied is False
 
 
+def test_self_ignoring_untracked_gitignore_cannot_hide_imported_source(
+    tmp_path: Path,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "pkg/__init__.py": "",
+        "pkg/module.py": "def old():\n    return 1\n",
+        "module.py": "from pkg.module import old\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="hidden source", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "pkg/.gitignore", ".gitignore\nhidden_impl.py\n")
+    write(root, "pkg/hidden_impl.py", "def charge(x):\n    return x * 2\n")
+    write(root, "pkg/module.py", "from pkg import hidden_impl\n\ndef old():\n    return 1\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.excluded["pkg/.gitignore"] == "ignore rules changed"
+    assert mapped.excluded["pkg/hidden_impl.py"] == "untracked outside checkpoint"
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")

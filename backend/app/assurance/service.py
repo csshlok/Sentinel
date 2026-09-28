@@ -24,7 +24,7 @@ from pydantic import Field
 
 from backend.app.assurance.engine import AssuranceEngine, contract_digest
 from backend.app.assurance.diff_coverage import collect_diff_coverage
-from backend.app.assurance.diff_map import hidden_index_paths
+from backend.app.assurance.diff_map import hidden_index_paths, map_diff
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
@@ -579,6 +579,15 @@ class EvidenceService:
             return False, "Required diff coverage index flags could not be checked."
         if hidden:
             return False, "Required diff coverage index hides worktree state: " + hidden[0]
+        tested = self._store.get_checkpoint(result.tested_checkpoint_id)
+        if tested is None:
+            return False, "Required diff coverage tested checkpoint is missing."
+        remapped = map_diff(baseline=baseline, tested=tested, limit=self._patch_limit)
+        if remapped.error:
+            return False, "Required diff coverage cannot remap current source: " + remapped.error
+        for path, reason in remapped.excluded.items():
+            if reason in {"untracked outside checkpoint", "ignore rules changed"}:
+                return False, f"Required diff coverage has {reason}: {path}."
         try:
             current = self._git.capture(change.id, "diff-gate", change.repository_path,
                                         self._revision(change), self._patch_limit)

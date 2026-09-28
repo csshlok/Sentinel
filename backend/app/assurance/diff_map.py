@@ -242,11 +242,11 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     if result.error:
         return result
     try:
-        # Deliberately omit --exclude-standard: .git/info/exclude and the user's
-        # core.excludesFile are writable outside the committed project rules.
+        # No exclude options at all: even an untracked .gitignore can ignore
+        # itself and hide a newly imported module from status and from a
+        # per-directory-excluded ls-files call.
         other = run_git(tested.repository_root,
-                        ["ls-files", "--others", "-z",
-                         "--exclude-per-directory=.gitignore", "--"], limit=limit)
+                        ["ls-files", "--others", "-z", "--"], limit=limit)
         if other.returncode or other.incomplete or other.timed_out or other.truncated:
             raise ValueError("Untracked-file enumeration failed")
         paths = [part.decode("utf-8") for part in other.stdout.split(b"\0") if part]
@@ -263,6 +263,17 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
             continue
         classification = _classification(path, Path(tested.repository_root))
         bound_to_checkpoint = path in checkpoint_untracked
+        if path.lower().endswith("/.gitignore") or path.lower() == ".gitignore":
+            if not bound_to_checkpoint:
+                result.excluded[path] = "ignore rules changed"
+            elif classification:
+                result.excluded[path] = classification
+            continue
+        if not bound_to_checkpoint and not path.lower().endswith(
+                (".py", ".pyc", ".pyd", ".pth")):
+            # Editor state and inert user-global excludes cannot make an
+            # otherwise measured Python change permanently UNKNOWN.
+            continue
         if not bound_to_checkpoint:
             result.excluded[path] = "untracked outside checkpoint"
         if classification:
