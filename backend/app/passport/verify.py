@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import re
+import struct
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
@@ -78,7 +80,7 @@ def _safe_names(infos: list[zipfile.ZipInfo]) -> list[str]:
             raise ValueError("Symlink ZIP member")
         if mode not in {0, 0o100000}:
             raise ValueError("Non-file ZIP member")
-        if info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+        if info.compress_type != zipfile.ZIP_STORED:
             raise ValueError("Unsupported ZIP compression")
         if info.file_size > MAX_MEMBER_BYTES or info.file_size < 0:
             raise ValueError("Oversized ZIP member")
@@ -98,6 +100,32 @@ def _safe_names(infos: list[zipfile.ZipInfo]) -> list[str]:
 
 def _tuple(names: list[str]) -> tuple[str, ...]:
     return tuple(names)
+
+
+def _validate_local_headers(raw: bytes, infos: list[zipfile.ZipInfo],
+                            directory_offset: int) -> None:
+    """Require the complete local-member region to equal the indexed members."""
+    position = 0
+    for info in infos:
+        if info.header_offset != position or position + 30 > directory_offset:
+            raise ValueError("ZIP has hidden data between members")
+        (magic, _version, flags, method, _time, _date, crc, compressed,
+         uncompressed, name_size, extra_size) = struct.unpack_from("<IHHHHHIIIHH", raw, position)
+        if magic != 0x04034B50 or flags != info.flag_bits or flags & ~0x800:
+            raise ValueError("Local ZIP header differs from central directory")
+        if (method != zipfile.ZIP_STORED or method != info.compress_type
+                or (crc, compressed, uncompressed) !=
+                (info.CRC, info.compress_size, info.file_size) or extra_size):
+            raise ValueError("Local ZIP header differs from central directory")
+        name = raw[position + 30:position + 30 + name_size]
+        expected = info.filename.encode("utf-8")
+        if name != expected:
+            raise ValueError("Local ZIP name differs from central directory")
+        position += 30 + name_size + info.compress_size
+        if position > directory_offset:
+            raise ValueError("ZIP member overlaps central directory")
+    if position != directory_offset:
+        raise ValueError("ZIP has hidden data before central directory")
 
 
 def _read_members(archive: zipfile.ZipFile, infos: list[zipfile.ZipInfo]) -> dict[str, bytes]:
@@ -229,11 +257,17 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
         directory_offset = int.from_bytes(raw_zip[-6:-2], "little")
         if directory_offset + directory_size != len(raw_zip) - 22:
             raise ValueError("ZIP central directory has an unexpected boundary")
-        with zipfile.ZipFile(path, "r") as archive:
+        if (raw_zip[-18:-14] != b"\x00\x00\x00\x00"
+                or raw_zip[-14:-12] != raw_zip[-12:-10]):
+            raise ValueError("ZIP central directory counts or disk mismatch")
+        with zipfile.ZipFile(io.BytesIO(raw_zip), "r") as archive:
             if archive.comment:
                 raise ValueError("Unexpected ZIP archive comment")
             infos = archive.infolist()
             names = _safe_names(infos)
+            if int.from_bytes(raw_zip[-12:-10], "little") != len(infos):
+                raise ValueError("ZIP central directory entry count mismatch")
+            _validate_local_headers(raw_zip, infos, directory_offset)
             content = _read_members(archive, infos)
         manifest = _object(content["manifest.json"], name="Manifest")
         payload_digest = _validate_manifest(manifest, content, names)

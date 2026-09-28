@@ -215,7 +215,7 @@ def test_oversized_zip_bomb_missing_and_malformed_are_invalid(signed_bundle) -> 
     bomb = root / "bomb.sentinel"
     with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", b"A" * 50_000)
-    assert "compression ratio" in verify_bundle(bomb).reason
+    assert "compression" in verify_bundle(bomb).reason
     missing = _rewrite(path, root / "missing.sentinel", omit={"evidence/records.json"})
     assert verify_bundle(missing).verdict == "INVALID"
     malformed = _rewrite(path, root / "malformed.sentinel",
@@ -241,3 +241,27 @@ def test_unsupported_public_key_algorithm_returns_invalid(tmp_path: Path) -> Non
     result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
     assert result.verdict == "INVALID"
     assert "UnsupportedAlgorithm" in result.reason or "ValueError" in result.reason
+
+
+def test_hidden_bytes_before_central_directory_are_invalid(tmp_path: Path) -> None:
+    raw = GOLDEN.read_bytes()
+    offset = int.from_bytes(raw[-6:-2], "little")
+    hidden = b"PK\x03\x04forged visuals/passport.html"
+    modified = bytearray(raw[:offset] + hidden + raw[offset:])
+    modified[-6:-2] = (offset + len(hidden)).to_bytes(4, "little")
+    target = tmp_path / "hidden-local-entry.sentinel"
+    target.write_bytes(modified)
+    result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
+    assert result.verdict == "INVALID"
+    assert "hidden data" in result.reason
+
+
+def test_local_header_method_mismatch_is_invalid(tmp_path: Path) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    assert raw[:4] == b"PK\x03\x04"
+    raw[8:10] = (8).to_bytes(2, "little")
+    target = tmp_path / "local-method.sentinel"
+    target.write_bytes(raw)
+    result = verify_bundle(target, trust=TrustRegistry(tmp_path / "trust.json"))
+    assert result.verdict == "INVALID"
+    assert "Local ZIP header" in result.reason
