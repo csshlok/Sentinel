@@ -95,8 +95,7 @@ def rotate_identity_command(*, output: Path, as_json: bool) -> None:
                 pass  # Keep the successor key if rollback could not restore the selector.
         if created and not activated:
             try:
-                with CngKey.open_existing(name=new_name) as successor:
-                    successor.delete_for_test()
+                CngKey.delete_unactivated_successor(name=new_name)
             except Exception:
                 pass
         _fail(exc)

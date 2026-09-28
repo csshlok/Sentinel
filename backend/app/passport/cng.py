@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Iterator
+from uuid import UUID
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -290,6 +291,46 @@ class CngKey:
             raise ValueError("Cannot delete the installation key")
         _checked("NCryptDeleteKey", self._dll.NCryptDeleteKey(self._key_handle, 0))
         self._key_handle = ctypes.c_void_p()
+
+    @classmethod
+    def delete_unactivated_successor(cls, *, name: str) -> None:
+        """Delete a new rotation key even if its policy prevents normal opening."""
+        prefix = f"{DEFAULT_KEY_NAME} "
+        if not name.startswith(prefix):
+            raise ValueError("Only generated rotation successors may be deleted")
+        try:
+            suffix = name[len(prefix):]
+            parsed = UUID(suffix)
+            if str(parsed) != suffix or parsed.version != 4:
+                raise ValueError("Invalid successor name")
+        except ValueError as exc:
+            raise ValueError("Invalid successor name") from exc
+        with _creation_mutex(name):
+            dll = _api()
+            unavailable: list[int] = []
+            for provider in (PLATFORM_PROVIDER, SOFTWARE_PROVIDER):
+                handle = ctypes.c_void_p()
+                status = dll.NCryptOpenStorageProvider(ctypes.byref(handle), provider, 0)
+                if status:
+                    unavailable.append(status & 0xFFFFFFFF)
+                    continue
+                try:
+                    key = ctypes.c_void_p()
+                    status = dll.NCryptOpenKey(handle, ctypes.byref(key), name, 0, 0)
+                    if status & 0xFFFFFFFF == _BAD_KEYSET:
+                        continue
+                    _checked("NCryptOpenKey(cleanup)", status)
+                    try:
+                        _checked("NCryptDeleteKey(cleanup)", dll.NCryptDeleteKey(key, 0))
+                        key = ctypes.c_void_p()
+                    finally:
+                        if key.value:
+                            dll.NCryptFreeObject(key)
+                finally:
+                    dll.NCryptFreeObject(handle)
+            if unavailable and any(code not in _PLATFORM_UNAVAILABLE_FOR_KEY
+                                   for code in unavailable):
+                raise CngError("NCryptOpenStorageProvider(cleanup)", unavailable[0])
 
     def __enter__(self) -> CngKey:
         return self

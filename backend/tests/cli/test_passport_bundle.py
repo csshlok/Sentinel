@@ -226,3 +226,47 @@ def test_failed_rotation_never_publishes_statement_or_orphans_successor(
                 except OSError:
                     pass
             old.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_rotation_cleans_finalized_key_when_normal_open_rejects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.cli import passport_commands
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    old_name = f"Sentinel disposable test {uuid4()}"
+    successor_names: list[str] = []
+    actual_open = CngKey.open.__func__
+    actual_assert = CngKey._assert_nonexportable
+    with CngKey.open(name=old_name) as old:
+        try:
+            activate_key_name(old_name)
+
+            def record_open(cls, *, name: str):
+                successor_names.append(name)
+                return actual_open(cls, name=name)
+
+            def reject_successor(key):
+                if key.name != old_name:
+                    raise RuntimeError("CNG rejected finalized successor")
+                return actual_assert(key)
+
+            with monkeypatch.context() as scoped:
+                scoped.setattr(passport_commands.CngKey, "open", classmethod(record_open))
+                scoped.setattr(passport_commands.CngKey, "_assert_nonexportable",
+                               reject_successor)
+                result = CliRunner().invoke(cli_app, ["identity", "rotate", "--output",
+                                                      str(tmp_path / "failed.json")])
+            assert result.exit_code == 1
+            assert successor_names and not (tmp_path / "failed.json").exists()
+            assert active_key_name() == old_name
+            with pytest.raises(OSError, match="does not exist"):
+                CngKey.open_existing(name=successor_names[0])
+        finally:
+            for name in successor_names:
+                try:
+                    CngKey.delete_unactivated_successor(name=name)
+                except OSError:
+                    pass
+            old.delete_for_test()
