@@ -10,7 +10,7 @@ from backend.app.contracts.models import GitCheckpoint
 from backend.app.core.errors import AppError
 from backend.app.git.safe_exec import run_git
 
-_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
 _GENERATED = ("/generated/", "/vendor/", "/dist/", "/build/")
 
 
@@ -30,6 +30,81 @@ def _classification(path: str) -> str | None:
     if not lower.endswith(".py"):
         return "unsupported language or non-source file"
     return None
+
+
+def _parse_patch(patch: str, result: DiffMap) -> None:
+    """Consume Git's patch grammar; source lines are never trusted as headers."""
+
+    path: str | None = None
+    in_file = saw_old = saw_new = False
+    old_left = new_left = 0
+    old_no = new_no = 0
+    records = patch.split("\n")
+    for index, raw in enumerate(records):
+        line = raw[:-1] if raw.endswith("\r") else raw
+        if not line and index == len(records) - 1:
+            continue
+        if line.startswith("\\ No newline at end of file"):
+            continue
+        if old_left or new_left:
+            marker = line[:1]
+            if marker == "+" and new_left:
+                if path is not None:
+                    classification = _classification(path)
+                    if classification:
+                        result.excluded[path] = classification
+                    else:
+                        result.lines.setdefault(path, set()).add(new_no)
+                new_no += 1
+                new_left -= 1
+            elif marker == "-" and old_left:
+                old_no += 1
+                old_left -= 1
+            elif marker == " " and old_left and new_left:
+                old_no += 1
+                new_no += 1
+                old_left -= 1
+                new_left -= 1
+            else:
+                result.error = "Diff hunk body did not reconcile with its header."
+                return
+            continue
+        if line.startswith("diff --git "):
+            in_file, saw_old, saw_new = True, False, False
+            path = None
+        elif line.startswith("--- ") and in_file and not saw_old:
+            saw_old = True
+        elif line.startswith("+++ ") and in_file and saw_old and not saw_new:
+            saw_new = True
+            path = line[4:]
+            if path == "/dev/null":
+                path = None
+            elif path.startswith('"') or "\t" in path:
+                result.error = "Diff contains a path that cannot be mapped safely."
+                return
+        elif line.startswith("@@"):
+            match = _HUNK.match(line)
+            if match is None or not saw_new:
+                result.error = "Malformed zero-context diff hunk."
+                return
+            old_no = int(match.group(1))
+            old_left = int(match.group(2) or "1")
+            new_no = int(match.group(3))
+            new_left = int(match.group(4) or "1")
+            if path is None and new_left:
+                result.error = "Deletion hunk unexpectedly adds lines."
+                return
+        elif line.startswith(("Binary files ", "GIT binary patch")):
+            result.error = "Binary diff cannot be mapped to executable lines."
+            return
+        elif line and not line.startswith(("index ", "new file mode ", "deleted file mode ",
+                                           "old mode ", "new mode ", "similarity index ",
+                                           "dissimilarity index ", "rename from ", "rename to ",
+                                           "copy from ", "copy to ", "a/", "b/")):
+            result.error = "Unexpected diff record."
+            return
+    if old_left or new_left:
+        result.error = "Diff ended before its hunk body was complete."
 
 
 def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_388_608) -> DiffMap:
@@ -60,32 +135,9 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     except UnicodeError:
         result.error = "Diff path or content is not UTF-8."
         return result
-    path: str | None = None
-    for line in patch.splitlines():
-        if line.startswith(("Binary files ", "GIT binary patch")):
-            result.error = "Binary diff cannot be mapped to executable lines."
-            return result
-        if line.startswith("+++ "):
-            path = line[4:]
-            if path == "/dev/null":
-                path = None
-            elif path.startswith('"') or "\t" in path:
-                result.error = "Diff contains a path that cannot be mapped safely."
-                return result
-        elif line.startswith("@@"):
-            match = _HUNK.match(line)
-            if match is None:
-                result.error = "Malformed zero-context diff hunk."
-                return result
-            if path is None:
-                continue  # deletion-only hunk has no coverable new-file lines
-            start = int(match.group(1))
-            count = int(match.group(2) or "1")
-            classification = _classification(path)
-            if classification:
-                result.excluded[path] = classification
-            else:
-                result.lines.setdefault(path, set()).update(range(start, start + count))
+    _parse_patch(patch, result)
+    if result.error:
+        return result
     for entry in tested.summary.files:
         if entry.status.value != "UNTRACKED":
             continue
