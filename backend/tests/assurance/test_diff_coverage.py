@@ -125,6 +125,19 @@ def test_changed_pragma_exclusions_count_as_uncovered(tmp_path: Path) -> None:
     assert result.files[0].reason == "excluded-by-pragma"
 
 
+def test_unexecuted_multiline_continuation_counts_as_uncovered(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new():\n"
+          "    return max(\n        __import__('os').getpid())\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "FAIL"
+    assert result.gate_satisfied is False
+    assert 6 in result.files[0].uncovered_lines
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")

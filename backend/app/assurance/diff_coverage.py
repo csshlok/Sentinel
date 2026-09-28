@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -53,6 +54,23 @@ def _report_path(root: Path, raw: str) -> str | None:
     return relative.as_posix()
 
 
+def _statement_starts(root: Path, path: str, lines: set[int]) -> dict[int, int]:
+    """Map changed continuation lines to the smallest enclosing Python statement."""
+    source = (root / path).read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=path)
+    statements = [node for node in ast.walk(tree) if isinstance(node, ast.stmt)
+                  and hasattr(node, "end_lineno")]
+    starts: dict[int, int] = {}
+    for line in lines:
+        containing = [node for node in statements
+                      if node.lineno <= line <= node.end_lineno]
+        if containing:
+            node = min(containing, key=lambda item: (item.end_lineno - item.lineno,
+                                                     -item.lineno))
+            starts[line] = node.lineno
+    return starts
+
+
 def evaluate_report(
     *, result: DiffCoverageResult, changed: dict[str, set[int]],
     excluded: dict[str, str], report: dict[str, object], root: Path,
@@ -87,10 +105,11 @@ def evaluate_report(
                        for n in executed + missing + pragma_excluded)):
             return result.model_copy(update={"reasons": [f"Malformed coverage lines: {path}."],
                                              "excluded": excluded})
-        excluded_changed = lines & set(pragma_excluded)
+        starts = _statement_starts(root, path, lines)
         executable = set(executed) | set(missing) | set(pragma_excluded)
-        target = lines & executable
-        hit = target & set(executed) - excluded_changed
+        target = {line for line, start in starts.items() if start in executable}
+        excluded_changed = {line for line in target if starts[line] in pragma_excluded}
+        hit = {line for line in target if starts[line] in executed} - excluded_changed
         total += len(target)
         executed_total += len(hit)
         measured.append(DiffCoverageFile(
