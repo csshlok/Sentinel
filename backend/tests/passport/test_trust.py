@@ -118,6 +118,17 @@ def test_default_named_trust_directory_uses_protected_store_helper(
         TrustRegistry(path).list()
 
 
+def test_equivalent_compressed_spki_keeps_the_same_pin(tmp_path: Path) -> None:
+    canonical = _spki()
+    assert canonical[:2] == b"\x30\x59" and canonical[26] == 4
+    x, y = canonical[27:59], canonical[59:91]
+    compressed = b"\x30\x39" + canonical[2:23] + b"\x03\x22\x00" + bytes([2 | (y[-1] & 1)]) + x
+    registry = TrustRegistry(tmp_path / "trusted_keys.json")
+    registry.add(spki=compressed, label="Lab")
+    assert fingerprint(compressed) == fingerprint(canonical)
+    assert registry.decision(spki=canonical) == ("TRUSTED", "Sentinel installation Lab")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
 def test_rotation_requires_valid_old_key_and_trust(tmp_path: Path) -> None:
     registry = TrustRegistry(tmp_path / "trusted_keys.json")

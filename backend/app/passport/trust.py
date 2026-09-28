@@ -101,6 +101,12 @@ def load_public_key(path: Path) -> bytes:
         raise ValueError("Invalid public SPKI") from exc
 
 
+def _canonical_spki(raw: bytes) -> bytes:
+    public = serialization.load_der_public_key(raw)
+    return public.public_bytes(serialization.Encoding.DER,
+                               serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
 def _rotation_body(*, old_fingerprint: str, new_fingerprint: str, new_spki: bytes,
                    issued_at: str) -> bytes:
     body = {
@@ -193,6 +199,8 @@ class TrustRegistry:
             raise ValueError("A short printable installation label is required")
         if spki is None and fingerprint_value is None:
             raise ValueError("Provide a fingerprint or public key")
+        if spki is not None:
+            spki = _canonical_spki(spki)
         actual = fingerprint(spki) if spki is not None else None
         provided = normalize_fingerprint(fingerprint_value) if fingerprint_value else None
         if actual is not None and provided is not None and actual != provided:
@@ -254,6 +262,7 @@ class TrustRegistry:
 
     def decision(self, *, spki: bytes) -> tuple[Literal["TRUSTED", "UNTRUSTED", "REVOKED", "MISMATCH"], str | None]:
         key = fingerprint(spki)
+        spki = _canonical_spki(spki)
         data = self._read()
         keys = data["keys"]
         revoked = data["revoked"]
@@ -273,6 +282,7 @@ class TrustRegistry:
 
     def sign_rotation(self, *, old_key: CngKey, new_spki: bytes) -> dict[str, str]:
         old_spki = old_key.public_spki()
+        new_spki = _canonical_spki(new_spki)
         issued_at = datetime.now(UTC).isoformat()
         old_fp, new_fp = fingerprint(old_spki), fingerprint(new_spki)
         body = _rotation_body(old_fingerprint=old_fp, new_fingerprint=new_fp,
@@ -289,6 +299,7 @@ class TrustRegistry:
         try:
             old_spki = base64.b64decode(statement["old_spki"], validate=True)
             new_spki = base64.b64decode(statement["new_spki"], validate=True)
+            canonical_new_spki = _canonical_spki(new_spki)
             signature = base64.b64decode(statement["signature"], validate=True)
             old_fp = normalize_fingerprint(statement["old_fingerprint"])
             new_fp = normalize_fingerprint(statement["new_fingerprint"])
@@ -315,7 +326,7 @@ class TrustRegistry:
             raise ValueError("Too many rotation statements")
         keys[new_fp] = {
             "label": label.removeprefix("Sentinel installation "),
-            "spki": base64.b64encode(new_spki).decode("ascii"),
+            "spki": base64.b64encode(canonical_new_spki).decode("ascii"),
             "added_at": datetime.now(UTC).isoformat(),
         }
         rotations.append(statement)
