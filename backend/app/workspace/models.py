@@ -169,6 +169,15 @@ class WorkspaceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SweepReport:
+    """Outcome of one DB-driven sweep: cleaned rows, preserved (unapplied) rows, failures."""
+
+    cleaned: tuple[UUID, ...] = ()
+    preserved: tuple[UUID, ...] = ()
+    failed: tuple[tuple[UUID, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ApplyPreview:
     """What apply-back would land; ``approval_token`` is returned only here.
 

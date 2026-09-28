@@ -32,7 +32,8 @@ import re
 import secrets
 import sqlite3
 import stat
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -74,6 +75,7 @@ from backend.app.workspace.models import (
     PREVIEW_PATCH_LIMIT,
     ApplyPreview,
     ApplyRefusal,
+    SweepReport,
     WorkspaceRecord,
     path_flags,
 )
@@ -85,6 +87,9 @@ _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _STDERR_KEEP = 4096
 _WORKSPACE_DIRECTORY = "ws"
 _CONTAINER_SUBDIRECTORIES = ("ws", "home", "tools", "Temp")
+_REMOVE_ATTEMPTS = 5
+_REMOVE_BACKOFF_SECONDS = 0.2
+_TRANSIENT_WINERRORS = frozenset({5, 32})  # access denied, sharing violation
 PROFILE_DISPLAY_NAME = "Sentinel workspace"
 
 UNTRACKED_SOURCE_LIMITATION = (
@@ -194,6 +199,8 @@ class WorkspaceManager:
         # Runs started by THIS process; the sweep treats any other recorded run
         # as interrupted (its Job Object died with the process that owned it).
         self._live_runs: set[str] = set()
+        # Workspaces this process is creating right now; the sweep never touches them.
+        self._creating: set[UUID] = set()
 
     # ------------------------------------------------------------------ queries
 
@@ -335,6 +342,13 @@ class WorkspaceManager:
             self.repository.insert(record)
         except sqlite3.IntegrityError as exc:
             raise workspace_state_conflict("LIVE", "create") from exc
+        self._creating.add(record.id)
+        try:
+            return self._build(record, source, base_sha)
+        finally:
+            self._creating.discard(record.id)
+
+    def _build(self, record: WorkspaceRecord, source: Path, base_sha: str) -> WorkspaceRecord:
         try:
             profile, _created = ensure_profile(record.profile_name, display_name=PROFILE_DISPLAY_NAME)
             container = profile.container_path
@@ -789,28 +803,65 @@ class WorkspaceManager:
 
     # ------------------------------------------------------------------ cleanup
 
-    def _remove_profile_storage(self, record: WorkspaceRecord, problems: list[str]) -> bool:
-        """Delete workspace files, the profile and its folder; True when both are gone."""
+    def _remove_with_retries(self, target: Path) -> None:
+        """``remove_tree_no_follow`` retried on transient Windows sharing/access errors.
+
+        Handles close late after a Job is terminated (research Pitfall 11), so
+        access-denied (5) and sharing-violation (32) errors are retried up to
+        ``_REMOVE_ATTEMPTS`` times with a growing delay; anything else raises.
+        """
+
+        for attempt in range(1, _REMOVE_ATTEMPTS + 1):
+            try:
+                remove_tree_no_follow(target)
+                return
+            except OSError as exc:
+                transient = (isinstance(exc, PermissionError)
+                             or getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS)
+                if not transient or attempt == _REMOVE_ATTEMPTS:
+                    raise
+                time.sleep(_REMOVE_BACKOFF_SECONDS * attempt)
+
+    def _profile_folder(self, record: WorkspaceRecord) -> tuple[Path, Path]:
+        """(``Packages\\<profile>``, its ``AC`` folder), refusing a foreign recorded path."""
 
         packages = local_appdata_known_folder() / "Packages" / record.profile_name
-        container = record.container_path or packages / "AC"
+        container = Path(record.container_path) if record.container_path else packages / "AC"
         if not _same_path(container.parent, packages):
-            problems.append("the recorded container folder is not the profile's folder")
+            raise workspace_cleanup_failed(
+                "the recorded container folder is not the profile's folder")
+        return packages, container
+
+    def _remove_profile_storage(self, record: WorkspaceRecord, problems: list[str]) -> bool:
+        """Delete workspace files, the profile and its folder; True when both are gone.
+
+        Every removal is no-follow (an agent-planted junction is unlinked, never
+        descended), and the profile is deleted only after the AC children were
+        removed, so a failed removal leaves a visible, retryable CLEANUP_FAILED.
+        """
+
+        try:
+            packages, container = self._profile_folder(record)
+        except AppError as exc:
+            problems.append(str(exc.details.get("reason")))
             return False
         for name in _CONTAINER_SUBDIRECTORIES:
             target = container / name
             if os.path.lexists(target):
                 try:
-                    remove_tree_no_follow(target)
+                    self._remove_with_retries(target)
                 except OSError as exc:
                     problems.append(f"could not remove {name} ({type(exc).__name__})")
+        if problems:
+            return False
         try:
             delete_profile(record.profile_name)
         except AppError as exc:
             problems.append(f"profile delete failed ({exc.details.get('hresult')})")
+            return False
         if os.path.lexists(packages):
             try:
-                remove_tree_no_follow(packages)
+                self._remove_with_retries(packages)
             except OSError as exc:
                 problems.append(f"could not remove the profile folder ({type(exc).__name__})")
         return not os.path.lexists(packages) and not profile_exists(record.profile_name)
@@ -835,13 +886,121 @@ class WorkspaceManager:
             problems.append(f"cleanup could not run ({code})")
             removed = False
         if removed and not problems:
+            LOGGER.info("workspace %s cleaned (was %s)", record.id, record.state.value)
             return self._save(
                 record, record.state, state=WorkspaceState.CLEANED, cleaned_at=self._clock(),
             )
         if not problems:
             problems.append("the profile folder or mapping still exists")
+        LOGGER.warning("workspace %s cleanup failed (was %s)", record.id, record.state.value)
         self._save(
             record, record.state, state=WorkspaceState.CLEANUP_FAILED,
-            limitations=record.limitations + tuple(problems),
+            limitations=tuple(dict.fromkeys(record.limitations + tuple(problems))),
         )
         raise workspace_cleanup_failed("; ".join(problems))
+
+    def discard(self, change_id: UUID) -> WorkspaceRecord:
+        """Abandon the Change's unapplied workspace and clean it up.
+
+        READY, SEALED and APPLY_REFUSED become DISCARDED (approval voided) and
+        are then cleaned; DISCARDED, APPLIED and CLEANUP_FAILED are cleaned
+        again; an already CLEANED workspace is returned as is.
+        """
+
+        record = self.repository.live_for_change(change_id)
+        if record is None:
+            latest = self.repository.latest_for_change(change_id)
+            if latest is not None and latest.state == WorkspaceState.CLEANED:
+                return latest
+            raise workspace_not_found(str(change_id))
+        if record.active_run_id is not None or record.state == WorkspaceState.CREATING:
+            raise workspace_state_conflict(record.state.value, "discard")
+        if record.state in (WorkspaceState.READY, WorkspaceState.SEALED,
+                            WorkspaceState.APPLY_REFUSED):
+            record = self._save(
+                record, record.state, state=WorkspaceState.DISCARDED, approval_digest=None,
+                approved_base_sha=None, approved_sealed_sha=None,
+            )
+            LOGGER.info("workspace %s discarded", record.id)
+        return self.cleanup(record.id)
+
+    # ------------------------------------------------------------------ sweep
+
+    def _purge_home(self, record: WorkspaceRecord) -> str | None:
+        """Remove the staged home (credentials) of a preserved workspace; a problem or None."""
+
+        try:
+            _packages, container = self._profile_folder(record)
+        except AppError as exc:
+            return str(exc.details.get("reason"))
+        home = container / "home"
+        problem: str | None = None
+        if self._credential_purger is not None:
+            try:
+                if not self._credential_purger(home):
+                    problem = "the credential purger reported a failure"
+            except Exception as exc:
+                problem = f"the credential purger failed ({type(exc).__name__})"
+        if os.path.lexists(home):
+            try:
+                self._remove_with_retries(home)
+            except OSError as exc:
+                problem = f"could not remove the staged home ({type(exc).__name__})"
+        return problem
+
+    def sweep(self, *, live_run_ids: Collection[UUID] | None = None) -> SweepReport:
+        """Recover every unclean workspace recorded in THIS database (never anything else).
+
+        Driven only by ``repository.list_unclean()``: Packages folders and the
+        AppContainer registry are never enumerated, so a sweep can only touch
+        profiles its own rows name (research Pitfall 14). Rows whose run is
+        live (``live_run_ids``, default: runs started by this process) are
+        skipped. CREATING, APPLIED, DISCARDED and CLEANUP_FAILED rows are
+        cleaned. READY, SEALED and APPLY_REFUSED rows hold unapplied work and
+        are preserved, but their staged home (credentials) is always purged and
+        a stale run marker is cleared and disclosed as interrupted.
+        """
+
+        live = {str(run) for run in (self._live_runs if live_run_ids is None else live_run_ids)}
+        cleaned: list[UUID] = []
+        preserved: list[UUID] = []
+        failed: list[tuple[UUID, str]] = []
+        for record in self.repository.list_unclean():
+            if record.active_run_id is not None and record.active_run_id in live:
+                LOGGER.info("sweep: workspace %s skipped (run %s is live)",
+                            record.id, record.active_run_id)
+                continue
+            if record.id in self._creating:
+                continue
+            try:
+                interrupted = record.active_run_id
+                if interrupted is not None:
+                    self.repository.end_run(record.id, interrupted, updated_at=self._clock())
+                    record = self.get(record.id)
+                    record = self._save(record, record.state, limitations=record.limitations + (
+                        f"Run {interrupted} was interrupted before it finished (the backend "
+                        "stopped); its process tree was ended by the Job Object.",))
+                    LOGGER.warning("sweep: workspace %s run %s was interrupted",
+                                   record.id, interrupted)
+                if record.state in (WorkspaceState.READY, WorkspaceState.SEALED,
+                                    WorkspaceState.APPLY_REFUSED):
+                    problem = self._purge_home(record)
+                    if problem is not None:
+                        LOGGER.warning("sweep: workspace %s home purge failed", record.id)
+                        failed.append((record.id, problem))
+                    else:
+                        LOGGER.info("sweep: workspace %s preserved (%s), staged home purged",
+                                    record.id, record.state.value)
+                        preserved.append(record.id)
+                    continue
+                self.cleanup(record.id)
+                LOGGER.info("sweep: workspace %s cleaned (was %s)", record.id,
+                            record.state.value)
+                cleaned.append(record.id)
+            except Exception as exc:  # collected, never raised: one row must not stop the rest
+                reason = (str(exc.details.get("reason") or exc.code)
+                          if isinstance(exc, AppError) else type(exc).__name__)
+                LOGGER.warning("sweep: workspace %s failed (%s)", record.id, reason)
+                failed.append((record.id, reason))
+        return SweepReport(cleaned=tuple(cleaned), preserved=tuple(preserved),
+                           failed=tuple(failed))
