@@ -173,3 +173,20 @@ def test_rotation_cannot_steal_identity_and_revocation_cascades(tmp_path: Path) 
             assert registry.decision(spki=successor)[0] == "REVOKED"
         finally:
             old.delete_for_test()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_rotation_rejects_consistent_key_pair_with_bad_signature(tmp_path: Path) -> None:
+    registry = TrustRegistry(tmp_path / "trusted_keys.json")
+    old_name = f"Sentinel disposable test {uuid4()}"
+    with CngKey.open(name=old_name) as old:
+        try:
+            registry.add(spki=old.public_spki(), label="Office")
+            statement = registry.sign_rotation(old_key=old, new_spki=_spki())
+            signature = bytearray(base64.b64decode(statement["signature"]))
+            signature[-1] ^= 1
+            statement["signature"] = base64.b64encode(signature).decode("ascii")
+            with pytest.raises(ValueError, match="Invalid key rotation signature"):
+                registry.apply_rotation(statement)
+        finally:
+            old.delete_for_test()
