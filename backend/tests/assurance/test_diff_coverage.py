@@ -479,6 +479,21 @@ def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -
     assert empty.diff_exercised == "NOT_APPLICABLE"
 
 
+def test_result_revalidates_collector_version_before_persistence(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    invalid = DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        head_sha=tested.head_sha, status_digest=tested.status_digest, contract_digest="0" * 64,
+        started_at=utc_now(), completed_at=utc_now(), collector_status="COLLECTED",
+        checks_passed=True, diff_exercised="UNKNOWN", freshness="CURRENT",
+    ).model_copy(update={"collector_version": ""})
+    with pytest.raises(ValueError, match="collector_version"):
+        evaluate_report(result=invalid, changed={"module.py": {5}}, excluded={},
+                        report={"files": {"module.py": {
+                            "executed_lines": [], "missing_lines": [5],
+                        }}}, root=root, rule=_request(baseline, tested, required=True))
+
+
 def test_documentation_only_diff_is_not_applicable_when_policy_allows_it(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     initial = DiffCoverageResult(

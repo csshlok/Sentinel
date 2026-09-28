@@ -555,7 +555,10 @@ class EvidenceService:
         rule = change.contract.diff_coverage_rule
         if rule is None or not rule.required:
             return True, None
-        result = self._store.latest_diff_coverage(change.id)
+        try:
+            result = self._store.latest_diff_coverage(change.id)
+        except ValueError:
+            return False, "Stored diff coverage result is unreadable."
         if result is None:
             return False, "Required diff coverage has not been measured."
         baseline = self._store.named_checkpoint(change.id, BASELINE)

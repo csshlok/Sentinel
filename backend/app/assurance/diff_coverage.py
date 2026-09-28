@@ -145,13 +145,13 @@ def evaluate_report(
         state = "UNKNOWN"
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
-    return result.model_copy(update={
+    return DiffCoverageResult.model_validate({**result.model_dump(), **{
         "files": measured, "excluded": excluded, "diff_exercised": state,
         "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,
         "gate_satisfied": gate,
-    })
+    }})
 
 
 def collect_diff_coverage(
@@ -263,8 +263,12 @@ def collect_diff_coverage(
                         collector_status = "COLLECTED"
                         meta = parsed.get("meta")
                         version = meta.get("version") if isinstance(meta, dict) else None
-                        if isinstance(version, str) and len(version) <= 256:
+                        if isinstance(version, str) and 0 < len(version) <= 256:
                             result = result.model_copy(update={"collector_version": version})
+                        else:
+                            report = None
+                            collector_status = "ERROR"
+                            reasons.append("Coverage collector version is missing or malformed.")
                     else:
                         reasons.append("Coverage report is malformed.")
     except Exception as exc:
