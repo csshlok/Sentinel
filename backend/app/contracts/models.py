@@ -1166,11 +1166,11 @@ class DiffCoverageRequest(ContractModel):
 
 class DiffCoverageFile(ContractModel):
     path: RepositoryPath
-    changed_lines: list[int] = Field(default_factory=list)
-    executable_lines: list[int] = Field(default_factory=list)
-    executed_lines: list[int] = Field(default_factory=list)
-    uncovered_lines: list[int] = Field(default_factory=list)
-    excluded_by_pragma_lines: list[int] = Field(default_factory=list)
+    changed_lines: list[int] = Field(default_factory=list, max_length=100000)
+    executable_lines: list[int] = Field(default_factory=list, max_length=100000)
+    executed_lines: list[int] = Field(default_factory=list, max_length=100000)
+    uncovered_lines: list[int] = Field(default_factory=list, max_length=100000)
+    excluded_by_pragma_lines: list[int] = Field(default_factory=list, max_length=100000)
     reason: ShortText | None = None
 
 
@@ -1183,8 +1183,8 @@ class DiffCoverageResult(ContractModel):
     status_digest: Digest
     contract_digest: Digest
     collector_id: Literal["coverage.py-json-v1"] = "coverage.py-json-v1"
-    command: list[str] = Field(default_factory=list)
-    run_ids: list[UUID] = Field(default_factory=list)
+    command: list[str] = Field(default_factory=list, max_length=64)
+    run_ids: list[UUID] = Field(default_factory=list, max_length=256)
     artifact_digest: Digest | None = None
     started_at: AwareDatetime
     completed_at: AwareDatetime
@@ -1201,9 +1201,9 @@ class DiffCoverageResult(ContractModel):
     measured_percent: float | None = None
     changed_executable_lines: int | None = None
     executed_changed_lines: int | None = None
-    files: list[DiffCoverageFile] = Field(default_factory=list)
-    excluded: dict[str, str] = Field(default_factory=dict)
-    reasons: list[str] = Field(default_factory=list)
+    files: list[DiffCoverageFile] = Field(default_factory=list, max_length=10000)
+    excluded: dict[str, str] = Field(default_factory=dict, max_length=10000)
+    reasons: list[str] = Field(default_factory=list, max_length=64)
     threshold: float | None = None
     policy_version: ShortText | None = None
     gate_satisfied: bool | None = None

@@ -2394,6 +2394,7 @@
             "items": {
               "type": "integer"
             },
+            "maxItems": 100000,
             "title": "Changed Lines",
             "type": "array"
           },
@@ -2401,6 +2402,7 @@
             "items": {
               "type": "integer"
             },
+            "maxItems": 100000,
             "title": "Excluded By Pragma Lines",
             "type": "array"
           },
@@ -2408,6 +2410,7 @@
             "items": {
               "type": "integer"
             },
+            "maxItems": 100000,
             "title": "Executable Lines",
             "type": "array"
           },
@@ -2415,6 +2418,7 @@
             "items": {
               "type": "integer"
             },
+            "maxItems": 100000,
             "title": "Executed Lines",
             "type": "array"
           },
@@ -2441,6 +2445,7 @@
             "items": {
               "type": "integer"
             },
+            "maxItems": 100000,
             "title": "Uncovered Lines",
             "type": "array"
           }
@@ -2583,6 +2588,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 64,
             "title": "Command",
             "type": "array"
           },
@@ -2611,6 +2617,7 @@
             "additionalProperties": {
               "type": "string"
             },
+            "maxProperties": 10000,
             "title": "Excluded",
             "type": "object"
           },
@@ -2629,6 +2636,7 @@
             "items": {
               "$ref": "#/components/schemas/DiffCoverageFile"
             },
+            "maxItems": 10000,
             "title": "Files",
             "type": "array"
           },
@@ -2685,6 +2693,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 64,
             "title": "Reasons",
             "type": "array"
           },
@@ -2693,6 +2702,7 @@
               "format": "uuid",
               "type": "string"
             },
+            "maxItems": 256,
             "title": "Run Ids",
             "type": "array"
           },

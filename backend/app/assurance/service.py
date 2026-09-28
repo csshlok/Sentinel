@@ -30,7 +30,7 @@ from backend.app.contracts.models import (
     AgentAttachRequest, AgentLaunchRequest, AgentRun, AssurancePlan, AssuranceRun,
     ChangeView, ContractModel, DependencyReport, EnvironmentDrift, EnvironmentPassport,
     GitCheckpoint, GitCheckpointComparison, JournalEventType, RestorationClass, utc_now,
-    DiffCoverageRequest, DiffCoverageResult,
+    DiffCoverageRequest, DiffCoverageResult, DiffCoverageRule,
 )
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -42,6 +42,23 @@ from backend.app.git.state import GitStateTracker
 BASELINE = "baseline"
 DEFAULT_PATCH_LIMIT = 200_000
 DEFAULT_OUTPUT_LIMIT = 200_000
+
+
+def merge_diff_coverage_rule(
+    contract_rule: DiffCoverageRule, request_rule: DiffCoverageRule,
+) -> DiffCoverageRule:
+    """Keep stronger requested thresholds without letting a request weaken a required rule."""
+
+    command_rule = contract_rule if contract_rule.required else request_rule
+    return DiffCoverageRule(
+        required=contract_rule.required or request_rule.required,
+        minimum_percent=max(contract_rule.minimum_percent, request_rule.minimum_percent),
+        per_file=contract_rule.per_file or request_rule.per_file,
+        not_applicable_satisfies=command_rule.not_applicable_satisfies,
+        policy_version=contract_rule.policy_version if contract_rule.required else request_rule.policy_version,
+        interpreter_path=command_rule.interpreter_path,
+        test_args=command_rule.test_args,
+    )
 
 
 class EvidenceSnapshot(ContractModel):
@@ -489,10 +506,10 @@ class EvidenceService:
             assurance_fresh=evaluation.assurance_fresh and coverage_ok,
             deviations_resolved=evaluation.deviations_resolved,
             required_evidence_complete=evaluation.required_evidence_complete and coverage_ok,
-            reasons=[*evaluation.freshness_reasons,
+            reasons=[*([coverage_reason] if coverage_reason else []),
+                     *evaluation.freshness_reasons,
                      *[f"Required check '{c}' has no passing result." for c in evaluation.missing_required],
-                     *[f"Check '{c}' failed." for c in evaluation.failed],
-                     *([coverage_reason] if coverage_reason else [])][:64])
+                     *[f"Check '{c}' failed." for c in evaluation.failed]][:64])
 
     def measure_diff_coverage(
         self, change: ChangeView, request: DiffCoverageRequest,
@@ -503,7 +520,8 @@ class EvidenceService:
         baseline = self.get_checkpoint(change.id, request.baseline_checkpoint_id)
         tested = self.get_checkpoint(change.id, request.tested_checkpoint_id)
         if change.contract.diff_coverage_rule is not None:
-            request = request.model_copy(update={"rule": change.contract.diff_coverage_rule})
+            request = request.model_copy(update={"rule": merge_diff_coverage_rule(
+                change.contract.diff_coverage_rule, request.rule)})
         result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                        request=request)
         try:

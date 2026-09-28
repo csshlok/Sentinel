@@ -223,7 +223,7 @@ class EvidenceStore:
     def latest_diff_coverage(self, change_id: UUID) -> DiffCoverageResult | None:
         return self._one(
             "SELECT payload_json FROM diff_coverage_results WHERE change_id = ? "
-            "ORDER BY completed_at DESC, rowid DESC LIMIT 1",
+            "ORDER BY rowid DESC LIMIT 1",
             (str(change_id),), DiffCoverageResult,
         )
 

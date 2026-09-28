@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from backend.app.assurance.engine import contract_digest
 from backend.app.assurance.models import AssuranceEvaluation
-from backend.app.assurance.service import EvidenceService
+from backend.app.assurance.service import EvidenceService, merge_diff_coverage_rule
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
     AssurancePlan, ChangeContract, ChangeView, DiffCoverageResult, DiffCoverageRule,
@@ -60,6 +60,24 @@ def test_rule_requires_contract_v2() -> None:
     assert ChangeContract(schema_version=2, diff_coverage_rule=DiffCoverageRule(required=True, minimum_percent=1))
 
 
+def test_advisory_contract_cannot_weaken_a_stronger_request() -> None:
+    merged = merge_diff_coverage_rule(
+        DiffCoverageRule(minimum_percent=20),
+        DiffCoverageRule(minimum_percent=80, per_file=True),
+    )
+    assert merged.minimum_percent == 80
+    assert merged.per_file is True
+
+
+def test_required_rule_keeps_contract_command_while_taking_stronger_threshold() -> None:
+    merged = merge_diff_coverage_rule(
+        DiffCoverageRule(required=True, minimum_percent=80, test_args=["-q"]),
+        DiffCoverageRule(minimum_percent=95, test_args=["--collect-only"]),
+    )
+    assert merged.minimum_percent == 95
+    assert merged.test_args == ["-q"]
+
+
 def test_required_zero_threshold_is_rejected() -> None:
     with pytest.raises(ValidationError, match="minimum_percent > 0"):
         DiffCoverageRule(required=True)
@@ -70,6 +88,14 @@ def test_required_zero_threshold_is_rejected() -> None:
 def test_required_rule_rejects_collection_only_selection() -> None:
     with pytest.raises(ValidationError, match="full pytest selection"):
         DiffCoverageRule(required=True, minimum_percent=80, test_args=["--collect-only"])
+
+
+def test_persisted_result_rejects_unbounded_command(tmp_path: Path) -> None:
+    _, change, checkpoint = _fixture(tmp_path)
+    payload = _result(change, checkpoint, "PASS").model_dump()
+    payload["command"] = ["python"] * 65
+    with pytest.raises(ValidationError, match="List should have at most 64 items"):
+        DiffCoverageResult.model_validate(payload)
 
 
 def test_v1_contract_digest_remains_compatible(tmp_path: Path) -> None:
@@ -91,6 +117,18 @@ def test_required_unknown_does_not_satisfy_persisted_gate(tmp_path: Path) -> Non
     assert restarted._diff_coverage_gate(change)[0] is True
     write(Path(change.repository_path), "module.py", "value = 2\n")
     assert restarted._diff_coverage_gate(change)[0] is False
+
+
+def test_newer_inserted_unknown_supersedes_older_pass_even_with_earlier_timestamp(tmp_path: Path) -> None:
+    evidence, change, checkpoint = _fixture(tmp_path)
+    passing = _result(change, checkpoint, "PASS")
+    evidence._store.save_diff_coverage(passing)
+    earlier = passing.completed_at.replace(year=2020)
+    unknown = _result(change, checkpoint, "UNKNOWN").model_copy(
+        update={"completed_at": earlier})
+    evidence._store.save_diff_coverage(unknown)
+    assert evidence._store.latest_diff_coverage(change.id).diff_exercised == "UNKNOWN"
+    assert evidence._diff_coverage_gate(change)[0] is False
 
 
 def test_contract_change_invalidates_prior_pass(tmp_path: Path) -> None:
@@ -144,6 +182,7 @@ def test_required_rule_blocks_otherwise_passing_assurance_facts(
     )
     monkeypatch.setattr(evidence, "evaluate", lambda *_: passing)
     assert evidence.assurance_facts(change).required_assurance_passed is False
+    assert evidence.assurance_facts(change).reasons[0].startswith("Required diff coverage")
     evidence._store.save_diff_coverage(_result(change, checkpoint, "PASS"))
     assert evidence.assurance_facts(change).required_assurance_passed is True
 
