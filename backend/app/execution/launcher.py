@@ -2,10 +2,20 @@
 
 Scope, deliberately narrow:
 
-* On Windows, ``launch`` uses a kill-on-close Job Object, records descendants,
-  and starts the top-level process with maximum privileges removed from a
-  restricted token (the caller integrity level is retained for repository writes).
-  Reduced privilege is not a sandbox or isolation boundary.
+* Each adapter's launch boundary comes from its runtime profile
+  (``agent_profiles.resolve_profile``, user decision D-01), never from the
+  platform or from exception handling:
+  - ``RESTRICTED_TOKEN`` (``generic`` and custom adapters): on Windows,
+    ``launch`` uses a kill-on-close Job Object, records descendants, and starts
+    the top-level process with maximum privileges removed from a restricted
+    token (the caller integrity level is retained for repository writes).
+    Reduced privilege is not a sandbox or isolation boundary.
+  - ``APPCONTAINER`` (``claude``): the agent runs in the Change's
+    Sentinel-owned workspace clone, from a hash-verified tool snapshot with a
+    per-run staged home, inside an AppContainer whose live token and Job
+    membership were verified before it resumed. Every failure on this path
+    raises or returns an ERROR run; it never falls back to the restricted token.
+  - ``UNAVAILABLE`` (``codex``, D-02): refused before anything starts.
 * ``attach`` records caller-declared metadata. Nothing is observed.
 * ``stop`` terminates the owned Job Object tree when supervision is available.
 
@@ -21,8 +31,8 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -32,6 +42,17 @@ from backend.app.contracts.models import (
 from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution.agent_ports import (
+    CredentialStager, StagedCredential, WorkspaceLease, WorkspaceProvider,
+)
+from backend.app.execution.agent_profiles import (
+    PROTECTED_ENV_KEYS, BoundaryKind, RuntimeProfile, appcontainer_environment,
+    resolve_profile, validate_extra_profiles,
+)
+from backend.app.execution.agent_staging import ensure_tool_snapshot, rebuild_staged_home
+from backend.app.execution.appcontainer import (
+    CAPABILITY_SIDS, appcontainer_unsupported, base_environment, spawn_appcontainer_supervised,
+)
 from backend.app.execution.process_supervisor import (
     IS_WINDOWS, SupervisedProcess, is_process_running, list_pids, spawn_restricted_supervised,
 )
@@ -72,6 +93,38 @@ EXIT_LIMITATION = (
     "The status describes the direct child only and does not describe files, "
     "network or descendant activity."
 )
+# Formatted from the facts observed on the live token before the process resumed.
+APPCONTAINER_AUTHORITY = (
+    "AppContainer boundary verified before the process resumed: AppContainer token for "
+    "package SID {package_sid}, Low integrity (0x1000), capabilities [{capabilities}], member "
+    "of a Sentinel Job Object. The agent works in a Sentinel-owned workspace clone, not in the "
+    "selected repository; changes reach the repository only through a previewed, approved "
+    "fast-forward apply-back."
+)
+INTERNET_CLIENT_LIMITATION = (
+    "Outbound internet access is not restricted (internetClient capability).")
+WORKSPACE_CONTENT_LIMITATION = (
+    "Only files committed at the workspace base are present in the workspace; uncommitted, "
+    "untracked and ignored files are absent.")
+CONTAINMENT_LIMITATION = (
+    "Containment was verified only by Sentinel's Phase 1 probes (repository, user profile, "
+    "loopback, Credential Manager); other resources are UNKNOWN until tested.")
+APPCONTAINER_LIMITATIONS = (
+    INTERNET_CLIENT_LIMITATION, WORKSPACE_CONTENT_LIMITATION, CONTAINMENT_LIMITATION,
+)
+CREDENTIAL_STAGED_LIMITATION = (
+    "The model credential was copied into the agent's staged home for this run only and "
+    "was deleted when the run ended; the agent could read it while it ran.")
+CREDENTIAL_CHANGED_LIMITATION = (
+    "The staged model credential changed during the run (for example a token refresh); "
+    "it was not copied back, so the host login may need to be refreshed.")
+CREDENTIAL_NOT_STAGED_LIMITATION = (
+    "No model credential was staged for this run (none was configured or found).")
+CREDENTIAL_NOT_DELETED_LIMITATION = (
+    "The staged model credential could not be confirmed deleted after the run; the "
+    "workspace sweep removes the staged home.")
+# Keys an AppContainer environment sets itself; a caller may never forward them.
+_APPCONTAINER_RESERVED_KEYS = PROTECTED_ENV_KEYS | {"CLAUDE_CODE_GIT_BASH_PATH"}
 
 _KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SENSITIVE = re.compile(
@@ -117,6 +170,44 @@ class _State:
     process: object | None = None
 
 
+@dataclass
+class _LaunchStrategy:
+    """How one boundary spawns, labels and finalizes a run (see ``_execute``).
+
+    ``prepare`` runs inside the run's error handling, so a staging failure
+    becomes an ERROR run instead of an exception; ``after`` runs once the
+    process is gone (or never started) and returns extra limitations.
+    """
+
+    spawn: Callable[[list[str], object, Mapping[str, str], Callable[[str], str]],
+                    SupervisedProcess]
+    supervise: bool
+    start_update: Callable[[SupervisedProcess | None, AgentRun], dict[str, object]]
+    supervised_limitations: list[str]
+    error_text: Callable[[AppError], str]
+    initial_limitations: list[str] = field(default_factory=list)
+    final_limitations: list[str] = field(default_factory=list)
+    prepare: Callable[[list[str]], tuple[list[str], Path, dict[str, str]]] | None = None
+    after: Callable[[], list[str]] | None = None
+
+
+def _capability_names(sids: tuple[str, ...]) -> str:
+    names = {sid.upper(): name for name, sid in CAPABILITY_SIDS.items()}
+    return ", ".join(f"{names.get(sid.upper(), 'unknown')} {sid}" for sid in sids) or "none"
+
+
+def appcontainer_authority(facts: object) -> str | None:
+    """``APPCONTAINER_AUTHORITY`` for verified facts; None when nothing was verified."""
+
+    if (facts is None or not getattr(facts, "is_appcontainer", False)
+            or not getattr(facts, "job_verified", False)):
+        return None
+    return APPCONTAINER_AUTHORITY.format(
+        package_sid=getattr(facts, "package_sid", ""),
+        capabilities=_capability_names(tuple(getattr(facts, "capability_sids", ()))),
+    )
+
+
 class AgentLauncher:
     """Concrete ``AgentLauncherPort`` for the generic, Codex and Claude adapters."""
 
@@ -126,7 +217,15 @@ class AgentLauncher:
         adapters: dict[str, AgentAdapter] | None = None,
         *,
         tool_registry: ToolRegistryPort | None = None,
+        workspaces: WorkspaceProvider | None = None,
+        credentials: CredentialStager | None = None,
+        profiles: Mapping[str, RuntimeProfile] | None = None,
     ) -> None:
+        # Built-in profiles (claude = AppContainer, codex = unavailable) can never
+        # be overridden: this raises ValueError for such a mapping (D-01).
+        self._profiles = validate_extra_profiles(profiles)
+        self._workspaces = workspaces
+        self._credentials = credentials
         table = {
             "generic": AgentAdapter("generic", frozenset(generic_executables)),
             "codex": CODEX_ADAPTER,
@@ -147,6 +246,19 @@ class AgentLauncher:
 
     # -- port ---------------------------------------------------------------
 
+    @property
+    def workspace_provider(self) -> WorkspaceProvider | None:
+        return self._workspaces
+
+    @property
+    def credential_stager(self) -> CredentialStager | None:
+        return self._credentials
+
+    def runtime_profile(self, adapter: str) -> RuntimeProfile:
+        """The runtime profile ``launch`` would use for ``adapter``."""
+
+        return resolve_profile(adapter, self._profiles)
+
     def launch(
         self, change_id: UUID, repository_path: str, request: AgentLaunchRequest,
         output_limit_bytes: int,
@@ -162,6 +274,18 @@ class AgentLauncher:
         if (type(output_limit_bytes) is not int
                 or not 0 <= output_limit_bytes <= MAX_OUTPUT_BYTES):
             raise AppError("INVALID_OUTPUT_LIMIT", "Output limit must be between zero and one MiB.")
+        # The boundary is the adapter's declared profile (D-01): never the
+        # platform, never an exception handler.
+        profile = resolve_profile(adapter.name, self._profiles)
+        if profile.boundary is BoundaryKind.UNAVAILABLE:
+            raise AppError(
+                "AGENT_RUNTIME_PROFILE_UNAVAILABLE",
+                profile.unavailable_reason or "This adapter has no tested runtime profile.",
+                status_code=409, details={"adapter": adapter.name},
+            )
+        if profile.boundary is BoundaryKind.APPCONTAINER:
+            return self._launch_appcontainer(
+                change_id, repository_path, request, adapter, profile, output_limit_bytes)
         root = self._root(repository_path)
         env, secrets = self._environment(request, adapter, root)
         # Resolve the executable path exactly once and reuse it for both the
@@ -178,16 +302,243 @@ class AgentLauncher:
             argv = None
             resolve_error = exc
         tool_manifest = self._check_tool_trust(change_id, argv)
-
-        run_id = uuid4()
-        started_at = utc_now()
-        initial_limitations = (
-            [] if IS_WINDOWS else [DESCENDANT_LIMITATION, RESTRICTED_UNAVAILABLE]
+        return self._execute(
+            change_id=change_id, adapter=adapter, request=request,
+            output_limit_bytes=output_limit_bytes, run_id=uuid4(), argv=argv,
+            resolve_error=resolve_error, cwd=root, env=env, secrets=secrets,
+            tool_manifest=tool_manifest, strategy=self._restricted_strategy(),
         )
+
+    @staticmethod
+    def _restricted_strategy() -> _LaunchStrategy:
+        def spawn(arguments, process_cwd, process_env, redact):
+            return spawn_restricted_supervised(
+                arguments, cwd=process_cwd, env=process_env, redact=redact)
+
+        def start_update(process: SupervisedProcess | None, record: AgentRun) -> dict[str, object]:
+            supervised = bool(process and process.session is not None)
+            restricted = bool(process and process.restricted_token_applied)
+            return {
+                "descendant_control_available": supervised,
+                "restricted_token_applied": restricted,
+                "authority_reduction": RESTRICTED_AUTHORITY if restricted else None,
+                "limitations": (
+                    [SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY]
+                    if supervised else [DESCENDANT_LIMITATION, RESTRICTED_AUTHORITY]
+                    if restricted else record.limitations
+                ),
+            }
+
+        unavailable = [] if IS_WINDOWS else [DESCENDANT_LIMITATION, RESTRICTED_UNAVAILABLE]
+        return _LaunchStrategy(
+            spawn=spawn, supervise=IS_WINDOWS, start_update=start_update,
+            supervised_limitations=[SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY],
+            error_text=lambda exc: f"The agent did not start: {exc.message}",
+            initial_limitations=list(unavailable),
+            final_limitations=[EXIT_LIMITATION, *unavailable],
+        )
+
+    # -- AppContainer boundary (D-01: claude) ----------------------------------
+
+    def _launch_appcontainer(
+        self, change_id: UUID, repository_path: str, request: AgentLaunchRequest,
+        adapter: AgentAdapter, profile: RuntimeProfile, output_limit_bytes: int,
+    ) -> AgentRun:
+        """Launch inside the Change's workspace AppContainer, or fail closed.
+
+        Refusals before a run exists raise (unsupported platform, no workspace
+        provider, a non-native executable, a reserved environment key, a
+        workspace precondition). Once the workspace is leased, every failure
+        (snapshot, staged home, credential, spawn, boundary verification)
+        becomes an ERROR run with the stable code in its limitations, the
+        staged credential is revoked exactly once, and the lease is released
+        through ``finish_run``. Nothing here calls the restricted-token launcher.
+        """
+
+        if not IS_WINDOWS:
+            raise appcontainer_unsupported()
+        workspaces = self._workspaces
+        if workspaces is None:
+            raise AppError(
+                "AGENT_WORKSPACE_UNAVAILABLE",
+                "This adapter runs only inside a Sentinel workspace AppContainer, and no "
+                "workspace provider is configured.",
+                status_code=503, details={"adapter": adapter.name},
+            )
+        reserved = _APPCONTAINER_RESERVED_KEYS | {key.upper() for key, _ in profile.static_env}
+        if any(key.upper() in reserved for key in request.environment_keys):
+            raise AppError("AGENT_ENVIRONMENT_KEY_DENIED",
+                           "An environment key is not permitted for a launched agent.")
+        root = self._root(repository_path)
+        host_env, secrets = self._environment(request, adapter, root)
+        argv = resolve_argv(request.executable, host_env, root)
+        if profile.requires_native_executable and (
+                len(argv) != 1 or not os.path.isabs(argv[0])
+                or not argv[0].lower().endswith(".exe")):
+            raise AppError(
+                "AGENT_RUNTIME_PROFILE_UNAVAILABLE",
+                "This adapter's AppContainer profile requires a native executable "
+                "(a single .exe, not a script shim); native executable required.",
+                status_code=409, details={"adapter": adapter.name},
+            )
+        tool_manifest = self._check_tool_trust(change_id, argv)
+        run_id = uuid4()
+        # Workspace preconditions (dirty source, busy, base mismatch...) propagate.
+        lease = workspaces.ensure(change_id, str(root), run_id=run_id)
+
+        staged: list[StagedCredential] = []
+        revoked = [False]
+        notes: list[str] = []
+        spawned: list[SupervisedProcess] = []
+        limitations = list(APPCONTAINER_LIMITATIONS) if "internetClient" in profile.capabilities \
+            else [WORKSPACE_CONTENT_LIMITATION, CONTAINMENT_LIMITATION]
+
+        def revoke() -> list[str]:
+            if not staged or revoked[0]:
+                return []
+            revoked[0] = True
+            try:
+                outcome = self._credentials.revoke_staged_credential(staged[0])  # type: ignore[union-attr]
+            except Exception:
+                return [CREDENTIAL_NOT_DELETED_LIMITATION]
+            texts = [CREDENTIAL_STAGED_LIMITATION if outcome.deleted
+                     else CREDENTIAL_NOT_DELETED_LIMITATION]
+            if outcome.changed_during_run:
+                texts.append(CREDENTIAL_CHANGED_LIMITATION)
+            return texts
+
+        def prepare(arguments: list[str]) -> tuple[list[str], Path, dict[str, str]]:
+            return self._prepare_appcontainer(
+                change_id, lease, profile, request, arguments, host_env, root, secrets,
+                tool_manifest, staged, notes)
+
+        def spawn(arguments, process_cwd, process_env, redact):
+            process = spawn_appcontainer_supervised(
+                arguments, cwd=process_cwd, env=process_env, redact=redact,
+                profile_name=lease.profile_name,
+                expected_package_sid=str(lease.package_sid),
+                capabilities=profile.capabilities,
+            )
+            spawned.append(process)
+            return process
+
+        def start_update(process: SupervisedProcess | None, record: AgentRun) -> dict[str, object]:
+            supervised = bool(process and process.session is not None)
+            return {
+                "descendant_control_available": supervised,
+                "restricted_token_applied": False,
+                "authority_reduction": appcontainer_authority(
+                    getattr(process, "appcontainer", None)),
+                "limitations": ([SUPERVISED_LIMITATION, *limitations]
+                                if supervised else record.limitations),
+            }
+
+        def after() -> list[str]:
+            return [*notes, *revoke()]
+
+        strategy = _LaunchStrategy(
+            spawn=spawn, supervise=True, start_update=start_update,
+            supervised_limitations=[SUPERVISED_LIMITATION, *limitations],
+            error_text=lambda exc: f"The agent did not start ({exc.code}): {exc.message}",
+            final_limitations=[EXIT_LIMITATION], prepare=prepare, after=after,
+        )
+        run: AgentRun | None = None
+        try:
+            run = self._execute(
+                change_id=change_id, adapter=adapter, request=request,
+                output_limit_bytes=output_limit_bytes, run_id=run_id, argv=argv,
+                resolve_error=None, cwd=root, env=host_env, secrets=secrets,
+                tool_manifest=tool_manifest, strategy=strategy,
+            )
+            return run
+        finally:
+            leftover = revoke()  # only if _execute itself raised before `after`
+            facts = getattr(spawned[0], "appcontainer", None) if spawned else None
+            workspaces.finish_run(
+                lease.id, run_id,
+                facts=facts.to_payload() if facts is not None else None,
+                status=(run.status.value if run is not None else AgentRunStatus.ERROR.value),
+                limitations=[*(run.limitations if run is not None else []), *leftover],
+            )
+
+    def _prepare_appcontainer(
+        self, change_id: UUID, lease: WorkspaceLease, profile: RuntimeProfile,
+        request: AgentLaunchRequest, argv: list[str], host_env: Mapping[str, str], root: Path,
+        secrets: list[str], tool_manifest: ToolManifest | None,
+        staged: list[StagedCredential], notes: list[str],
+    ) -> tuple[list[str], Path, dict[str, str]]:
+        """Snapshot, staged home, credential and environment for one AppContainer run."""
+
+        if (lease.container_path is None or lease.workspace_path is None
+                or not lease.package_sid):
+            raise AppError("AGENT_WORKSPACE_UNAVAILABLE",
+                           "The workspace has no AppContainer folder.", status_code=503)
+        container = Path(lease.container_path)
+        tools_dir: Path | None = None
+        if profile.tool_snapshot:
+            tools_dir = container / "tools"
+            snapshot = ensure_tool_snapshot(
+                Path(argv[0]), tools_dir,
+                trusted_digest=tool_manifest.artifact_digest if tool_manifest else None,
+            )
+            argv = [str(snapshot.path), *argv[1:]]
+        home: Path | None = None
+        if profile.staged_home:
+            home = rebuild_staged_home(container / "home").root
+        if profile.credential_kind is not None:
+            credential = (
+                self._credentials.stage_agent_credential(change_id, profile.credential_kind, home)
+                if self._credentials is not None and home is not None else None
+            )
+            if credential is None:
+                notes.append(CREDENTIAL_NOT_STAGED_LIMITATION)
+            else:
+                staged.append(credential)
+                self._workspaces.record_credential(lease.id, credential.fingerprint)  # type: ignore[union-attr]
+                secrets[:] = sorted(
+                    {*secrets, *(value for value in credential.redaction_values if len(value) >= 8)},
+                    key=len, reverse=True,
+                )
+        git_cmd_dir, git_bash = self._git_locations(root)
+        node = find_executable("node", host_env, root)
+        env = appcontainer_environment(
+            profile, base_env=base_environment(container), home=home, tools_dir=tools_dir,
+            git_cmd_dir=git_cmd_dir, node_dir=node.parent if node is not None else None,
+            git_bash=git_bash,
+        )
+        # Only the caller's explicitly requested keys, already validated by _environment.
+        for key in request.environment_keys:
+            value = host_env.get(key.upper())
+            if value is not None:
+                env[key.upper()] = value
+        return argv, Path(lease.workspace_path), env
+
+    @staticmethod
+    def _git_locations(root: Path) -> tuple[Path | None, Path | None]:
+        """(Git ``cmd`` directory, Git Bash) of the trusted host Git, when present."""
+
+        from backend.app.git.safe_exec import resolve_trusted_git
+
+        try:
+            git = Path(resolve_trusted_git(root))
+        except Exception:
+            return None, None
+        bash = git.parent.parent / "bin" / "bash.exe"
+        return git.parent, bash if bash.is_file() else None
+
+    # -- shared run body -------------------------------------------------------
+
+    def _execute(
+        self, *, change_id: UUID, adapter: AgentAdapter, request: AgentLaunchRequest,
+        output_limit_bytes: int, run_id: UUID, argv: list[str] | None,
+        resolve_error: AppError | None, cwd: Path, env: dict[str, str], secrets: list[str],
+        tool_manifest: ToolManifest | None, strategy: _LaunchStrategy,
+    ) -> AgentRun:
+        started_at = utc_now()
         running = AgentRun(
             id=run_id, change_id=change_id, adapter=adapter.name,
             status=AgentRunStatus.RUNNING, started_at=started_at,
-            limitations=initial_limitations,
+            limitations=list(strategy.initial_limitations),
         )
         state = _State(running, threading.Event(), threading.Event(), threading.Event())
         with self._lock:
@@ -198,28 +549,18 @@ class AgentLauncher:
 
         def on_start(pid: int) -> None:
             process = spawned[0]
-            supervised = bool(process and process.session is not None)
-            restricted = bool(process and process.restricted_token_applied)
             with self._lock:
                 state.process = process
                 state.record = state.record.model_copy(update={
-                    "top_level_pid": pid,
-                    "descendant_control_available": supervised,
-                    "restricted_token_applied": restricted,
-                    "authority_reduction": RESTRICTED_AUTHORITY if restricted else None,
-                    "limitations": (
-                        [SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY]
-                        if supervised else [DESCENDANT_LIMITATION, RESTRICTED_AUTHORITY]
-                        if restricted else state.record.limitations
-                    ),
+                    "top_level_pid": pid, **strategy.start_update(process, state.record),
                 })
                 started = state.record
             self._notify(started)
 
         def process_factory(arguments, process_cwd, process_env):
-            process = spawn_restricted_supervised(
-                arguments, cwd=process_cwd, env=process_env,
-                redact=lambda value: self._text(value.encode("utf-8"), secrets),
+            process = strategy.spawn(
+                arguments, process_cwd, process_env,
+                lambda value: self._text(value.encode("utf-8"), secrets),
             )
             spawned[0] = process
             return process
@@ -238,9 +579,7 @@ class AgentLauncher:
             self._notify(updated)
 
         clock = time.monotonic()
-        limitations = [EXIT_LIMITATION]
-        if not IS_WINDOWS:
-            limitations.extend([DESCENDANT_LIMITATION, RESTRICTED_UNAVAILABLE])
+        limitations = list(strategy.final_limitations)
         status = AgentRunStatus.ERROR
         exit_code: int | None = None
         stdout = stderr = ""
@@ -285,16 +624,18 @@ class AgentLauncher:
         try:
             if resolve_error is not None:
                 raise resolve_error
+            if strategy.prepare is not None:
+                argv, cwd, env = strategy.prepare(list(argv or ()))
             result = capture(
-                [*argv, *request.args], cwd=root, env=env,
+                [*argv, *request.args], cwd=cwd, env=env,
                 timeout=request.timeout_seconds, limit=output_limit_bytes,
                 max_timeout=MAX_TIMEOUT_SECONDS, cancel=state.cancel, paused=state.paused,
                 on_start=on_start, on_chunk=on_chunk,
-                process_factory=process_factory if IS_WINDOWS else None,
-                on_poll=on_poll if IS_WINDOWS else None,
+                process_factory=process_factory if strategy.supervise else None,
+                on_poll=on_poll if strategy.supervise else None,
             )
         except AppError as exc:
-            limitations.append(f"The agent did not start: {exc.message}")
+            limitations.append(strategy.error_text(exc))
         except (OSError, ValueError):
             limitations.append("The agent did not start: the operating system refused it.")
         else:
@@ -320,6 +661,8 @@ class AgentLauncher:
             else:
                 exit_code = result.returncode
                 status = AgentRunStatus.PASSED if exit_code == 0 else AgentRunStatus.FAILED
+        if strategy.after is not None:
+            limitations.extend(strategy.after())
         supervised_process = spawned[0]
         descendants = (
             supervised_process.session.records
@@ -327,7 +670,7 @@ class AgentLauncher:
             else state.record.descendant_processes
         )
         if state.record.descendant_control_available:
-            limitations.extend([SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY])
+            limitations.extend(strategy.supervised_limitations)
         final = AgentRun(
             id=run_id, change_id=change_id, adapter=adapter.name, status=status,
             top_level_pid=pid, exit_code=exit_code, started_at=started_at,

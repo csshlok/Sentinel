@@ -204,7 +204,7 @@ def test_secret_split_across_chunk_boundary_is_still_redacted(tmp_path, monkeypa
     secret = "sk-canary-abcdef123456"
     monkeypatch.setenv("ANTHROPIC_API_KEY", secret)
     launcher = AgentLauncher(adapters={
-        "claude": AgentAdapter("claude", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
+        "secretive": AgentAdapter("secretive", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
     seen_running_stdout: list[str] = []
     launcher.on_update = lambda run: seen_running_stdout.append(
         run.stdout) if run.status is AgentRunStatus.RUNNING else None
@@ -217,7 +217,7 @@ def test_secret_split_across_chunk_boundary_is_still_redacted(tmp_path, monkeypa
         "sys.stdout.write(secret[half:]); sys.stdout.flush()\n"
     )
     run = launcher.launch(CHANGE, str(tmp_path), AgentLaunchRequest(
-        adapter="claude", executable="python", timeout_seconds=10,
+        adapter="secretive", executable="python", timeout_seconds=10,
         args=["-c", code], environment_keys=["ANTHROPIC_API_KEY"]), 1000)
     assert run.status is AgentRunStatus.PASSED
     assert secret not in run.stdout
@@ -339,9 +339,9 @@ def test_environment_is_stripped_and_secrets_are_redacted(tmp_path, monkeypatch)
 def test_adapter_credential_key_is_forwarded_but_redacted(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-canary-abcdef123456")
     launcher = AgentLauncher(adapters={
-        "claude": AgentAdapter("claude", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
+        "secretive": AgentAdapter("secretive", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
     run = launcher.launch(CHANGE, str(tmp_path), AgentLaunchRequest(
-        adapter="claude", executable="python", timeout_seconds=10,
+        adapter="secretive", executable="python", timeout_seconds=10,
         args=["-c", "import os; print(os.environ['ANTHROPIC_API_KEY'])"],
         environment_keys=["ANTHROPIC_API_KEY"]), 1000)
     assert run.status is AgentRunStatus.PASSED
@@ -354,7 +354,7 @@ def test_encoded_secret_is_still_redacted(tmp_path, monkeypatch):
     would let this through untouched."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-canary-abcdef123456")
     launcher = AgentLauncher(adapters={
-        "claude": AgentAdapter("claude", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
+        "secretive": AgentAdapter("secretive", frozenset({"python"}), frozenset({"ANTHROPIC_API_KEY"}))})
     code = (
         "import os, base64\n"
         "raw = os.environ['ANTHROPIC_API_KEY'].encode()\n"
@@ -363,7 +363,7 @@ def test_encoded_secret_is_still_redacted(tmp_path, monkeypatch):
         "print(raw.hex())\n"
     )
     run = launcher.launch(CHANGE, str(tmp_path), AgentLaunchRequest(
-        adapter="claude", executable="python", timeout_seconds=10,
+        adapter="secretive", executable="python", timeout_seconds=10,
         args=["-c", code], environment_keys=["ANTHROPIC_API_KEY"]), 1000)
     assert run.status is AgentRunStatus.PASSED
     assert "sk-canary" not in run.stdout
