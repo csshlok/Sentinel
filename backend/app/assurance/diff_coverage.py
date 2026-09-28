@@ -167,6 +167,9 @@ def collect_diff_coverage(
     mapped = map_diff(baseline=baseline, tested=tested)
     if mapped.error:
         return result.model_copy(update={"freshness": "CURRENT", "reasons": [mapped.error]})
+    if len(mapped.lines) > 10000 or len(mapped.excluded) > 10000:
+        return result.model_copy(update={"freshness": "CURRENT",
+                                         "reasons": ["Diff contains too many paths to measure safely."]})
     report: dict[str, object] | None = None
     artifact_digest: str | None = None
     checks_passed: bool | None = None
@@ -237,5 +240,12 @@ def collect_diff_coverage(
                                        "reasons": reasons})
     if report is None:
         return result
-    return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
-                           report=report, root=root, rule=request)
+    try:
+        return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
+                               report=report, root=root, rule=request)
+    except Exception as exc:
+        return result.model_copy(update={
+            "collector_status": "ERROR", "diff_exercised": "UNKNOWN",
+            "gate_satisfied": False if request.rule.required else None,
+            "reasons": [f"Coverage evaluation failed: {type(exc).__name__}."],
+        })

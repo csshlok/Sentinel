@@ -275,6 +275,22 @@ def test_recursive_report_json_is_unknown(tmp_path: Path, monkeypatch: pytest.Mo
     assert "RecursionError" in result.reasons[0]
 
 
+def test_oversized_line_model_returns_unknown_instead_of_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+
+    def oversized_model(**kwargs: object) -> DiffCoverageResult:
+        raise ValueError("synthetic result bound")
+
+    monkeypatch.setattr("backend.app.assurance.diff_coverage.evaluate_report", oversized_model)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    assert "ValueError" in result.reasons[0]
+
+
 def test_missing_coverage_tool_keeps_checks_passed_unknown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
