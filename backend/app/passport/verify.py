@@ -260,7 +260,10 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
     try:
         if not path.is_file() or path.stat().st_size > MAX_BUNDLE_BYTES:
             raise ValueError("Bundle is missing or oversized")
-        raw_zip = path.read_bytes()
+        with path.open("rb") as stream:
+            raw_zip = stream.read(MAX_BUNDLE_BYTES + 1)
+        if len(raw_zip) > MAX_BUNDLE_BYTES:
+            raise ValueError("Bundle is oversized")
         if (not raw_zip.startswith(b"PK\x03\x04") or len(raw_zip) < 22
                 or raw_zip[-22:-18] != b"PK\x05\x06" or raw_zip[-2:] != b"\x00\x00"):
             raise ValueError("ZIP has a prefix, trailer or archive comment")

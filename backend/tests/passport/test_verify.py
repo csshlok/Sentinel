@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.cng import CngKey
-from backend.app.passport.format import MAX_MEMBER_BYTES
+from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize, parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.passport.verify import _validate_claims, verify_bundle
@@ -56,6 +56,31 @@ def test_zip64_record_is_rejected_even_with_valid_signed_members(tmp_path: Path)
     result = verify_bundle(hostile, trust=_golden_trust(tmp_path))
     assert result.verdict == "INVALID", result.reason
     assert "ZIP" in result.reason
+
+
+def test_bundle_read_is_bounded_even_if_file_grows_after_stat() -> None:
+    observed: list[int] = []
+
+    class GrowingStream(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            observed.append(size)
+            return super().read(size)
+
+    class GrowingPath:
+        def is_file(self) -> bool:
+            return True
+
+        def stat(self):
+            return type("Stat", (), {"st_size": 1})()
+
+        def open(self, mode: str):
+            assert mode == "rb"
+            return GrowingStream(b"X" * (MAX_BUNDLE_BYTES + 2))
+
+    result = verify_bundle(GrowingPath())  # type: ignore[arg-type]
+    assert result.verdict == "INVALID"
+    assert observed == [MAX_BUNDLE_BYTES + 1]
+    assert "oversized" in result.reason
 
 
 def test_stored_member_size_slack_cannot_hide_unsigned_bytes(tmp_path: Path) -> None:
