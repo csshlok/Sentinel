@@ -57,6 +57,7 @@ def evaluate_report(
     *, result: DiffCoverageResult, changed: dict[str, set[int]],
     excluded: dict[str, str], report: dict[str, object], root: Path,
     rule: DiffCoverageRequest,
+    collected_test_paths: set[str] | None = None,
 ) -> DiffCoverageResult:
     """Pure report comparison; missing or inconsistent file records remain UNKNOWN."""
 
@@ -133,10 +134,10 @@ def evaluate_report(
         for path, reason in excluded.items()
     ):
         state = "UNKNOWN"
-    if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and any(
-        path.lower().endswith(".py") and reason == "test code"
-        for path, reason in excluded.items()
-    ):
+    uncollected_test_code = [path for path, reason in excluded.items()
+                             if path.lower().endswith(".py") and reason == "test code"
+                             and path not in (collected_test_paths or set())]
+    if rule.rule.required and state in {"PASS", "NOT_APPLICABLE"} and uncollected_test_code:
         state = "UNKNOWN"
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
@@ -144,7 +145,10 @@ def evaluate_report(
         "files": measured, "excluded": excluded, "diff_exercised": state,
         "reasons": [*result.reasons, *(["Changed code lines lack exact coverage data: "
                                     + ", ".join(unmeasured_code[:8]) + "."]
-                                   if unmeasured_code else [])],
+                                   if unmeasured_code else []),
+                    *(["Changed test-named Python file is not a collected test: "
+                       + ", ".join(uncollected_test_code[:8]) + "."]
+                      if rule.rule.required and uncollected_test_code else [])],
         "threshold": rule.rule.minimum_percent or 100.0,
         "measured_percent": (100.0 * executed_total / total) if total else None,
         "changed_executable_lines": total, "executed_changed_lines": executed_total,
@@ -206,6 +210,7 @@ def collect_diff_coverage(
     report: dict[str, object] | None = None
     artifact_digest: str | None = None
     checks_passed: bool | None = None
+    collected_test_paths: set[str] = set()
     collector_status = "ERROR"
     reasons: list[str] = []
     try:
@@ -248,6 +253,15 @@ def collect_diff_coverage(
                         suites = []
                     executed_tests = sum(int(item.attrib["tests"]) - int(item.attrib.get("skipped", 0))
                                          for item in suites)
+                    for case in suite.iter("testcase"):
+                        file_attr = case.attrib.get("file")
+                        if file_attr:
+                            normalized = _report_path(root, file_attr)
+                            if normalized:
+                                collected_test_paths.add(normalized)
+                        classname = case.attrib.get("classname", "")
+                        if classname and all(part.isidentifier() for part in classname.split(".")):
+                            collected_test_paths.add(classname.replace(".", "/") + ".py")
                     if executed_tests <= 0:
                         reasons.append("Pytest did not execute any tests.")
                     else:
@@ -305,7 +319,8 @@ def collect_diff_coverage(
         return result
     try:
         return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
-                               report=report, root=root, rule=request)
+                               report=report, root=root, rule=request,
+                               collected_test_paths=collected_test_paths)
     except Exception as exc:
         return result.model_copy(update={
             "collector_status": "ERROR", "diff_exercised": "UNKNOWN",

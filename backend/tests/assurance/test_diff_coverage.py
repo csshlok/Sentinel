@@ -283,6 +283,31 @@ def test_repo_pytest_collection_rules_cannot_hide_failing_tests(tmp_path: Path) 
     assert any("sentinel-pytest.ini" in token for token in result.command)
 
 
+def test_new_test_file_can_satisfy_required_gate_when_it_covers_new_code(
+    tmp_path: Path,
+) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "def old():\n    return 1\n",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="new test", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "def old():\n    return 1\n\ndef new(x):\n    return x + 1\n")
+    write(root, "tests/test_new.py", "from module import new\n\ndef test_new():\n"
+                                      "    assert new(1) == 2\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "PASS", result.reasons
+    assert result.gate_satisfied is True
+    assert result.excluded["tests/test_new.py"] == "test code"
+
+
 def test_rename_and_untracked_source_use_new_paths(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")
