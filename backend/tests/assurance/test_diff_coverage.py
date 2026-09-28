@@ -14,6 +14,7 @@ from backend.app.contracts.models import (
     ChangeView, DiffCoverageRequest, DiffCoverageRule, DiffCoverageResult, ReviewState, utc_now,
 )
 from backend.app.git.state import GitStateTracker
+from backend.app.execution._process import CapturedProcess
 from backend.tests.support_kb import git, make_repo, write
 
 
@@ -70,6 +71,17 @@ def test_new_passing_tests_cannot_cover_unexecuted_production_diff(tmp_path: Pat
     assert result.executed_changed_lines == 0
     assert result.gate_satisfied is False
     assert result.excluded["tests/test_unrelated.py"] == "test code"
+
+
+def test_new_untracked_untested_source_lists_its_uncovered_lines(tmp_path: Path) -> None:
+    root, change, baseline, _ = _case(tmp_path)
+    write(root, "new_feature.py", "def untested():\n    return 42\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    file = next(item for item in result.files if item.path == "new_feature.py")
+    assert file.uncovered_lines == [1, 2] or file.uncovered_lines == [2]
+    assert result.diff_exercised == "FAIL"
 
 
 def test_executed_without_assertion_is_not_verified(tmp_path: Path) -> None:
@@ -258,6 +270,62 @@ def test_recursive_report_json_is_unknown(tmp_path: Path, monkeypatch: pytest.Mo
     assert result.diff_exercised == "UNKNOWN"
     assert result.gate_satisfied is False
     assert "RecursionError" in result.reasons[0]
+
+
+def test_missing_coverage_tool_keeps_checks_passed_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+
+    def no_coverage(*args: object, **kwargs: object) -> CapturedProcess:
+        return CapturedProcess(returncode=1, stdout=b"", stderr=b"No module named coverage",
+                               truncated=False, timed_out=False, incomplete=False,
+                               stdout_digest="0" * 64)
+
+    monkeypatch.setattr("backend.app.assurance.diff_coverage.run_verification_command", no_coverage)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is None
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+
+
+def test_malformed_exported_artifact_is_unknown_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.app.execution.commands import run_verification_command as real_command
+
+    root, change, baseline, tested = _case(tmp_path)
+
+    def malformed_export(argv: list[str], **kwargs: object) -> CapturedProcess:
+        if "json" in argv:
+            Path(argv[argv.index("-o") + 1]).write_text("{malformed", encoding="utf-8")
+            return CapturedProcess(returncode=0, stdout=b"", stderr=b"", truncated=False,
+                                   timed_out=False, incomplete=False, stdout_digest="0" * 64)
+        return real_command(argv, **kwargs)
+
+    monkeypatch.setattr("backend.app.assurance.diff_coverage.run_verification_command", malformed_export)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+
+
+def test_unsupported_source_is_listed_and_unknown_when_alone(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "tests/test_trivial.py": "def test_trivial():\n    assert True\n",
+    })
+    change = ChangeView(id=uuid4(), title="ts", intent="measure", repository_path=str(root),
+                        created_at=utc_now(), updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "app.ts", "export const value = 1;\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.excluded["app.ts"] == "unsupported language"
 
 
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:

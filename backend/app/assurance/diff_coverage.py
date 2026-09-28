@@ -185,10 +185,12 @@ def collect_diff_coverage(
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider", *test_args]
             result = result.model_copy(update={"command": argv, "run_ids": [uuid4()]})
             run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
-            checks_passed = run.returncode == 0 and not run.timed_out and not run.incomplete
             if run.timed_out or run.incomplete:
                 reasons.append("Test command timed out or output capture was incomplete.")
+            elif not data.is_file():
+                reasons.append("Coverage data is missing; test execution could not be confirmed.")
             else:
+                checks_passed = run.returncode == 0
                 exported = run_verification_command(
                     [interpreter, "-m", "coverage", "json", "--rcfile", str(config),
                      "--data-file", str(data), "-o", str(artifact)],

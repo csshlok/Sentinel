@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from uuid import uuid4
 
 from backend.app.assurance.diff_map import DiffMap, _parse_patch
 from backend.app.assurance.diff_map import map_diff
+from backend.app.git.safe_exec import run_git as real_run_git
 from backend.app.assurance.diff_coverage import _trusted_interpreter_path
 from backend.app.git.state import GitStateTracker
 from backend.tests.support_kb import git, make_repo, write
@@ -107,3 +109,19 @@ def test_untrusted_interpreter_names_are_refused_before_launch(tmp_path: Path) -
     assert not _trusted_interpreter_path(str(rogue), root)
     assert not _trusted_interpreter_path(r"\\host\share\python.exe", root)
     assert not _trusted_interpreter_path(r"C:\Windows\System32\cmd.exe", root)
+
+
+def test_truncated_git_diff_output_is_unknown(tmp_path: Path, monkeypatch) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "value = 1\n"})
+    tracker = GitStateTracker()
+    change_id = uuid4()
+    baseline = tracker.capture(change_id, "baseline", str(root), 1, 1_048_576)
+    write(root, "module.py", "value = 2\n")
+    tested = tracker.capture(change_id, "tested", str(root), 1, 1_048_576)
+
+    def truncated(repository, args, **kwargs):
+        result = real_run_git(repository, args, **kwargs)
+        return replace(result, truncated=True) if "diff" in args else result
+
+    monkeypatch.setattr("backend.app.assurance.diff_map.run_git", truncated)
+    assert "truncated" in map_diff(baseline=baseline, tested=tested).error
