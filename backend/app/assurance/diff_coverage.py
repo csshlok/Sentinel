@@ -133,6 +133,9 @@ def evaluate_report(
         state = "PASS" if percent >= minimum and per_file_ok else "FAIL"
     if unsupported and state == "PASS":
         state = "UNKNOWN"
+    if any(reason in {"untracked outside checkpoint", "ignore rules changed"}
+           for reason in excluded.values()):
+        state = "UNKNOWN"
     if rule.rule.required and any(
         path.lower().endswith(".py") and reason == "generated"
         for path, reason in excluded.items()

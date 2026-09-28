@@ -24,6 +24,8 @@ class DiffMap:
 def _classification(path: str, root: Path | None = None) -> str | None:
     lower = "/" + path.lower().replace("\\", "/")
     name = lower.rsplit("/", 1)[-1]
+    if name == ".gitignore":
+        return "ignore rules changed"
     if ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
             or (name.startswith("test_") and name.endswith(".py"))
             or name.endswith("_test.py")):
@@ -225,13 +227,21 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
     except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
         result.error = "Untracked-file enumeration failed."
         return result
+    checkpoint_untracked = {
+        entry.path.replace("\\", "/") for entry in tested.summary.files
+        if entry.status.value == "UNTRACKED"
+    }
     for path in paths:
         path = path.replace("\\", "/")
         if path in result.lines or path in result.excluded:
             continue
         classification = _classification(path, Path(tested.repository_root))
+        bound_to_checkpoint = path in checkpoint_untracked
+        if not bound_to_checkpoint:
+            result.excluded[path] = "untracked outside checkpoint"
         if classification:
-            result.excluded[path] = classification
+            if bound_to_checkpoint:
+                result.excluded[path] = classification
             continue
         target = Path(tested.repository_root) / path
         try:
