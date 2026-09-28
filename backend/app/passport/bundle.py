@@ -13,12 +13,9 @@ from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.passport.card import render_html, render_svg
 from backend.app.passport.cng import CngKey, DEFAULT_KEY_NAME, fingerprint
+from backend.app.passport.format import MAX_BUNDLE_BYTES, MAX_MEMBER_BYTES
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.v2 import PassportV2Issuer
-
-MAX_BUNDLE_BYTES = 8 * 1024 * 1024
-MAX_MEMBER_BYTES = 2 * 1024 * 1024
-
 
 @dataclass(frozen=True, slots=True)
 class BundleArtifact:
