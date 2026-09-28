@@ -629,6 +629,40 @@ def test_unmeasured_script_stays_unknown_with_docs_only_gate(tmp_path: Path) -> 
     assert result.excluded["deploy.ps1"] == "unsupported language"
 
 
+def test_unknown_source_extensions_cannot_use_docs_only_gate(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "tests/test_trivial.py": "def test_trivial():\n    assert True\n",
+    })
+    change = ChangeView(id=uuid4(), title="unknown source", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    for path, content in {
+        "Deploy.psm1": "function Invoke-Deploy { return 1 }\n",
+        "run.vbs": "WScript.Echo 1\n",
+        "Dockerfile": "FROM scratch\n",
+        "README.md": "Documentation.\n",
+        "package-lock.json": "{}\n",
+    }.items():
+        write(root, path, content)
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    request = DiffCoverageRequest(
+        baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
+        rule=DiffCoverageRule(required=True, minimum_percent=80,
+                              not_applicable_satisfies=True),
+    )
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=request)
+    assert result.checks_passed is True
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    for path in ("Deploy.psm1", "run.vbs", "Dockerfile"):
+        assert result.excluded[path] == "unsupported language"
+    assert result.excluded["README.md"] == "documentation"
+    assert result.excluded["package-lock.json"] == "lockfile"
+
+
 def test_missing_malformed_and_unsupported_reports_are_unknown(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     request = _request(baseline, tested, required=True)

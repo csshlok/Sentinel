@@ -109,7 +109,14 @@ def evaluate_report(
             excluded_by_pragma_lines=sorted(excluded_changed),
             reason="excluded-by-pragma" if excluded_changed else None,
         ))
-    unsupported = any(v.startswith("unsupported language") for v in excluded.values())
+    unsupported = any(
+        reason.startswith("unsupported language") or reason == "configuration"
+        or (reason == "binary" and Path(path).suffix.lower() not in {
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".avif",
+            ".svg", ".woff", ".woff2", ".ttf", ".otf",
+        })
+        for path, reason in excluded.items()
+    )
     if not changed and excluded:
         state = "UNKNOWN" if unsupported else "NOT_APPLICABLE"
     elif total == 0:

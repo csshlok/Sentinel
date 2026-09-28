@@ -15,6 +15,11 @@ _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$")
 _ENVIRONMENT_DIRS = frozenset({".venv", "venv", ".tox", ".nox", "node_modules",
                                "__pycache__", ".pytest_cache", ".mypy_cache",
                                ".ruff_cache"})
+_INERT_SUFFIXES = frozenset({".md", ".rst", ".txt", ".png", ".jpg", ".jpeg",
+                             ".gif", ".webp", ".ico", ".bmp", ".avif", ".svg",
+                             ".woff", ".woff2", ".ttf", ".otf"})
+_LOCKFILES = frozenset({"package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+                        "poetry.lock", "uv.lock", "cargo.lock", "gemfile.lock"})
 
 
 @dataclass(slots=True)
@@ -47,28 +52,18 @@ def _classification(path: str, root: Path | None = None) -> str | None:
     name = lower.rsplit("/", 1)[-1]
     if name == ".gitignore":
         return "ignore rules changed"
-    if ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
+    if lower.endswith(".py") and ("/tests/" in lower or "/test/" in lower or name == "conftest.py"
             or (name.startswith("test_") and name.endswith(".py"))
             or name.endswith("_test.py")):
         return "test code"
+    if name in _LOCKFILES:
+        return "lockfile"
+    if Path(name).suffix in _INERT_SUFFIXES:
+        return "documentation" if lower.endswith((".md", ".rst", ".txt")) else "inert asset"
     if lower.endswith((".toml", ".yaml", ".yml", ".json", ".ini", ".cfg")):
         return "configuration"
-    if lower.endswith((".md", ".rst", ".txt")):
-        return "documentation"
     if not lower.endswith(".py"):
-        if lower.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-                           ".java", ".go", ".rs", ".cs", ".rb", ".pyw", ".pyx",
-                           ".pyi", ".ps1", ".sh", ".bat", ".cmd", ".c", ".cc",
-                           ".cpp", ".h", ".hpp")):
-            return "unsupported language"
-        if root is not None:
-            try:
-                with (root / path).open("rb") as stream:
-                    if stream.read(2) == b"#!":
-                        return "unsupported language"
-            except OSError:
-                pass
-        return "non-source file"
+        return "unsupported language"
     if root is not None:
         source = root / path
         try:
