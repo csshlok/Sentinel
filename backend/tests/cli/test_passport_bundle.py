@@ -31,6 +31,15 @@ from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.support_kb import make_repo
 
 
+@pytest.mark.parametrize("tail", [["--key"], ["--bogus"]])
+def test_verify_click_usage_errors_emit_json_verdict(tmp_path: Path,
+                                                     tail: list[str]) -> None:
+    result = CliRunner().invoke(cli_app, ["verify", str(tmp_path / "bundle.sentinel"),
+                                          "--json", *tail])
+    assert result.exit_code == 3
+    assert json.loads(result.stdout)["verdict"] == "USAGE_ERROR"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
 def test_api_exports_from_change_id_and_rejects_body(tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:

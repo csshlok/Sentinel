@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import typer
+from click.exceptions import UsageError as ClickUsageError
 from typer._click.exceptions import UsageError
 from typer.core import TyperCommand
 
@@ -28,9 +29,15 @@ class VerifyUsageCommand(TyperCommand):
     """Give verifier syntax errors the documented standalone exit code 3."""
 
     def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        as_json = "--json" in args  # Typer consumes this mutable list before raising.
         try:
             return super().parse_args(ctx, args)
-        except UsageError as exc:
+        except (UsageError, ClickUsageError) as exc:
+            if as_json:
+                typer.echo(json.dumps({"verdict": "USAGE_ERROR",
+                                       "reason": exc.format_message()},
+                                      sort_keys=True, separators=(",", ":")))
+                raise typer.Exit(3) from exc
             exc.exit_code = 3
             raise
 
