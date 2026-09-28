@@ -84,6 +84,31 @@ def test_stored_member_size_slack_cannot_hide_unsigned_bytes(tmp_path: Path) -> 
     assert "ZIP" in result.reason
 
 
+@pytest.mark.parametrize("field,relative_offset,replacement", [
+    ("local-version", 4, b"\xff\xff"),
+    ("local-time", 10, b"\xef\xbe"),
+    ("central-made-by", None, b"\xff\xff"),
+    ("central-internal-attributes", None, b"\xff\xff"),
+])
+def test_unsigned_zip_header_fields_are_rejected(
+    tmp_path: Path, field: str, relative_offset: int | None, replacement: bytes,
+) -> None:
+    raw = bytearray(GOLDEN.read_bytes())
+    directory_offset = int.from_bytes(raw[-6:-2], "little")
+    offset = relative_offset
+    if field == "central-made-by":
+        offset = directory_offset + 4
+    elif field == "central-internal-attributes":
+        offset = directory_offset + 36
+    assert offset is not None
+    raw[offset:offset + 2] = replacement
+    hostile = tmp_path / f"{field}.sentinel"
+    hostile.write_bytes(raw)
+    result = verify_bundle(hostile, trust=_golden_trust(tmp_path))
+    assert result.verdict == "INVALID", (field, result.reason)
+    assert "ZIP" in result.reason
+
+
 def test_committed_golden_bundle_card_and_verifier_agree(tmp_path: Path) -> None:
     with zipfile.ZipFile(GOLDEN) as archive:
         signature = parse_canonical(archive.read("signature.json"))
