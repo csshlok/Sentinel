@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,22 @@ def _classification(path: str, root: Path | None = None) -> str | None:
         except (OSError, UnicodeError):
             pass
     return None
+
+
+def _destination_path(raw: str) -> str | None:
+    """Decode Git's optional C-quoted path and remove its destination prefix."""
+
+    raw = raw.removesuffix("\t")
+    if raw == "/dev/null":
+        return None
+    if raw.startswith('"') and raw.endswith('"'):
+        try:
+            raw = codecs.escape_decode(raw[1:-1].encode("utf-8"))[0].decode("utf-8")
+        except (UnicodeError, ValueError):
+            raise ValueError("Git destination path is not valid UTF-8") from None
+    if not raw.startswith("b/") or any(mark in raw for mark in ("\0", "\n", "\r", "\t")):
+        raise ValueError("Git destination path is unsafe or has an unexpected prefix")
+    return raw[2:]
 
 
 def _parse_patch(patch: str, result: DiffMap, root: Path | None = None) -> None:
@@ -93,16 +110,10 @@ def _parse_patch(patch: str, result: DiffMap, root: Path | None = None) -> None:
             saw_old = True
         elif line.startswith("+++ ") and in_file and saw_old and not saw_new:
             saw_new = True
-            path = line[4:]
-            if path == "/dev/null":
-                path = None
-            elif path.startswith("b/"):
-                path = path[2:]
-            elif path.startswith('"') or "\t" in path:
-                result.error = "Diff contains a path that cannot be mapped safely."
-                return
-            else:
-                result.error = "Diff has an unexpected destination prefix."
+            try:
+                path = _destination_path(line[4:])
+            except ValueError as exc:
+                result.error = str(exc)
                 return
         elif line.startswith("@@"):
             match = _HUNK.match(line)
@@ -151,7 +162,8 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
             return result
         captured = run_git(
             tested.repository_root,
-            ["-c", "color.diff=false", "-c", "diff.interHunkContext=0", "diff",
+            ["-c", "color.diff=false", "-c", "diff.interHunkContext=0",
+             "-c", "core.quotePath=false", "diff",
              "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames",
              "--inter-hunk-context=0", "--no-relative", "--src-prefix=a/",
              "--dst-prefix=b/", "--unified=0", baseline.head_sha, "--"],

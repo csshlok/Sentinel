@@ -63,3 +63,16 @@ def test_diverged_baseline_commit_is_not_a_valid_diff_origin(tmp_path: Path) -> 
     git(root, "commit", "-q", "-m", "main")
     tested = tracker.capture(change_id, "tested", str(root), 1, 1_048_576)
     assert "not proven" in map_diff(baseline=baseline, tested=tested).error
+
+
+def test_spaces_and_unicode_paths_map_to_their_real_new_file(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"a b.py": "value = 1\n", "é.py": "value = 1\n"})
+    tracker = GitStateTracker()
+    change_id = uuid4()
+    baseline = tracker.capture(change_id, "baseline", str(root), 1, 1_048_576)
+    write(root, "a b.py", "value = 2\n")
+    write(root, "é.py", "value = 3\n")
+    tested = tracker.capture(change_id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is None
+    assert mapped.lines == {"a b.py": {1}, "é.py": {1}}
