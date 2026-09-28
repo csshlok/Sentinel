@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+import backend.app.core.router as router_module
 
 from backend.app.contracts.models import DiffCoverageResult, JournalEventType
 from backend.app.core.config import Settings
@@ -164,3 +165,30 @@ def test_v2_issuer_signs_stale_after_repository_moves(tmp_path: Path) -> None:
     finally:
         with CngKey.open(name=key_name) as key:
             key.delete_for_test()
+
+
+def test_passport_http_routes_offload_blocking_signing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = make_repo(tmp_path / "repo", {"README.md": "hello\n"})
+    app = create_app(settings=Settings(database_path=tmp_path / "state.sqlite3"),
+                     credential_store=InMemoryCredentialStore())
+    invoked = []
+
+    async def offload(function):
+        invoked.append(function)
+        raise AppError("TEST_OFFLOAD", "Offloaded", status_code=409)
+
+    monkeypatch.setattr(router_module, "run_in_threadpool", offload)
+    with TestClient(app) as client:
+        client.headers["Authorization"] = f"Bearer {app.state.api_token}"
+        created = client.post("/api/v1/changes", json={
+            "title": "offload", "intent": "test", "repository_path": str(root),
+        })
+        assert created.status_code == 201
+        change_id = created.json()["id"]
+        for suffix in ("issue", "bundle"):
+            response = client.post(f"/api/v1/changes/{change_id}/passport/v2/{suffix}")
+            assert response.status_code == 409
+            assert response.json()["error"]["code"] == "TEST_OFFLOAD"
+    assert len(invoked) == 2

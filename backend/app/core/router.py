@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request, Response, status
+from starlette.concurrency import run_in_threadpool
 
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.service import (
@@ -463,8 +464,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         if await request.body():
             raise AppError("PASSPORT_PAYLOAD_FORBIDDEN",
                            "Passport v2 is issued only from Sentinel's Change records.")
-        service.get(change_id)
-        return PassportV2Issuer(service.repository.database).issue(change_id)
+        def issue() -> PassportV2Issued:
+            service.get(change_id)
+            return PassportV2Issuer(service.repository.database).issue(change_id)
+        return await run_in_threadpool(issue)
 
     @router.post(
         "/changes/{change_id}/passport/v2/bundle",
@@ -476,8 +479,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         if await request.body():
             raise AppError("PASSPORT_PAYLOAD_FORBIDDEN",
                            "Portable Passport is exported only from Sentinel's Change records.")
-        service.get(change_id)
-        artifact = BundleExporter(service.repository.database).export(change_id)
+        def export():
+            service.get(change_id)
+            return BundleExporter(service.repository.database).export(change_id)
+        artifact = await run_in_threadpool(export)
         return Response(
             content=artifact.content,
             media_type="application/vnd.sentinel.passport+zip",
