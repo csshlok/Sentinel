@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.app.assurance.engine import contract_digest
+from backend.app.assurance.diff_map import map_diff
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.service import EvidenceService, merge_diff_coverage_rule
 from backend.app.assurance.store import EvidenceStore
@@ -21,7 +22,24 @@ from backend.app.contracts.models import (
 from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.database import Database
 from backend.app.git.state import GitStateTracker
-from backend.tests.support_kb import make_repo, write
+from backend.tests.support_kb import git, make_repo, write
+
+
+@pytest.mark.parametrize("index_flag", ["--skip-worktree", "--assume-unchanged"])
+def test_index_flags_cannot_hide_changed_source_from_measurement_or_gate(
+    tmp_path: Path, index_flag: str,
+) -> None:
+    evidence, change, baseline = _fixture(tmp_path)
+    EvidenceStore(evidence._store.database).save_diff_coverage(_result(change, baseline, "PASS"))
+    root = Path(change.repository_path)
+    git(root, "update-index", index_flag, "module.py")
+    write(root, "module.py", "value = 1\n\ndef hidden():\n    return 99\n")
+    tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    mapped = map_diff(baseline=baseline, tested=tested)
+    assert mapped.error is not None and "Index hides worktree state" in mapped.error
+    allowed, reason = evidence._diff_coverage_gate(change)
+    assert allowed is False
+    assert reason is not None and "index hides worktree state" in reason
 
 
 def _fixture(tmp_path: Path) -> tuple[EvidenceService, ChangeView, object]:

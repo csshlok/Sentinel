@@ -21,6 +21,24 @@ class DiffMap:
     error: str | None = None
 
 
+def hidden_index_paths(repository_root: str, *, limit: int = 8_388_608) -> list[str]:
+    """List tracked paths whose index flags can hide worktree edits from Git diff."""
+    captured = run_git(repository_root, ["ls-files", "-v", "-z", "--"], limit=limit)
+    if (captured.returncode or captured.incomplete or captured.timed_out
+            or captured.truncated):
+        raise ValueError("Index flag enumeration failed")
+    hidden: list[str] = []
+    for raw in captured.stdout.split(b"\0"):
+        if not raw:
+            continue
+        if len(raw) < 3 or raw[1:2] != b" ":
+            raise ValueError("Malformed index flag record")
+        tag = chr(raw[0])
+        if tag == "S" or tag.islower():
+            hidden.append(raw[2:].decode("utf-8"))
+    return hidden
+
+
 def _classification(path: str, root: Path | None = None) -> str | None:
     lower = "/" + path.lower().replace("\\", "/")
     name = lower.rsplit("/", 1)[-1]
@@ -181,6 +199,14 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         return result
     if baseline.summary.files or baseline.summary.patch_truncated or tested.summary.patch_truncated:
         result.error = "Baseline is not clean or checkpoint patch was truncated."
+        return result
+    try:
+        hidden = hidden_index_paths(tested.repository_root, limit=limit)
+    except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
+        result.error = "Index flags could not be checked."
+        return result
+    if hidden:
+        result.error = "Index hides worktree state: " + ", ".join(hidden[:8]) + "."
         return result
     try:
         ancestry = run_git(

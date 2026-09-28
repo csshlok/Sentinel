@@ -24,6 +24,7 @@ from pydantic import Field
 
 from backend.app.assurance.engine import AssuranceEngine, contract_digest
 from backend.app.assurance.diff_coverage import collect_diff_coverage
+from backend.app.assurance.diff_map import hidden_index_paths
 from backend.app.assurance.models import AssuranceEvaluation
 from backend.app.assurance.store import EvidenceStore
 from backend.app.contracts.models import (
@@ -572,6 +573,12 @@ class EvidenceService:
                 or result.checks_passed is not True or not result.gate_satisfied):
             return False, (f"Required diff coverage is {result.diff_exercised}; "
                            f"NOT_APPLICABLE satisfies policy: {rule.not_applicable_satisfies}.")
+        try:
+            hidden = hidden_index_paths(change.repository_path, limit=self._patch_limit)
+        except (AppError, OSError, RuntimeError, UnicodeError, ValueError):
+            return False, "Required diff coverage index flags could not be checked."
+        if hidden:
+            return False, "Required diff coverage index hides worktree state: " + hidden[0]
         try:
             current = self._git.capture(change.id, "diff-gate", change.repository_path,
                                         self._revision(change), self._patch_limit)
