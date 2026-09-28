@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import os
 from uuid import uuid4
@@ -97,3 +98,26 @@ def test_fingerprint_is_sha256_of_spki() -> None:
                                serialization.PublicFormat.SubjectPublicKeyInfo)
     expected = base64.b32encode(hashlib.sha256(spki).digest()).decode("ascii").rstrip("=")
     assert fingerprint(spki).replace("-", "") == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_existing_exportable_key_is_rejected() -> None:
+    dll = cng._api()
+    provider = ctypes.c_void_p()
+    key = ctypes.c_void_p()
+    name = f"Sentinel disposable test {uuid4()}"
+    assert dll.NCryptOpenStorageProvider(ctypes.byref(provider), cng.SOFTWARE_PROVIDER, 0) == 0
+    try:
+        assert dll.NCryptCreatePersistedKey(provider, ctypes.byref(key),
+                                             "ECDSA_P256", name, 0, 0) == 0
+        policy = cng.wintypes.DWORD(1)
+        assert dll.NCryptSetProperty(key, "Export Policy", ctypes.byref(policy),
+                                      ctypes.sizeof(policy), 0) == 0
+        assert dll.NCryptFinalizeKey(key, 0) == 0
+        with pytest.raises(cng.CngError, match="exportable"):
+            CngKey.open(name=name)
+    finally:
+        if key.value:
+            dll.NCryptDeleteKey(key, 0)
+        if provider.value:
+            dll.NCryptFreeObject(provider)
