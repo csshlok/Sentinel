@@ -207,6 +207,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/assurance/diff-coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Measure Diff Coverage */
+        post: operations["measure_diff_coverage_api_v1_changes__change_id__assurance_diff_coverage_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{change_id}/assurance/facts": {
         parameters: {
             query?: never;
@@ -560,6 +577,40 @@ export interface paths {
         put?: never;
         /** Export Passport */
         post: operations["export_passport_api_v1_changes__change_id__passport_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{change_id}/passport/v2/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Passport V2 Bundle */
+        post: operations["export_passport_v2_bundle_api_v1_changes__change_id__passport_v2_bundle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{change_id}/passport/v2/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue Passport V2 */
+        post: operations["issue_passport_v2_api_v1_changes__change_id__passport_v2_issue_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1534,6 +1585,7 @@ export interface components {
             allowed_provider_operations?: string[];
             /** Authority Ceiling */
             authority_ceiling?: string[];
+            diff_coverage_rule?: components["schemas"]["DiffCoverageRule"] | null;
             /** Expected Outcomes */
             expected_outcomes?: string[];
             /** Forbidden Paths */
@@ -1550,9 +1602,9 @@ export interface components {
             /**
              * Schema Version
              * @default 1
-             * @constant
+             * @enum {integer}
              */
-            schema_version: 1;
+            schema_version: 1 | 2;
         };
         /** ChangeContractUpdateRequest */
         ChangeContractUpdateRequest: {
@@ -1999,6 +2051,197 @@ export interface components {
          * @enum {string}
          */
         DeviationSeverity: "BLOCKING" | "WARNING" | "INFO";
+        /** DiffCoverageFile */
+        DiffCoverageFile: {
+            /** Changed Lines */
+            changed_lines?: number[];
+            /** Excluded By Pragma Lines */
+            excluded_by_pragma_lines?: number[];
+            /** Executable Lines */
+            executable_lines?: number[];
+            /** Executed Lines */
+            executed_lines?: number[];
+            /** Path */
+            path: string;
+            /** Reason */
+            reason?: string | null;
+            /** Uncovered Lines */
+            uncovered_lines?: number[];
+        };
+        /** DiffCoverageRequest */
+        DiffCoverageRequest: {
+            /**
+             * Baseline Checkpoint Id
+             * Format: uuid
+             */
+            baseline_checkpoint_id: string;
+            /** Interpreter Path */
+            interpreter_path?: string | null;
+            rule?: components["schemas"]["DiffCoverageRule"];
+            /** Test Args */
+            test_args?: string[];
+            /**
+             * Tested Checkpoint Id
+             * Format: uuid
+             */
+            tested_checkpoint_id: string;
+        };
+        /** DiffCoverageResult */
+        DiffCoverageResult: {
+            /** Artifact Digest */
+            artifact_digest?: string | null;
+            /**
+             * Artifact Retained
+             * @default false
+             */
+            artifact_retained: boolean;
+            /**
+             * Assertion Quality
+             * @default NOT_MEASURED
+             * @constant
+             */
+            assertion_quality: "NOT_MEASURED";
+            /**
+             * Baseline Checkpoint Id
+             * Format: uuid
+             */
+            baseline_checkpoint_id: string;
+            /**
+             * Caveat
+             * @default executed ≠ verified
+             */
+            caveat: string;
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Changed Executable Lines */
+            changed_executable_lines?: number | null;
+            /** Checks Passed */
+            checks_passed?: boolean | null;
+            /**
+             * Collection Boundary
+             * @default UNCONFINED_IN_PROCESS
+             * @constant
+             */
+            collection_boundary: "UNCONFINED_IN_PROCESS";
+            /**
+             * Collection Caveat
+             * @default Tests and coverage share a process at user authority; agent-authored code can influence coverage data.
+             */
+            collection_caveat: string;
+            /**
+             * Collector Id
+             * @default coverage.py-json-v1
+             * @constant
+             */
+            collector_id: "coverage.py-json-v1";
+            /** Collector Status */
+            collector_status: string;
+            /** Collector Version */
+            collector_version?: string | null;
+            /** Command */
+            command?: string[];
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            completed_at: string;
+            /** Contract Digest */
+            contract_digest: string;
+            /**
+             * Diff Exercised
+             * @enum {string}
+             */
+            diff_exercised: "PASS" | "FAIL" | "UNKNOWN" | "STALE" | "NOT_APPLICABLE";
+            /** Excluded */
+            excluded?: {
+                [key: string]: string;
+            };
+            /** Executed Changed Lines */
+            executed_changed_lines?: number | null;
+            /** Files */
+            files?: components["schemas"]["DiffCoverageFile"][];
+            /**
+             * Freshness
+             * @enum {string}
+             */
+            freshness: "CURRENT" | "STALE" | "UNKNOWN";
+            /** Gate Satisfied */
+            gate_satisfied?: boolean | null;
+            /** Head Sha */
+            head_sha: string;
+            /** Measured Percent */
+            measured_percent?: number | null;
+            /** Policy Version */
+            policy_version?: string | null;
+            /** Reasons */
+            reasons?: string[];
+            /** Run Ids */
+            run_ids?: string[];
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Status Digest */
+            status_digest: string;
+            /**
+             * Tested Checkpoint Id
+             * Format: uuid
+             */
+            tested_checkpoint_id: string;
+            /** Threshold */
+            threshold?: number | null;
+        };
+        /**
+         * DiffCoverageRule
+         * @description Opt-in versioned threshold supplied with a measurement request.
+         */
+        DiffCoverageRule: {
+            /** Interpreter Path */
+            interpreter_path?: string | null;
+            /**
+             * Minimum Percent
+             * @default 0
+             */
+            minimum_percent: number;
+            /**
+             * Not Applicable Satisfies
+             * @default false
+             */
+            not_applicable_satisfies: boolean;
+            /**
+             * Per File
+             * @default false
+             */
+            per_file: boolean;
+            /**
+             * Policy Version
+             * @default diff-coverage-v1
+             */
+            policy_version: string;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /** Test Args */
+            test_args?: string[];
+        };
         /** EnvironmentDrift */
         EnvironmentDrift: {
             /** Added */
@@ -2400,6 +2643,144 @@ export interface components {
          * @enum {string}
          */
         OutcomeStatus: "UNKNOWN" | "PENDING" | "PASSED" | "FAILED" | "CANCELLED" | "UNAVAILABLE";
+        /**
+         * PassportV2DiffClaim
+         * @description Three independent Phase 6 claims, plus the measurement's known limit.
+         */
+        PassportV2DiffClaim: {
+            /** Artifact Digest */
+            artifact_digest?: string | null;
+            /**
+             * Assertion Quality
+             * @default NOT_MEASURED
+             * @constant
+             */
+            assertion_quality: "NOT_MEASURED";
+            /**
+             * Caveat
+             * @default executed ≠ verified
+             */
+            caveat: string;
+            /** Changed Executable Lines */
+            changed_executable_lines?: number | null;
+            /** Checks Passed */
+            checks_passed?: boolean | null;
+            /**
+             * Collection Boundary
+             * @default UNKNOWN
+             */
+            collection_boundary: string;
+            /**
+             * Diff Exercised
+             * @default UNKNOWN
+             * @enum {string}
+             */
+            diff_exercised: "PASS" | "FAIL" | "UNKNOWN" | "STALE" | "NOT_APPLICABLE";
+            /** Executed Changed Lines */
+            executed_changed_lines?: number | null;
+            /**
+             * Freshness
+             * @default UNKNOWN
+             * @enum {string}
+             */
+            freshness: "CURRENT" | "STALE" | "UNKNOWN";
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Measured Percent Text */
+            measured_percent_text?: string | null;
+            /** Status Digest */
+            status_digest?: string | null;
+        };
+        /**
+         * PassportV2Issued
+         * @description Sentinel-issued v2 payload signature; bundle manifests are signed in Phase 8.
+         */
+        PassportV2Issued: {
+            payload: components["schemas"]["PassportV2Payload"];
+            /** Payload Digest */
+            payload_digest: string;
+            /** Signature B64 */
+            signature_b64: string;
+            /** Signer Fingerprint */
+            signer_fingerprint: string;
+            /** Signer Identity */
+            signer_identity: string;
+            /**
+             * Signer Provider
+             * @enum {string}
+             */
+            signer_provider: "TPM" | "SOFTWARE";
+            /** Signer Public Spki B64 */
+            signer_public_spki_b64: string;
+        };
+        /**
+         * PassportV2LaunchBinding
+         * @description Digest of a persisted launch record, without its possibly secret output.
+         */
+        PassportV2LaunchBinding: {
+            /** Record Digest */
+            record_digest: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Status */
+            status: string;
+        };
+        /** PassportV2Payload */
+        PassportV2Payload: {
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Change Revision */
+            change_revision: number;
+            /** Contract Digest */
+            contract_digest?: string | null;
+            diff_coverage?: components["schemas"]["PassportV2DiffClaim"];
+            /**
+             * Execution Boundary
+             * @default UNKNOWN
+             * @constant
+             */
+            execution_boundary: "UNKNOWN";
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /** Journal Event Count */
+            journal_event_count: number;
+            /** Journal Head */
+            journal_head?: string | null;
+            /**
+             * Journal Integrity
+             * @enum {string}
+             */
+            journal_integrity: "PASS" | "UNKNOWN";
+            /** Launch Records */
+            launch_records: components["schemas"]["PassportV2LaunchBinding"][];
+            /** Lifecycle State */
+            lifecycle_state: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Risk Level */
+            risk_level: string;
+            /**
+             * Runs Later
+             * @default UNKNOWN
+             * @constant
+             */
+            runs_later: "UNKNOWN";
+            /**
+             * Schema Version
+             * @default 2
+             * @constant
+             */
+            schema_version: 2;
+        };
         /**
          * PathCategory
          * @enum {string}
@@ -3415,6 +3796,43 @@ export interface operations {
             };
         };
     };
+    measure_diff_coverage_api_v1_changes__change_id__assurance_diff_coverage_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiffCoverageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffCoverageResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_assurance_facts_api_v1_changes__change_id__assurance_facts_get: {
         parameters: {
             query?: never;
@@ -4196,6 +4614,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SignedPassportExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_passport_v2_bundle_api_v1_changes__change_id__passport_v2_bundle_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.sentinel.passport+zip": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_passport_v2_api_v1_changes__change_id__passport_v2_issue_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassportV2Issued"];
                 };
             };
             /** @description Validation Error */
