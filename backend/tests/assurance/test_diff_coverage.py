@@ -167,6 +167,24 @@ def test_pytest_does_not_create_cache_files_in_unignored_repository(tmp_path: Pa
     assert not (root / "__pycache__").exists()
 
 
+def test_deletion_only_file_does_not_require_coverage_record(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        "unused.py": "value = 1\nremoved = 2\n",
+        "tests/test_trivial.py": "def test_trivial():\n    assert True\n",
+    })
+    change = ChangeView(id=uuid4(), title="delete", intent="measure", repository_path=str(root),
+                        created_at=utc_now(), updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "unused.py", "value = 1\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    assert map_diff(baseline=baseline, tested=tested).lines == {}
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "NOT_APPLICABLE"
+
+
 def test_committed_staged_unstaged_and_classified_files(tmp_path: Path) -> None:
     root, change, baseline, tested = _case(tmp_path)
     git(root, "add", "module.py")
