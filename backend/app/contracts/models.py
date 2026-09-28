@@ -1144,6 +1144,12 @@ class DiffCoverageRule(ContractModel):
     per_file: bool = False
     policy_version: ShortText = "diff-coverage-v1"
 
+    @model_validator(mode="after")
+    def required_threshold_is_positive(self) -> DiffCoverageRule:
+        if self.required and self.minimum_percent <= 0:
+            raise ValueError("required diff coverage needs minimum_percent > 0")
+        return self
+
 
 class DiffCoverageRequest(ContractModel):
     baseline_checkpoint_id: UUID

@@ -43,7 +43,7 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
             "tested_checkpoint_id": tested.json()["checkpoint"]["id"],
             "interpreter_path": sys.executable,
             "test_args": ["-q"],
-            "rule": {"required": True, "minimum_percent": 0},
+            "rule": {"required": True, "minimum_percent": 1},
         })
         assert measured.status_code == 200, measured.text
         body = measured.json()

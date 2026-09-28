@@ -55,8 +55,15 @@ def _result(change: ChangeView, checkpoint: object, state: str) -> DiffCoverageR
 
 def test_rule_requires_contract_v2() -> None:
     with pytest.raises(ValidationError, match="requires Change Contract schema version 2"):
-        ChangeContract(diff_coverage_rule=DiffCoverageRule(required=True))
-    assert ChangeContract(schema_version=2, diff_coverage_rule=DiffCoverageRule(required=True))
+        ChangeContract(diff_coverage_rule=DiffCoverageRule(required=True, minimum_percent=1))
+    assert ChangeContract(schema_version=2, diff_coverage_rule=DiffCoverageRule(required=True, minimum_percent=1))
+
+
+def test_required_zero_threshold_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="minimum_percent > 0"):
+        DiffCoverageRule(required=True)
+    with pytest.raises(ValidationError, match="minimum_percent > 0"):
+        DiffCoverageRule(required=True, minimum_percent=0)
 
 
 def test_v1_contract_digest_remains_compatible(tmp_path: Path) -> None:
