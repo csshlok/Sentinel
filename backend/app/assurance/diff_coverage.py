@@ -37,12 +37,12 @@ def _trusted_interpreter_path(raw: str, root: Path) -> bool:
         resolved = path.resolve(strict=True)
         if not resolved.is_file():
             return False
-        relative = resolved.relative_to(root.resolve())
+        resolved.relative_to(root.resolve())
     except ValueError:
         return True  # trusted local Python outside the agent-writable repository
     except OSError:
         return False
-    return bool(relative.parts and relative.parts[0].lower() == ".venv")
+    return False
 
 
 def _report_path(root: Path, raw: str) -> str | None:
@@ -174,6 +174,11 @@ def collect_diff_coverage(
         diff_exercised="UNKNOWN", freshness="UNKNOWN",
         threshold=request.rule.minimum_percent or 100.0,
         policy_version=request.rule.policy_version,
+        collection_caveat=(
+            "Tests and coverage share a process at user authority; agent-authored code can "
+            "influence coverage data. The external Python interpreter is trusted by path, "
+            "not by a verified publisher or binary digest."
+        ),
         gate_satisfied=False if request.rule.required else None,
         reasons=["Measurement did not complete."],
     )

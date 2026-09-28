@@ -8,7 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from backend.app.assurance.diff_coverage import collect_diff_coverage, evaluate_report
+from backend.app.assurance.diff_coverage import (
+    _trusted_interpreter_path, collect_diff_coverage, evaluate_report,
+)
 from backend.app.assurance.diff_map import map_diff
 from backend.app.contracts.models import (
     ChangeView, DiffCoverageRequest, DiffCoverageRule, DiffCoverageResult, ReviewState, utc_now,
@@ -214,6 +216,14 @@ def test_wrong_commit_and_required_unknown_fail_closed(tmp_path: Path) -> None:
                                    request=_request(baseline, tested, required=True))
     assert result.diff_exercised == "STALE"
     assert result.gate_satisfied is False
+
+
+def test_repository_venv_executable_is_not_trusted(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    binary = root / ".venv" / "Scripts" / "python.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"agent-chosen executable")
+    assert not _trusted_interpreter_path(str(binary), root)
 
 
 def test_test_run_mutation_is_stale(tmp_path: Path) -> None:
