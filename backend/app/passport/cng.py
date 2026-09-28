@@ -124,10 +124,18 @@ class CngKey:
         if not name or len(name) > 200 or "\\" in name or "/" in name:
             raise ValueError("Invalid CNG key name")
         with _creation_mutex(name):
-            return cls._open_unlocked(name=name)
+            return cls._open_unlocked(name=name, create_if_missing=True)
 
     @classmethod
-    def _open_unlocked(cls, *, name: str) -> CngKey:
+    def open_existing(cls, *, name: str) -> CngKey:
+        """Open a selected identity without ever creating a replacement."""
+        if not name or len(name) > 200 or "\\" in name or "/" in name:
+            raise ValueError("Invalid CNG key name")
+        with _creation_mutex(name):
+            return cls._open_unlocked(name=name, create_if_missing=False)
+
+    @classmethod
+    def _open_unlocked(cls, *, name: str, create_if_missing: bool = True) -> CngKey:
         dll = _api()
         providers: list[tuple[str, ctypes.c_void_p]] = []
         platform_open_error: int | None = None
@@ -174,6 +182,8 @@ class CngKey:
                     return chosen
                 if status & 0xFFFFFFFF != _BAD_KEYSET:
                     _checked("NCryptOpenKey", status)
+            if not create_if_missing:
+                raise OSError("Selected CNG signing identity does not exist")
             # Platform creation can fail on machines with no usable TPM. Software is
             # the only fallback; never replace an existing key after an open error.
             for label, handle in providers:

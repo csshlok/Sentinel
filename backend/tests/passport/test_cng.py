@@ -123,14 +123,14 @@ def test_first_use_key_open_is_serialized_across_threads(monkeypatch: pytest.Mon
     identities: list[bytes] = []
     errors: list[Exception] = []
 
-    def observed(cls, *, name: str):
+    def observed(cls, *, name: str, create_if_missing: bool = True):
         nonlocal active, peak
         with guard:
             active += 1
             peak = max(peak, active)
         try:
             time.sleep(0.15)
-            return original(cls, name=name)
+            return original(cls, name=name, create_if_missing=create_if_missing)
         finally:
             with guard:
                 active -= 1

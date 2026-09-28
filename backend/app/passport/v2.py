@@ -22,7 +22,7 @@ from backend.app.core.journal import compute_event_hash
 from backend.app.git.state import GitStateTracker
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
-from backend.app.passport.identity import active_key_name
+from backend.app.passport.identity import open_signing_key
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
@@ -242,7 +242,7 @@ class PassportV2Issuer:
     def issue(self, change_id: UUID) -> PassportV2Issued:
         """No payload argument exists: CNG signs only this freshly built snapshot."""
         source_payload = self.snapshot(change_id)
-        with CngKey.open(name=self._key_name or active_key_name()) as key:
+        with (CngKey.open(name=self._key_name) if self._key_name else open_signing_key()) as key:
             payload = self._with_provider(source_payload, key.provider)
             message = canonical_payload(payload)
             spki = key.public_spki()
