@@ -132,6 +132,8 @@ def test_v1_contract_digest_remains_compatible(tmp_path: Path) -> None:
     old = change.model_copy(update={"contract": ChangeContract()})
     body = old.contract.model_dump(mode="json")
     body.pop("diff_coverage_rule")
+    body.pop("policy_preset_name")
+    body.pop("policy_change_type")
     expected = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert contract_digest(old) == expected
 
