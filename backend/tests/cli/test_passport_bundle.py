@@ -28,7 +28,13 @@ from backend.app.passport.jcs import parse_canonical
 from backend.app.passport.trust import TrustRegistry
 from backend.app.providers.http_transport import HttpResponse
 from backend.tests.passport.test_builder import _database, _seed_change
+from backend.tests.passport.hosted_cng import configure_hosted_software_key_tests
 from backend.tests.support_kb import make_repo
+
+
+@pytest.fixture(autouse=True)
+def _hosted_software_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure_hosted_software_key_tests(monkeypatch)
 
 
 @pytest.mark.parametrize("tail", [["--key"], ["--bogus"]])

@@ -47,6 +47,6 @@ python -m pytest -q
 sentinel --version
 ```
 
-The [Windows CI workflow](.github/workflows/ci.yml) runs the default Python suite on pushes and pull requests. Real AppContainer tests require Windows facilities and a usable Node executable; hosted-runner coverage of that boundary has not yet been demonstrated. Live GitHub tests are opt-in. See [SECURITY.md](SECURITY.md) for reporting and trust limits.
+The [Windows CI workflow](.github/workflows/ci.yml) runs the default Python suite on pushes and pull requests. Real AppContainer tests require Windows facilities and a usable Node executable; hosted-runner coverage of that boundary has not yet been demonstrated. Hosted runners without a usable TPM exercise disposable software-provider test keys, while production signing continues to fail closed on ambiguous TPM readiness errors. Live GitHub tests are opt-in. See [SECURITY.md](SECURITY.md) for reporting and trust limits.
 
 No license has been selected yet. Contact the repository owner before reusing or distributing this code.

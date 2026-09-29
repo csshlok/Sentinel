@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from backend.app.passport.cng import CngKey, fingerprint, verify_signature
 import backend.app.passport.cng as cng
+from backend.tests.passport.hosted_cng import platform_device_not_ready
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
@@ -86,6 +87,8 @@ def test_platform_outage_cannot_switch_an_existing_identity(
 def test_transient_platform_creation_failure_does_not_create_software_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if platform_device_not_ready():
+        pytest.skip("Hosted runner cannot open the Platform KSP for creation testing")
     real_dll = cng._api()
     attempted: list[str] = []
 
