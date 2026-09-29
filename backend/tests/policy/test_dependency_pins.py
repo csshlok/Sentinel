@@ -12,6 +12,8 @@ from packaging.requirements import Requirement
 def test_runtime_and_test_dependencies_are_exactly_pinned() -> None:
     root = Path(__file__).resolve().parents[3]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    build_requirements = project["build-system"]["requires"]
+    assert build_requirements == ["setuptools==84.0.0"]
     groups = [project["project"]["dependencies"]]
     groups.extend(project["project"]["optional-dependencies"].values())
     for group in groups:
