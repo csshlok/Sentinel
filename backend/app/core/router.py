@@ -38,6 +38,7 @@ from backend.app.contracts.models import (
     GitHubAppConfigurationStatus,
     GitHubAppFlowRequest,
     GitHubAppFlowResult,
+    GitHubCheckPublicationResult,
     CapabilitiesResponse,
     ChangeCancelRequest,
     ChangeContractUpdateRequest,
@@ -82,6 +83,8 @@ from backend.app.core.errors import AppError
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.passport.bundle import BundleExporter
 from backend.app.providers.github_app import GitHubAppManifestFlows, app_provider_name
+from backend.app.providers.github_check import GitHubCheckPublisher
+from backend.app.providers.http_transport import UrllibHttpTransport
 
 
 IdempotencyHeader = Annotated[
@@ -364,6 +367,30 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         return GitHubAppConfigurationStatus(
             owner=owner, configured=runtime.credentials.is_configured(provider),
         )
+
+    @router.post(
+        "/changes/{change_id}/providers/github/checks",
+        response_model=GitHubCheckPublicationResult,
+        tags=["providers"],
+    )
+    async def publish_github_check(change_id: UUID, request: Request) -> GitHubCheckPublicationResult:
+        if await request.body():
+            raise AppError("GITHUB_CHECK_PAYLOAD_FORBIDDEN",
+                           "GitHub Checks are built only from Sentinel's Change records.",
+                           status_code=422)
+        def publish() -> GitHubCheckPublicationResult:
+            service.get(change_id)
+            try:
+                view = GitHubCheckPublisher(
+                    service.repository.database, runtime.credentials.broker,
+                    UrllibHttpTransport(),
+                ).publish(change_id)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise AppError("GITHUB_CHECK_UNAVAILABLE",
+                               "GitHub Check could not be published from current evidence.",
+                               status_code=409) from exc
+            return GitHubCheckPublicationResult.model_validate(asdict(view))
+        return await run_in_threadpool(publish)
 
     @router.post(
         "/changes/{change_id}/providers/github/grants",

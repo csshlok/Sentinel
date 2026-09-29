@@ -3468,6 +3468,184 @@
         "title": "GitHubAppFlowResult",
         "type": "object"
       },
+      "GitHubCheckPublicationResult": {
+        "additionalProperties": false,
+        "description": "A Check on the observed PR head, or an App installation prompt.",
+        "properties": {
+          "check_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Url"
+          },
+          "checks_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checks Passed"
+          },
+          "diff_exercised": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNKNOWN",
+                  "STALE",
+                  "NOT_APPLICABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Exercised"
+          },
+          "execution_boundary": {
+            "anyOf": [
+              {
+                "const": "UNKNOWN",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Boundary"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "enum": [
+                  "CURRENT",
+                  "STALE",
+                  "UNKNOWN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
+          "installation_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Installation Url"
+          },
+          "payload_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Digest"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "presentation": {
+            "const": "CHECK_RUN",
+            "default": "CHECK_RUN",
+            "title": "Presentation",
+            "type": "string"
+          },
+          "repository": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository"
+          },
+          "signed_freshness": {
+            "anyOf": [
+              {
+                "enum": [
+                  "CURRENT",
+                  "STALE",
+                  "UNKNOWN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signed Freshness"
+          },
+          "signer_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signer Fingerprint"
+          },
+          "state": {
+            "enum": [
+              "PUBLISHED",
+              "GITHUB_APP_NOT_INSTALLED"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "GitHubCheckPublicationResult",
+        "type": "object"
+      },
       "GitSummary": {
         "additionalProperties": false,
         "properties": {
@@ -8301,6 +8479,65 @@
         "summary": "Issue Passport V2",
         "tags": [
           "passport"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/providers/github/checks": {
+      "post": {
+        "operationId": "publish_github_check_api_v1_changes__change_id__providers_github_checks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubCheckPublicationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Github Check",
+        "tags": [
+          "providers"
         ]
       }
     },

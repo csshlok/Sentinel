@@ -1299,3 +1299,22 @@ class GitHubAppFlowResult(ContractModel):
 class GitHubAppConfigurationStatus(ContractModel):
     owner: str
     configured: bool
+
+
+class GitHubCheckPublicationResult(ContractModel):
+    """A Check on the observed PR head, or an App installation prompt."""
+
+    state: Literal["PUBLISHED", "GITHUB_APP_NOT_INSTALLED"]
+    presentation: Literal["CHECK_RUN"] = "CHECK_RUN"
+    installation_url: str | None = None
+    repository: str | None = None
+    pr_number: int | None = Field(default=None, ge=1)
+    head_sha: GitSha | None = None
+    check_url: str | None = None
+    payload_digest: Digest | None = None
+    signer_fingerprint: str | None = None
+    checks_passed: bool | None = None
+    diff_exercised: Literal["PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"] | None = None
+    freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
+    signed_freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
+    execution_boundary: Literal["UNKNOWN"] | None = None

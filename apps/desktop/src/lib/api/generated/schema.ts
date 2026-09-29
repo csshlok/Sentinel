@@ -617,6 +617,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/providers/github/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Github Check */
+        post: operations["publish_github_check_api_v1_changes__change_id__providers_github_checks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{change_id}/providers/github/grants": {
         parameters: {
             query?: never;
@@ -2520,6 +2537,47 @@ export interface components {
              * @enum {string}
              */
             status: "PENDING" | "COMPLETE" | "FAILED" | "EXPIRED";
+        };
+        /**
+         * GitHubCheckPublicationResult
+         * @description A Check on the observed PR head, or an App installation prompt.
+         */
+        GitHubCheckPublicationResult: {
+            /** Check Url */
+            check_url?: string | null;
+            /** Checks Passed */
+            checks_passed?: boolean | null;
+            /** Diff Exercised */
+            diff_exercised?: ("PASS" | "FAIL" | "UNKNOWN" | "STALE" | "NOT_APPLICABLE") | null;
+            /** Execution Boundary */
+            execution_boundary?: "UNKNOWN" | null;
+            /** Freshness */
+            freshness?: ("CURRENT" | "STALE" | "UNKNOWN") | null;
+            /** Head Sha */
+            head_sha?: string | null;
+            /** Installation Url */
+            installation_url?: string | null;
+            /** Payload Digest */
+            payload_digest?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /**
+             * Presentation
+             * @default CHECK_RUN
+             * @constant
+             */
+            presentation: "CHECK_RUN";
+            /** Repository */
+            repository?: string | null;
+            /** Signed Freshness */
+            signed_freshness?: ("CURRENT" | "STALE" | "UNKNOWN") | null;
+            /** Signer Fingerprint */
+            signer_fingerprint?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "PUBLISHED" | "GITHUB_APP_NOT_INSTALLED";
         };
         /** GitSummary */
         GitSummary: {
@@ -4771,6 +4829,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PassportV2Issued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_github_check_api_v1_changes__change_id__providers_github_checks_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubCheckPublicationResult"];
                 };
             };
             /** @description Validation Error */
