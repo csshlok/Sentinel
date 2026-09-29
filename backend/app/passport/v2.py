@@ -9,6 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from backend.app.contracts.models import (
+    ChangeContract,
     DiffCoverageResult,
     PassportV2DiffClaim,
     PassportV2Issued,
@@ -127,7 +128,22 @@ class PassportV2Issuer:
             except (ValueError, TypeError) as exc:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch record is malformed.",
                                status_code=409) from exc
-        diff_claim, diff_limit = self._coverage_claim(coverage)
+        contract_raw = change["contract_json"]
+        if isinstance(contract_raw, str) and len(contract_raw.encode("utf-8")) > _MAX_RECORD_BYTES:
+            raise AppError("PASSPORT_CONTRACT_INVALID", "Change Contract is oversized.",
+                           status_code=409)
+        try:
+            contract = (ChangeContract.model_validate_json(contract_raw)
+                        if isinstance(contract_raw, str) else ChangeContract())
+        except (ValueError, RecursionError) as exc:
+            raise AppError("PASSPORT_CONTRACT_INVALID", "Change Contract is malformed.",
+                           status_code=409) from exc
+        comparable = contract.model_dump(mode="json")
+        if contract.schema_version == 1:
+            comparable.pop("diff_coverage_rule", None)
+        coverage_contract_digest = hashlib.sha256(json.dumps(
+            comparable, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        diff_claim, diff_limit = self._coverage_claim(coverage, coverage_contract_digest)
         limitations = [
             "Execution boundary evidence is not yet structured; UNKNOWN.",
             "Execution-bearing files that run later are not measured; UNKNOWN.",
@@ -140,10 +156,6 @@ class PassportV2Issuer:
             limitations.append("No launch records exist for this Change.")
         if diff_limit:
             limitations.append(diff_limit)
-        contract_raw = change["contract_json"]
-        if isinstance(contract_raw, str) and len(contract_raw.encode("utf-8")) > _MAX_RECORD_BYTES:
-            raise AppError("PASSPORT_CONTRACT_INVALID", "Change Contract is oversized.",
-                           status_code=409)
         contract_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
                            if isinstance(contract_raw, str) else None)
         payload = PassportV2Payload(
@@ -217,7 +229,8 @@ class PassportV2Issuer:
         return previous
 
     @staticmethod
-    def _coverage_claim(row: object | None) -> tuple[PassportV2DiffClaim, str | None]:
+    def _coverage_claim(row: object | None,
+                        expected_contract_digest: str) -> tuple[PassportV2DiffClaim, str | None]:
         if row is None:
             return PassportV2DiffClaim(), "No diff coverage measurement exists."
         raw = row["payload_json"]
@@ -227,9 +240,11 @@ class PassportV2Issuer:
             result = DiffCoverageResult.model_validate_json(raw)
         except (ValueError, RecursionError):
             return PassportV2DiffClaim(), "Diff coverage measurement is malformed."
+        changed_contract = result.contract_digest != expected_contract_digest
         return PassportV2DiffClaim(
-            checks_passed=result.checks_passed, diff_exercised=result.diff_exercised,
-            freshness=result.freshness,
+            checks_passed=result.checks_passed,
+            diff_exercised="STALE" if changed_contract else result.diff_exercised,
+            freshness="STALE" if changed_contract else result.freshness,
             changed_executable_lines=result.changed_executable_lines,
             executed_changed_lines=result.executed_changed_lines,
             measured_percent_text=(format(result.measured_percent, ".6g")
@@ -237,7 +252,8 @@ class PassportV2Issuer:
             head_sha=result.head_sha, status_digest=result.status_digest,
             artifact_digest=result.artifact_digest,
             collection_boundary=result.collection_boundary,
-        ), None
+        ), ("Change Contract changed after diff coverage measurement."
+            if changed_contract else None)
 
     def issue(self, change_id: UUID) -> PassportV2Issued:
         """No payload argument exists: CNG signs only this freshly built snapshot."""

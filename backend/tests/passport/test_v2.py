@@ -14,8 +14,10 @@ from fastapi.testclient import TestClient
 import backend.app.core.router as router_module
 
 from backend.app.contracts.models import (
-    AgentAttachRequest, AgentLaunchRequest, AgentRun, DiffCoverageResult, JournalEventType,
+    AgentAttachRequest, AgentLaunchRequest, AgentRun, ChangeContract, DiffCoverageResult,
+    JournalEventType,
 )
+from backend.app.assurance.engine import contract_digest
 from backend.app.core.config import Settings
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
@@ -228,6 +230,35 @@ def test_v2_issuer_signs_stale_after_repository_moves(tmp_path: Path) -> None:
     finally:
         with CngKey.open(name=key_name) as key:
             key.delete_for_test()
+
+
+def test_policy_change_stales_coverage_before_passport_snapshot(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "VALUE = 1\n"})
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    with database.connection() as connection:
+        connection.execute("UPDATE changes SET repository_path = ? WHERE id = ?",
+                           (str(root), str(change.id)))
+    captured = GitStateTracker().capture(change.id, "measured", str(root), 1, 1_048_576)
+    now = datetime.now(UTC)
+    EvidenceStore(database).save_diff_coverage(DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=uuid4(), tested_checkpoint_id=uuid4(),
+        head_sha=captured.head_sha, status_digest=captured.status_digest,
+        contract_digest=contract_digest(change), started_at=now, completed_at=now,
+        collector_status="COLLECTED", checks_passed=True, diff_exercised="PASS",
+        freshness="CURRENT", changed_executable_lines=1, executed_changed_lines=1,
+        measured_percent=100,
+    ))
+    before = PassportV2Issuer(database).snapshot(change.id)
+    assert before.diff_coverage.freshness == "CURRENT"
+    changed = ChangeContract(allowed_paths=["src/**"])
+    with database.connection() as connection:
+        connection.execute("UPDATE changes SET contract_json = ?, revision = revision + 1 "
+                           "WHERE id = ?", (changed.model_dump_json(), str(change.id)))
+    after = PassportV2Issuer(database).snapshot(change.id)
+    assert after.diff_coverage.freshness == "STALE"
+    assert after.diff_coverage.diff_exercised == "STALE"
+    assert any("Contract changed" in reason for reason in after.limitations)
 
 
 def test_passport_http_routes_offload_blocking_signing(
