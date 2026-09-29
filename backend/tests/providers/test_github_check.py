@@ -126,6 +126,7 @@ def _publisher_fixture(tmp_path, queue, *, now: datetime,
     )
     ProviderOperationRepository(database).create(operation)
     _, broker, transport, _ = _setup(queue, now=now)
+    broker.store_provider_secret("github", "PAT-CANARY")
 
     def export(change_id):
         claims = PassportV2Issuer(database).snapshot(change_id)
@@ -238,3 +239,37 @@ def test_change_without_recorded_pr_cannot_publish(tmp_path) -> None:
     with pytest.raises(ValueError, match="no recorded GitHub pull request"):
         publisher.publish(change.id)
     assert not transport.calls
+
+
+def test_declined_app_uses_lesser_statuses_with_all_claims(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    queue = [json_response(200, {"head": {"sha": "a" * 40}}),
+             json_response(200, {"head": {"sha": "a" * 40}})]
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
+    publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
+    result = publisher.publish(change.id, decline_app=True)
+    assert result.state == "PUBLISHED"
+    assert result.presentation == "COMMIT_STATUS_LESSER"
+    assert len(transport.calls) == 7
+    statuses = transport.calls[2:]
+    assert all(call["url"].endswith("/statuses/" + "a" * 40) for call in statuses)
+    bodies = [json.loads(call["body"]) for call in statuses]
+    assert all(body["state"] == "error" for body in bodies)  # UNKNOWN boundary.
+    joined = " ".join(body["description"] for body in bodies)
+    for expected in ("checks PASS", "diff PASS", "freshness CURRENT", "boundary UNKNOWN",
+                     "payload SHA-256 " + "b" * 64, "signer ABCDEF", "sentinel verify"):
+        assert expected in joined
+    assert all(len(body["description"]) <= 140 for body in bodies)
+    assert "PAT-CANARY" not in joined
+
+
+def test_declined_app_stale_status_never_succeeds(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    queue = [json_response(200, {"head": {"sha": "c" * 40}}),
+             json_response(200, {"head": {"sha": "c" * 40}})]
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
+    publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
+    result = publisher.publish(change.id, decline_app=True)
+    assert result.head_sha == "c" * 40 and result.freshness == "STALE"
+    assert all(json.loads(call["body"])["state"] == "error"
+               for call in transport.calls[2:])

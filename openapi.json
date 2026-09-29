@@ -3588,8 +3588,11 @@
             "title": "Pr Number"
           },
           "presentation": {
-            "const": "CHECK_RUN",
             "default": "CHECK_RUN",
+            "enum": [
+              "CHECK_RUN",
+              "COMMIT_STATUS_LESSER"
+            ],
             "title": "Presentation",
             "type": "string"
           },
@@ -8494,6 +8497,16 @@
               "format": "uuid",
               "title": "Change Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "decline_app",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Decline App",
+              "type": "boolean"
             }
           },
           {

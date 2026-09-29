@@ -373,7 +373,8 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
         response_model=GitHubCheckPublicationResult,
         tags=["providers"],
     )
-    async def publish_github_check(change_id: UUID, request: Request) -> GitHubCheckPublicationResult:
+    async def publish_github_check(change_id: UUID, request: Request,
+                                   decline_app: bool = False) -> GitHubCheckPublicationResult:
         if await request.body():
             raise AppError("GITHUB_CHECK_PAYLOAD_FORBIDDEN",
                            "GitHub Checks are built only from Sentinel's Change records.",
@@ -384,7 +385,7 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
                 view = GitHubCheckPublisher(
                     service.repository.database, runtime.credentials.broker,
                     UrllibHttpTransport(),
-                ).publish(change_id)
+                ).publish(change_id, decline_app=decline_app)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise AppError("GITHUB_CHECK_UNAVAILABLE",
                                "GitHub Check could not be published from current evidence.",

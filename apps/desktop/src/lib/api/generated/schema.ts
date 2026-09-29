@@ -2564,9 +2564,9 @@ export interface components {
             /**
              * Presentation
              * @default CHECK_RUN
-             * @constant
+             * @enum {string}
              */
-            presentation: "CHECK_RUN";
+            presentation: "CHECK_RUN" | "COMMIT_STATUS_LESSER";
             /** Repository */
             repository?: string | null;
             /** Signed Freshness */
@@ -4844,7 +4844,9 @@ export interface operations {
     };
     publish_github_check_api_v1_changes__change_id__providers_github_checks_post: {
         parameters: {
-            query?: never;
+            query?: {
+                decline_app?: boolean;
+            };
             header?: {
                 Authorization?: string | null;
             };

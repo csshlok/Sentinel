@@ -28,6 +28,11 @@ def test_github_check_cli_posts_change_id_without_claim_payload(monkeypatch) -> 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["state"] == "GITHUB_APP_NOT_INSTALLED"
     assert calls == [("POST", f"/api/v1/changes/{change_id}/providers/github/checks", {})]
+    lesser = CliRunner().invoke(app, ["github", "check", str(change_id),
+                                      "--decline-app", "--json"])
+    assert lesser.exit_code == 0
+    assert calls[-1] == (
+        "POST", f"/api/v1/changes/{change_id}/providers/github/checks?decline_app=true", {})
 
 
 def test_github_app_cli_create_and_status_are_owner_scoped(monkeypatch) -> None:

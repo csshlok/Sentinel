@@ -1305,7 +1305,7 @@ class GitHubCheckPublicationResult(ContractModel):
     """A Check on the observed PR head, or an App installation prompt."""
 
     state: Literal["PUBLISHED", "GITHUB_APP_NOT_INSTALLED"]
-    presentation: Literal["CHECK_RUN"] = "CHECK_RUN"
+    presentation: Literal["CHECK_RUN", "COMMIT_STATUS_LESSER"] = "CHECK_RUN"
     installation_url: str | None = None
     repository: str | None = None
     pr_number: int | None = Field(default=None, ge=1)

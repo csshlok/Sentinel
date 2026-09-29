@@ -25,7 +25,7 @@ def test_check_api_forbids_caller_payload_and_preserves_typed_install_prompt(
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        def publish(self, change_id):
+        def publish(self, change_id, *, decline_app=False):
             return CheckPublication(
                 "GITHUB_APP_NOT_INSTALLED",
                 installation_url="https://github.com/apps/sentinel-lab/installations/new",
@@ -53,7 +53,7 @@ def test_check_api_errors_do_not_reflect_provider_secrets(tmp_path, monkeypatch)
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        def publish(self, change_id):
+        def publish(self, change_id, *, decline_app=False):
             raise ValueError("PRIVATE KEY CANARY")
 
     monkeypatch.setattr("backend.app.core.router.GitHubCheckPublisher", FailingPublisher)

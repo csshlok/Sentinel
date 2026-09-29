@@ -186,7 +186,7 @@ class GitHubAppClient:
 @dataclass(frozen=True, slots=True)
 class CheckPublication:
     state: Literal["PUBLISHED", "GITHUB_APP_NOT_INSTALLED"]
-    presentation: Literal["CHECK_RUN"] = "CHECK_RUN"
+    presentation: Literal["CHECK_RUN", "COMMIT_STATUS_LESSER"] = "CHECK_RUN"
     installation_url: str | None = None
     repository: str | None = None
     pr_number: int | None = None
@@ -209,8 +209,20 @@ class GitHubCheckPublisher:
                  bundle_export: Callable[[UUID], BundleArtifact] | None = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._database = database
+        self._broker = broker
         self._client = GitHubAppClient(broker, transport, clock=clock)
         self._export = bundle_export or BundleExporter(database).export
+
+    def _pat_token(self, change_id: UUID, actor_id: UUID) -> str:
+        scope = "github.status.publish"
+        grant = self._broker.issue_grant(actor_id, change_id, [scope], 30)
+        try:
+            token = self._broker.resolve_secret(grant.id, scope=scope)
+        finally:
+            self._broker.revoke(grant.id)
+        if not isinstance(token, str) or not token or len(token) > 4096:
+            raise ValueError("GitHub token is invalid")
+        return token
 
     def _live_pr_head(self, repository: str, number: int, token: str) -> str:
         _, pr = self._client._request(
@@ -221,7 +233,7 @@ class GitHubCheckPublisher:
             raise ValueError("GitHub pull request head is malformed")
         return sha
 
-    def publish(self, change_id: UUID) -> CheckPublication:
+    def publish(self, change_id: UUID, *, decline_app: bool = False) -> CheckPublication:
         with self._database.connection() as connection:
             change = connection.execute("SELECT id FROM changes WHERE id = ?",
                                         (str(change_id),)).fetchone()
@@ -238,13 +250,16 @@ class GitHubCheckPublisher:
                 or not isinstance(original_head, str) or not _SHA.fullmatch(original_head)):
             raise ValueError("Recorded pull request is malformed")
         owner, _ = self._client._repository(repository)
-        installation, token = self._client.installation_token(
-            owner=owner, repository=repository, actor_id=operation.request.actor_id,
-            change_id=change_id)
-        if token is None:
-            return CheckPublication("GITHUB_APP_NOT_INSTALLED",
-                                    installation_url=installation.installation_url,
-                                    repository=repository, pr_number=number)
+        if decline_app:
+            token = self._pat_token(change_id, operation.request.actor_id)
+        else:
+            installation, token = self._client.installation_token(
+                owner=owner, repository=repository, actor_id=operation.request.actor_id,
+                change_id=change_id)
+            if token is None:
+                return CheckPublication("GITHUB_APP_NOT_INSTALLED",
+                                        installation_url=installation.installation_url,
+                                        repository=repository, pr_number=number)
         first_sha = self._live_pr_head(repository, number, token)
 
         artifact = self._export(change_id)
@@ -298,17 +313,40 @@ class GitHubCheckPublisher:
         body = {"name": "Sentinel Passport v2", "head_sha": sha,
                 "status": "completed", "conclusion": conclusion,
                 "output": {"title": f"Sentinel: {freshness}", "summary": summary}}
-        _, check = self._client._request(
-            "POST", f"/repos/{repository}/check-runs", token, body=body)
-        check_id = check.get("id")
-        check_sha = check.get("head_sha")
-        if type(check_id) is not int or check_id <= 0 or check_sha != sha:
-            raise ValueError("GitHub Check response differs from requested PR head")
-        url = check.get("html_url")
-        if not isinstance(url, str) or not url.startswith("https://github.com/"):
+        if decline_app:
+            status_state = ("failure" if conclusion == "failure" else
+                            "success" if conclusion == "success" else "error")
+            descriptions = {
+                "claims": f"Commit status (lesser): checks {checks_text}; diff {diff.diff_exercised}; freshness {freshness}",
+                "boundary": ("Commit status (lesser): boundary "
+                             f"{claims.execution_boundary}; signed freshness {signed_freshness}"),
+                "payload": f"Commit status (lesser): payload SHA-256 {artifact.payload_sha256}",
+                "signer": f"Commit status (lesser): signer {artifact.signer_fingerprint}",
+                "verify-lesser": verify_command,
+            }
+            if any(len(value) > 140 for value in descriptions.values()):
+                raise ValueError("Signed claims exceed GitHub commit status limit")
+            for context, description in descriptions.items():
+                _, status_result = self._client._request(
+                    "POST", f"/repos/{repository}/statuses/{sha}", token,
+                    body={"state": status_state, "context": f"sentinel/passport/{context}",
+                          "description": description})
+                if type(status_result.get("id")) is not int or status_result["id"] <= 0:
+                    raise ValueError("GitHub commit status response is invalid")
             url = None
+        else:
+            _, check = self._client._request(
+                "POST", f"/repos/{repository}/check-runs", token, body=body)
+            check_id = check.get("id")
+            check_sha = check.get("head_sha")
+            if type(check_id) is not int or check_id <= 0 or check_sha != sha:
+                raise ValueError("GitHub Check response differs from requested PR head")
+            url = check.get("html_url")
+            if not isinstance(url, str) or not url.startswith("https://github.com/"):
+                url = None
         return CheckPublication(
-            "PUBLISHED", repository=repository, pr_number=number,
+            "PUBLISHED", presentation=("COMMIT_STATUS_LESSER" if decline_app else "CHECK_RUN"),
+            repository=repository, pr_number=number,
             head_sha=sha, check_url=url, payload_digest=artifact.payload_sha256,
             signer_fingerprint=artifact.signer_fingerprint,
             checks_passed=diff.checks_passed, diff_exercised=diff.diff_exercised,

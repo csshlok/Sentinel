@@ -34,13 +34,16 @@ def _emit(call, *, as_json: bool) -> None:
 
 def github_check(
     change_id: UUID,
+    decline_app: bool = typer.Option(False, "--decline-app",
+                                    help="Use a lesser commit status via the configured GitHub token."),
     api_url: str = typer.Option("http://127.0.0.1:8000", "--api-url",
                                 envvar="CHANGE_ASSURANCE_API_URL"),
     json_: bool = typer.Option(False, "--json"),
 ) -> None:
     """Publish the Change's signed Passport claims on its recorded PR head."""
     _emit(lambda: ApiClient(api_url)._request(
-        "POST", f"/api/v1/changes/{change_id}/providers/github/checks"),
+        "POST", f"/api/v1/changes/{change_id}/providers/github/checks"
+        + ("?decline_app=true" if decline_app else "")),
         as_json=json_)
 
 
