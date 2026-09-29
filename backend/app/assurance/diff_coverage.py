@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import json
 import os
 import re
@@ -11,7 +12,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from backend.app.assurance.diff_map import map_diff
+from backend.app.assurance.diff_map import _classification, map_diff
 from backend.app.contracts.models import (
     ChangeView, DiffCoverageFile, DiffCoverageRequest, DiffCoverageResult, GitCheckpoint, utc_now,
 )
@@ -59,11 +60,65 @@ def _report_path(root: Path, raw: str) -> str | None:
     return relative.as_posix()
 
 
+def _fixture_definition(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in node.decorator_list:
+        if isinstance(decorator, ast.Call):
+            decorator = decorator.func
+        if isinstance(decorator, ast.Name) and decorator.id == "fixture":
+            return True
+        if (isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"
+                and isinstance(decorator.value, ast.Name)
+                and decorator.value.id == "pytest"):
+            return True
+    return False
+
+
+def _test_module_risk(
+    *, root: Path, path: str, changed_lines: set[int], report_paths: set[str],
+) -> str | None:
+    """Find changed production-shaped definitions or production imports of a test module."""
+    source = root / path
+    if source.is_symlink() or not source.is_file() or source.stat().st_size > 1_048_576:
+        return f"Changed test module cannot be inspected: {path}."
+    tree = ast.parse(source.read_text(encoding="utf-8-sig"), filename=path)
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if node.name.startswith("test_") or node.name.startswith("pytest_"):
+            continue
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _fixture_definition(node):
+            continue
+        if changed_lines.intersection(range(node.lineno, (node.end_lineno or node.lineno) + 1)):
+            return f"Changed test module contains production-shaped code: {path}:{node.lineno}."
+    module = path.removesuffix(".py").replace("/", ".")
+    parent, _, leaf = module.rpartition(".")
+    for other in report_paths:
+        if other == path or not other.endswith(".py") or _classification(other) == "test code":
+            continue
+        candidate = root / other
+        if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size > 1_048_576:
+            return f"Production imports of changed test module cannot be checked: {other}."
+        production = ast.parse(candidate.read_text(encoding="utf-8-sig"), filename=other)
+        for node in ast.walk(production):
+            if isinstance(node, ast.Import) and any(
+                    alias.name == module or alias.name.startswith(module + ".")
+                    for alias in node.names):
+                return f"Production source imports a changed test module: {other} -> {path}."
+            if isinstance(node, ast.ImportFrom) and (
+                    node.module == module or
+                    node.module == parent and any(alias.name == leaf for alias in node.names)):
+                return f"Production source imports a changed test module: {other} -> {path}."
+    return None
+
+
 def evaluate_report(
     *, result: DiffCoverageResult, changed: dict[str, set[int]],
     excluded: dict[str, str], report: dict[str, object], root: Path,
     rule: DiffCoverageRequest,
     collected_test_paths: set[str] | None = None,
+    excluded_changed_lines: dict[str, set[int]] | None = None,
 ) -> DiffCoverageResult:
     """Pure report comparison; missing or inconsistent file records remain UNKNOWN."""
 
@@ -169,6 +224,21 @@ def evaluate_report(
     if rule.rule.required and uncollected_test_code:
         override_reasons.append("Changed test-named Python file is not a collected test: "
                                 + ", ".join(uncollected_test_code[:8]) + ".")
+    if rule.rule.required:
+        for path, reason in excluded.items():
+            if reason != "test code" or path not in (collected_test_paths or set()):
+                continue
+            try:
+                risk = _test_module_risk(
+                    root=root, path=path,
+                    changed_lines=(excluded_changed_lines or {}).get(path, set()),
+                    report_paths=set(files) | set(changed),
+                )
+            except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
+                risk = f"Changed test module cannot be classified safely: {path}."
+            if risk:
+                state = "UNKNOWN"
+                override_reasons.append(risk)
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
     return DiffCoverageResult.model_validate({**result.model_dump(), **{
@@ -345,7 +415,8 @@ def collect_diff_coverage(
     try:
         return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
                                report=report, root=root, rule=request,
-                               collected_test_paths=collected_test_paths)
+                               collected_test_paths=collected_test_paths,
+                               excluded_changed_lines=mapped.excluded_lines)
     except Exception as exc:
         return result.model_copy(update={
             "collector_status": "ERROR", "diff_exercised": "UNKNOWN",

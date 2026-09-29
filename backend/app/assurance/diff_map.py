@@ -26,6 +26,7 @@ _LOCKFILES = frozenset({"package-lock.json", "pnpm-lock.yaml", "yarn.lock",
 class DiffMap:
     lines: dict[str, set[int]] = field(default_factory=dict)
     excluded: dict[str, str] = field(default_factory=dict)
+    excluded_lines: dict[str, set[int]] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -119,6 +120,8 @@ def _parse_patch(patch: str, result: DiffMap, root: Path | None = None) -> None:
                     classification = classifications[path]
                     if classification:
                         result.excluded[path] = classification
+                        if classification == "test code":
+                            result.excluded_lines.setdefault(path, set()).add(new_no)
                     else:
                         result.lines.setdefault(path, set()).add(new_no)
                 new_no += 1
@@ -279,6 +282,17 @@ def map_diff(*, baseline: GitCheckpoint, tested: GitCheckpoint, limit: int = 8_3
         if classification:
             if bound_to_checkpoint:
                 result.excluded[path] = classification
+                if classification == "test code":
+                    target = Path(tested.repository_root) / path
+                    try:
+                        if (target.is_symlink() or not target.is_file()
+                                or target.stat().st_size > limit):
+                            raise ValueError("test source is unavailable or oversized")
+                        result.excluded_lines[path] = set(range(
+                            1, len(target.read_bytes().splitlines()) + 1))
+                    except (OSError, ValueError):
+                        result.error = f"Changed test source cannot be mapped: {path}."
+                        return result
             continue
         target = Path(tested.repository_root) / path
         try:

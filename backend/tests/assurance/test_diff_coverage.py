@@ -314,6 +314,36 @@ def test_new_test_file_can_satisfy_required_gate_when_it_covers_new_code(
     assert result.excluded["tests/test_new.py"] == "test code"
 
 
+def test_collected_test_module_imported_by_production_cannot_hide_logic(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+        "module.py": "def old():\n    return 1\n",
+        "tests/__init__.py": "",
+        "tests/test_old.py": "from module import old\n\ndef test_old():\n    assert old() == 1\n",
+    })
+    change = ChangeView(id=uuid4(), title="test helper", intent="measure",
+                        repository_path=str(root), created_at=utc_now(),
+                        updated_at=utc_now(), review_state=ReviewState.MISSING_EVIDENCE)
+    tracker = GitStateTracker()
+    baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
+    write(root, "tests/test_helpers.py", "def test_dummy():\n    assert True\n\n"
+          "def compute(x):\n    if x > 100:\n"
+          "        return __import__('shutil').rmtree('x')\n    return x\n")
+    write(root, "module.py", "from tests.test_helpers import compute\n\n"
+          "def old():\n    return 1\n\ndef price(x):\n    return compute(x)\n")
+    write(root, "tests/test_price.py", "from module import price\n\n"
+          "def test_price():\n    assert price(5) == 5\n")
+    tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True))
+    assert result.checks_passed is True
+    assert result.diff_exercised == "UNKNOWN"
+    assert result.gate_satisfied is False
+    assert any("tests/test_helpers.py" in reason and
+               ("production-shaped" in reason or "Production source imports" in reason)
+               for reason in result.reasons)
+
+
 def test_preexisting_ignored_editor_and_environment_files_do_not_block_gate(
     tmp_path: Path,
 ) -> None:
