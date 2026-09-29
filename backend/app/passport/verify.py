@@ -197,6 +197,10 @@ def _validate_claims(passport: dict[str, object], manifest: dict[str, object],
     normalized = claims.model_dump(mode="json")
     if "signer_provider" not in passport["claims"]:
         normalized.pop("signer_provider")  # pre-additive v2 bundles remain verifiable
+    for field in ("policy_preset_name", "policy_preset_version", "policy_change_type",
+                  "policy_decision", "policy_denials"):
+        if field not in passport["claims"]:
+            normalized.pop(field)
     if canonicalize(normalized) != canonicalize(passport["claims"]):
         raise ValueError("Passport claim normalization mismatch")
     if str(claims.change_id) != manifest["change_id"]:
@@ -251,6 +255,10 @@ def _claims_summary(claims: PassportV2Payload) -> dict[str, object]:
         "runs_later": claims.runs_later,
         "journal_integrity": claims.journal_integrity,
         "limitations": claims.limitations,
+        "policy_preset_name": claims.policy_preset_name,
+        "policy_preset_version": claims.policy_preset_version,
+        "policy_decision": claims.policy_decision,
+        "policy_denials": claims.policy_denials,
     }
 
 

@@ -51,6 +51,9 @@ def contract_digest(change: ChangeView) -> str:
     if change.contract.schema_version == 1:
         # Preserve hashes of pre-v2 plans stored before this optional field existed.
         payload.pop("diff_coverage_rule", None)
+    if change.contract.schema_version < 3:
+        payload.pop("policy_preset_name", None)
+        payload.pop("policy_change_type", None)
     body = json.dumps(payload, sort_keys=True,
                       separators=(",", ":"))
     return hashlib.sha256(body.encode("utf-8")).hexdigest()

@@ -1660,6 +1660,10 @@ export interface components {
             forbidden_paths?: string[];
             /** @default MEDIUM */
             max_risk: components["schemas"]["RiskLevel"];
+            /** Policy Change Type */
+            policy_change_type?: ("code" | "docs" | "release") | null;
+            /** Policy Preset Name */
+            policy_preset_name?: ("strict" | "standard" | "docs-only") | null;
             /**
              * Recovery Allowed
              * @default true
@@ -1672,7 +1676,7 @@ export interface components {
              * @default 1
              * @enum {integer}
              */
-            schema_version: 1 | 2;
+            schema_version: 1 | 2 | 3;
         };
         /** ChangeContractUpdateRequest */
         ChangeContractUpdateRequest: {
@@ -2913,6 +2917,20 @@ export interface components {
             lifecycle_state: string;
             /** Limitations */
             limitations?: string[];
+            /** Policy Change Type */
+            policy_change_type?: ("code" | "docs" | "release") | null;
+            /**
+             * Policy Decision
+             * @default DENY
+             * @enum {string}
+             */
+            policy_decision: "ALLOW" | "DENY";
+            /** Policy Denials */
+            policy_denials?: string[];
+            /** Policy Preset Name */
+            policy_preset_name?: ("strict" | "standard" | "docs-only") | null;
+            /** Policy Preset Version */
+            policy_preset_version?: string | null;
             /** Risk Level */
             risk_level: string;
             /**

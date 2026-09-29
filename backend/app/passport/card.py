@@ -18,7 +18,7 @@ def card_facts(passport: dict[str, object], *, payload_digest: str) -> list[tupl
     executed = diff["executed_changed_lines"]
     counts = (f"{executed}/{changed} changed executable lines" if
               isinstance(changed, int) and isinstance(executed, int) else "counts UNKNOWN")
-    return [
+    facts = [
         ("Change", str(claims["change_id"])),
         ("Signer", str(signer["identity"])),
         ("Signer fingerprint", str(signer["fingerprint"])),
@@ -32,6 +32,18 @@ def card_facts(passport: dict[str, object], *, payload_digest: str) -> list[tupl
         ("Assertion quality", str(diff["assertion_quality"])),
         ("Caveat", str(diff["caveat"])),
     ]
+    if "policy_decision" in claims:
+        name = claims.get("policy_preset_name") or "UNSELECTED"
+        version = claims.get("policy_preset_version") or "UNKNOWN"
+        facts.extend([
+            ("Policy preset", f"{name} {version}"),
+            ("Policy change type", str(claims.get("policy_change_type") or "UNKNOWN")),
+            ("Policy decision", str(claims["policy_decision"])),
+        ])
+        denials = claims.get("policy_denials")
+        if isinstance(denials, list):
+            facts.extend(("Policy denial", str(reason)) for reason in denials)
+    return facts
 
 
 def render_html(passport: dict[str, object], *, payload_digest: str) -> bytes:

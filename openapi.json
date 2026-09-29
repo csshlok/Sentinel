@@ -1158,6 +1158,38 @@
             "$ref": "#/components/schemas/RiskLevel",
             "default": "MEDIUM"
           },
+          "policy_change_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "docs",
+                  "release"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Change Type"
+          },
+          "policy_preset_name": {
+            "anyOf": [
+              {
+                "enum": [
+                  "strict",
+                  "standard",
+                  "docs-only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Preset Name"
+          },
           "recovery_allowed": {
             "default": true,
             "title": "Recovery Allowed",
@@ -1177,7 +1209,8 @@
             "default": 1,
             "enum": [
               1,
-              2
+              2,
+              3
             ],
             "title": "Schema Version",
             "type": "integer"
@@ -4441,6 +4474,70 @@
             "maxItems": 32,
             "title": "Limitations",
             "type": "array"
+          },
+          "policy_change_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "docs",
+                  "release"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Change Type"
+          },
+          "policy_decision": {
+            "default": "DENY",
+            "enum": [
+              "ALLOW",
+              "DENY"
+            ],
+            "title": "Policy Decision",
+            "type": "string"
+          },
+          "policy_denials": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Policy Denials",
+            "type": "array"
+          },
+          "policy_preset_name": {
+            "anyOf": [
+              {
+                "enum": [
+                  "strict",
+                  "standard",
+                  "docs-only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Preset Name"
+          },
+          "policy_preset_version": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Preset Version"
           },
           "risk_level": {
             "maxLength": 256,

@@ -24,6 +24,7 @@ from backend.app.git.state import GitStateTracker
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.identity import open_signing_key
+from backend.app.policy.presets import PresetEvidence, evaluate_preset
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
@@ -141,9 +142,13 @@ class PassportV2Issuer:
         comparable = contract.model_dump(mode="json")
         if contract.schema_version == 1:
             comparable.pop("diff_coverage_rule", None)
+        if contract.schema_version < 3:
+            comparable.pop("policy_preset_name", None)
+            comparable.pop("policy_change_type", None)
         coverage_contract_digest = hashlib.sha256(json.dumps(
             comparable, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        diff_claim, diff_limit = self._coverage_claim(coverage, coverage_contract_digest)
+        diff_claim, diff_limit, changed_paths, measured_percent = self._coverage_claim(
+            coverage, coverage_contract_digest)
         limitations = [
             "Execution boundary evidence is not yet structured; UNKNOWN.",
             "Execution-bearing files that run later are not measured; UNKNOWN.",
@@ -168,7 +173,31 @@ class PassportV2Issuer:
             diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
             issued_at=utc_now(),
         )
-        return self._checked_freshness(change_id, payload, change)
+        payload = self._checked_freshness(change_id, payload, change)
+        if contract.policy_preset_name is None or contract.policy_change_type is None:
+            return payload.model_copy(update={
+                "policy_denials": ["No versioned policy preset is selected."],
+            })
+        decision = evaluate_preset(
+            preset_name=contract.policy_preset_name,
+            change_type=contract.policy_change_type,
+            evidence=PresetEvidence(
+                checks_passed=payload.diff_coverage.checks_passed,
+                diff_exercised=payload.diff_coverage.diff_exercised,
+                measured_percent=measured_percent,
+                freshness=payload.diff_coverage.freshness,
+                changed_paths=changed_paths,
+                execution_boundary=payload.execution_boundary,
+                confined_checks="UNKNOWN",
+            ),
+        )
+        return payload.model_copy(update={
+            "policy_preset_name": contract.policy_preset_name,
+            "policy_preset_version": decision.preset_version,
+            "policy_change_type": contract.policy_change_type,
+            "policy_decision": decision.status,
+            "policy_denials": list(decision.reasons),
+        })
 
     @staticmethod
     def _checked_freshness(change_id: UUID, claims: PassportV2Payload,
@@ -230,17 +259,19 @@ class PassportV2Issuer:
 
     @staticmethod
     def _coverage_claim(row: object | None,
-                        expected_contract_digest: str) -> tuple[PassportV2DiffClaim, str | None]:
+                        expected_contract_digest: str) -> tuple[
+                            PassportV2DiffClaim, str | None, tuple[str, ...], float | None]:
         if row is None:
-            return PassportV2DiffClaim(), "No diff coverage measurement exists."
+            return PassportV2DiffClaim(), "No diff coverage measurement exists.", (), None
         raw = row["payload_json"]
         if not isinstance(raw, str) or len(raw.encode("utf-8")) > _MAX_RECORD_BYTES:
-            return PassportV2DiffClaim(), "Diff coverage measurement is oversized."
+            return PassportV2DiffClaim(), "Diff coverage measurement is oversized.", (), None
         try:
             result = DiffCoverageResult.model_validate_json(raw)
         except (ValueError, RecursionError):
-            return PassportV2DiffClaim(), "Diff coverage measurement is malformed."
+            return PassportV2DiffClaim(), "Diff coverage measurement is malformed.", (), None
         changed_contract = result.contract_digest != expected_contract_digest
+        paths = tuple(sorted({item.path for item in result.files} | set(result.excluded)))
         return PassportV2DiffClaim(
             checks_passed=result.checks_passed,
             diff_exercised="STALE" if changed_contract else result.diff_exercised,
@@ -253,7 +284,7 @@ class PassportV2Issuer:
             artifact_digest=result.artifact_digest,
             collection_boundary=result.collection_boundary,
         ), ("Change Contract changed after diff coverage measurement."
-            if changed_contract else None)
+            if changed_contract else None), paths, result.measured_percent
 
     def issue(self, change_id: UUID) -> PassportV2Issued:
         """No payload argument exists: CNG signs only this freshly built snapshot."""

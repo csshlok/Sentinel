@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-import pytest
+import hashlib
+import json
 
+import pytest
+from pydantic import ValidationError
+
+from backend.app.assurance.engine import contract_digest
+from backend.app.contracts.models import ChangeContract, DiffCoverageRule
 from backend.app.policy.presets import PresetEvidence, evaluate_preset
+from backend.tests.passport.test_builder import _database, _seed_change
 
 
 def test_strict_code_names_each_unknown_requirement_and_is_deterministic() -> None:
@@ -77,3 +84,22 @@ def test_stale_freshness_and_unknown_preset_deny_by_name() -> None:
     unknown = evaluate_preset(preset_name="other", change_type="code",
                               evidence=PresetEvidence(checks_passed=True))
     assert unknown.status == "DENY"
+
+
+def test_v3_preset_requires_both_fields_and_old_contract_digests_are_stable(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="require schema version 3 together"):
+        ChangeContract(schema_version=2, policy_preset_name="strict",
+                       policy_change_type="code")
+    with pytest.raises(ValidationError, match="require schema version 3 together"):
+        ChangeContract(schema_version=3, policy_preset_name="strict")
+    change = _seed_change(_database(tmp_path))
+    for contract in (ChangeContract(),
+                     ChangeContract(schema_version=2, diff_coverage_rule=DiffCoverageRule())):
+        original_fields = contract.model_dump(mode="json")
+        original_fields.pop("policy_preset_name")
+        original_fields.pop("policy_change_type")
+        if contract.schema_version == 1:
+            original_fields.pop("diff_coverage_rule")
+        old_digest = hashlib.sha256(json.dumps(
+            original_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        assert contract_digest(change.model_copy(update={"contract": contract})) == old_digest

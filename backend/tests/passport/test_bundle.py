@@ -15,7 +15,9 @@ from uuid import uuid4
 import pytest
 
 from backend.app.assurance.store import EvidenceStore
-from backend.app.contracts.models import DiffCoverageResult, JournalEventType
+from backend.app.assurance.engine import contract_digest
+from backend.app.contracts.models import (ChangeContract, DiffCoverageFile,
+                                          DiffCoverageResult, JournalEventType)
 from backend.app.core.journal import JournalWriter
 from backend.app.passport.bundle import BundleExporter
 from backend.app.passport.card import card_facts, render_html, render_svg
@@ -27,6 +29,55 @@ from backend.tests.passport.test_v2 import _launch
 from backend.tests.support_kb import make_repo, write
 from backend.app.passport.verify import verify_bundle
 from backend.app.passport.trust import TrustRegistry
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")
+def test_selected_preset_and_denials_are_signed_in_bundle_and_card(tmp_path: Path) -> None:
+    root = make_repo(tmp_path / "repo", {"module.py": "VALUE = 1\n"})
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    selected = ChangeContract(schema_version=3, policy_preset_name="strict",
+                              policy_change_type="code")
+    with database.connection() as connection:
+        connection.execute("UPDATE changes SET repository_path = ?, contract_json = ?, "
+                           "revision = revision + 1 WHERE id = ?",
+                           (str(root), selected.model_dump_json(), str(change.id)))
+    captured = GitStateTracker().capture(change.id, "measured", str(root), 1, 1_048_576)
+    now = datetime.now(UTC)
+    EvidenceStore(database).save_diff_coverage(DiffCoverageResult(
+        change_id=change.id, baseline_checkpoint_id=uuid4(), tested_checkpoint_id=uuid4(),
+        head_sha=captured.head_sha, status_digest=captured.status_digest,
+        contract_digest=contract_digest(change.model_copy(update={"contract": selected})),
+        started_at=now, completed_at=now, collector_status="COLLECTED",
+        checks_passed=True, diff_exercised="PASS", freshness="CURRENT",
+        changed_executable_lines=1, executed_changed_lines=1, measured_percent=100,
+        files=[DiffCoverageFile(path="module.py", changed_lines=[1],
+                                executable_lines=[1], executed_lines=[1])],
+    ))
+    key_name = f"Sentinel disposable test {uuid4()}"
+    try:
+        artifact = BundleExporter(database, key_name=key_name).export(change.id)
+        path = tmp_path / artifact.filename
+        path.write_bytes(artifact.content)
+        with zipfile.ZipFile(io.BytesIO(artifact.content)) as archive:
+            passport = parse_canonical(archive.read("passport.json"))
+            signature = parse_canonical(archive.read("signature.json"))
+            html = archive.read("visuals/passport.html")
+        claims = passport["claims"]
+        assert claims["policy_preset_name"] == "strict"
+        assert claims["policy_preset_version"] == "1.0.0"
+        assert claims["policy_decision"] == "DENY"
+        assert any("confined checks" in reason for reason in claims["policy_denials"])
+        assert any("AppContainer" in reason for reason in claims["policy_denials"])
+        assert b"Policy preset" in html and b"Policy decision" in html
+        trust = TrustRegistry(tmp_path / "trusted_keys.json")
+        trust.add(spki=base64.b64decode(signature["public_spki_b64"]), label="Lab")
+        verdict = verify_bundle(path, trust=trust)
+        assert verdict.verdict == "VALID", verdict.reason
+        assert verdict.claims["policy_decision"] == "DENY"
+    finally:
+        with CngKey.open(name=key_name) as key:
+            key.delete_for_test()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")

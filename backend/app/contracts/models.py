@@ -252,7 +252,7 @@ class VerificationResult(ContractModel):
 
 
 class ChangeContract(ContractModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     allowed_paths: list[PathPattern] = Field(default_factory=lambda: ["**"], max_length=256)
     forbidden_paths: list[PathPattern] = Field(default_factory=list, max_length=256)
     expected_outcomes: list[ShortText] = Field(default_factory=list, max_length=128)
@@ -262,11 +262,16 @@ class ChangeContract(ContractModel):
     max_risk: RiskLevel = RiskLevel.MEDIUM
     recovery_allowed: bool = True
     diff_coverage_rule: DiffCoverageRule | None = None
+    policy_preset_name: Literal["strict", "standard", "docs-only"] | None = None
+    policy_change_type: Literal["code", "docs", "release"] | None = None
 
     @model_validator(mode="after")
     def coverage_rule_requires_v2(self) -> ChangeContract:
-        if self.diff_coverage_rule is not None and self.schema_version != 2:
-            raise ValueError("diff_coverage_rule requires Change Contract schema version 2")
+        if self.diff_coverage_rule is not None and self.schema_version < 2:
+            raise ValueError("diff_coverage_rule requires Change Contract schema version 2 or 3")
+        if ((self.policy_preset_name is None) != (self.policy_change_type is None)
+                or (self.policy_preset_name is not None and self.schema_version != 3)):
+            raise ValueError("policy preset and Change type require schema version 3 together")
         return self
 
     @field_validator(
@@ -1253,6 +1258,11 @@ class PassportV2Payload(ContractModel):
     limitations: list[ShortText] = Field(default_factory=list, max_length=32)
     issued_at: AwareDatetime
     signer_provider: Literal["TPM", "SOFTWARE"] | None = None
+    policy_preset_name: Literal["strict", "standard", "docs-only"] | None = None
+    policy_preset_version: ShortText | None = None
+    policy_change_type: Literal["code", "docs", "release"] | None = None
+    policy_decision: Literal["ALLOW", "DENY"] = "DENY"
+    policy_denials: list[ShortText] = Field(default_factory=list, max_length=16)
 
 
 class PassportV2Issued(ContractModel):
