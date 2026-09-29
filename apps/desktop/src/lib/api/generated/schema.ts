@@ -617,6 +617,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/policy/preset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluate Change Preset */
+        get: operations["evaluate_change_preset_api_v1_changes__change_id__policy_preset_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{change_id}/providers/github/checks": {
         parameters: {
             query?: never;
@@ -2953,6 +2970,35 @@ export interface components {
          * @enum {string}
          */
         PathCategory: "SOURCE" | "TEST" | "DEPENDENCY" | "CONFIG" | "DOCUMENTATION" | "OTHER";
+        /**
+         * PolicyPresetEvaluation
+         * @description The current persisted preset decision for one Change.
+         */
+        PolicyPresetEvaluation: {
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Change Type */
+            change_type?: ("code" | "docs" | "release") | null;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "ALLOW" | "DENY";
+            /** Denials */
+            denials?: string[];
+            /**
+             * Freshness
+             * @enum {string}
+             */
+            freshness: "CURRENT" | "STALE" | "UNKNOWN";
+            /** Preset Name */
+            preset_name?: ("strict" | "standard" | "docs-only") | null;
+            /** Preset Version */
+            preset_version?: string | null;
+        };
         /** ProviderConnectRequest */
         ProviderConnectRequest: {
             /** Token */
@@ -4847,6 +4893,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PassportV2Issued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_change_preset_api_v1_changes__change_id__policy_preset_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyPresetEvaluation"];
                 };
             };
             /** @description Validation Error */

@@ -4598,6 +4598,96 @@
         "title": "PathCategory",
         "type": "string"
       },
+      "PolicyPresetEvaluation": {
+        "additionalProperties": false,
+        "description": "The current persisted preset decision for one Change.",
+        "properties": {
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "change_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "docs",
+                  "release"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Type"
+          },
+          "decision": {
+            "enum": [
+              "ALLOW",
+              "DENY"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "denials": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Denials",
+            "type": "array"
+          },
+          "freshness": {
+            "enum": [
+              "CURRENT",
+              "STALE",
+              "UNKNOWN"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "preset_name": {
+            "anyOf": [
+              {
+                "enum": [
+                  "strict",
+                  "standard",
+                  "docs-only"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset Name"
+          },
+          "preset_version": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset Version"
+          }
+        },
+        "required": [
+          "change_id",
+          "decision",
+          "freshness"
+        ],
+        "title": "PolicyPresetEvaluation",
+        "type": "object"
+      },
       "ProviderConnectRequest": {
         "additionalProperties": false,
         "properties": {
@@ -8579,6 +8669,65 @@
         "summary": "Issue Passport V2",
         "tags": [
           "passport"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/policy/preset": {
+      "get": {
+        "operationId": "evaluate_change_preset_api_v1_changes__change_id__policy_preset_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyPresetEvaluation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate Change Preset",
+        "tags": [
+          "policy"
         ]
       }
     },

@@ -1328,3 +1328,15 @@ class GitHubCheckPublicationResult(ContractModel):
     freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
     signed_freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
     execution_boundary: Literal["UNKNOWN"] | None = None
+
+
+class PolicyPresetEvaluation(ContractModel):
+    """The current persisted preset decision for one Change."""
+
+    change_id: UUID
+    preset_name: Literal["strict", "standard", "docs-only"] | None = None
+    preset_version: ShortText | None = None
+    change_type: Literal["code", "docs", "release"] | None = None
+    decision: Literal["ALLOW", "DENY"]
+    denials: list[ShortText] = Field(default_factory=list, max_length=16)
+    freshness: Literal["CURRENT", "STALE", "UNKNOWN"]

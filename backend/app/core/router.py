@@ -69,6 +69,7 @@ from backend.app.contracts.models import (
     RepositoryPathRequest,
     SignedPassportExport,
     PassportV2Issued,
+    PolicyPresetEvaluation,
     SigningPublicKeyResponse,
     ToolManifest,
     ToolManifestListResponse,
@@ -109,6 +110,26 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def capabilities() -> CapabilitiesResponse:
         return service.capabilities()
+
+    @router.get(
+        "/changes/{change_id}/policy/preset",
+        response_model=PolicyPresetEvaluation,
+        tags=["policy"],
+    )
+    async def evaluate_change_preset(change_id: UUID) -> PolicyPresetEvaluation:
+        def evaluate() -> PolicyPresetEvaluation:
+            service.get(change_id)
+            snapshot = PassportV2Issuer(service.repository.database).snapshot(change_id)
+            return PolicyPresetEvaluation(
+                change_id=change_id,
+                preset_name=snapshot.policy_preset_name,
+                preset_version=snapshot.policy_preset_version,
+                change_type=snapshot.policy_change_type,
+                decision=snapshot.policy_decision,
+                denials=snapshot.policy_denials,
+                freshness=snapshot.diff_coverage.freshness,
+            )
+        return await run_in_threadpool(evaluate)
 
     @router.post(
         "/repositories/validate",
