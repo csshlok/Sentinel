@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
 import json
 import re
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Literal
@@ -14,6 +17,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from backend.app.credentials.broker import CredentialBroker
+from backend.app.contracts.models import PassportV2Payload
+from backend.app.core.database import Database
+from backend.app.core.runtime_repositories import ProviderOperationRepository
+from backend.app.passport.bundle import BundleArtifact, BundleExporter
+from backend.app.passport.jcs import parse_canonical
 from backend.app.providers.github_app import app_provider_name
 from backend.app.providers.http_transport import HttpTransport, TransportTimeout
 
@@ -173,3 +181,137 @@ class GitHubAppClient:
                 or expiry > self._clock() + timedelta(hours=1, minutes=5)):
             raise ValueError("GitHub installation token expiry is invalid")
         return InstallationResult("INSTALLED", installation_id=identifier), token
+
+
+@dataclass(frozen=True, slots=True)
+class CheckPublication:
+    state: Literal["PUBLISHED", "GITHUB_APP_NOT_INSTALLED"]
+    presentation: Literal["CHECK_RUN"] = "CHECK_RUN"
+    installation_url: str | None = None
+    repository: str | None = None
+    pr_number: int | None = None
+    head_sha: str | None = None
+    check_url: str | None = None
+    payload_digest: str | None = None
+    signer_fingerprint: str | None = None
+    checks_passed: bool | None = None
+    diff_exercised: str | None = None
+    freshness: str | None = None
+    signed_freshness: str | None = None
+    execution_boundary: str | None = None
+
+
+class GitHubCheckPublisher:
+    """Publish one DB-owned Change's signed claims to its recorded PR head."""
+
+    def __init__(self, database: Database, broker: CredentialBroker,
+                 transport: HttpTransport, *,
+                 bundle_export: Callable[[UUID], BundleArtifact] | None = None,
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self._database = database
+        self._client = GitHubAppClient(broker, transport, clock=clock)
+        self._export = bundle_export or BundleExporter(database).export
+
+    def _live_pr_head(self, repository: str, number: int, token: str) -> str:
+        _, pr = self._client._request(
+            "GET", f"/repos/{repository}/pulls/{number}", token)
+        head = pr.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+            raise ValueError("GitHub pull request head is malformed")
+        return sha
+
+    def publish(self, change_id: UUID) -> CheckPublication:
+        with self._database.connection() as connection:
+            change = connection.execute("SELECT id FROM changes WHERE id = ?",
+                                        (str(change_id),)).fetchone()
+        if change is None:
+            raise ValueError("Change does not exist")
+        operation = ProviderOperationRepository(self._database).get_succeeded_operation(
+            change_id, "github.pr.create")
+        if operation is None:
+            raise ValueError("Change has no recorded GitHub pull request")
+        repository = operation.request.parameters.get("repository")
+        number = operation.safe_metadata.get("number")
+        original_head = operation.safe_metadata.get("head_sha")
+        if (not isinstance(repository, str) or type(number) is not int or number <= 0
+                or not isinstance(original_head, str) or not _SHA.fullmatch(original_head)):
+            raise ValueError("Recorded pull request is malformed")
+        owner, _ = self._client._repository(repository)
+        installation, token = self._client.installation_token(
+            owner=owner, repository=repository, actor_id=operation.request.actor_id,
+            change_id=change_id)
+        if token is None:
+            return CheckPublication("GITHUB_APP_NOT_INSTALLED",
+                                    installation_url=installation.installation_url,
+                                    repository=repository, pr_number=number)
+        first_sha = self._live_pr_head(repository, number, token)
+
+        artifact = self._export(change_id)
+        with zipfile.ZipFile(io.BytesIO(artifact.content), "r") as archive:
+            passport = parse_canonical(archive.read("passport.json"))
+        if not isinstance(passport, dict) or not isinstance(passport.get("claims"), dict):
+            raise ValueError("Exported Passport is malformed")
+        claims = PassportV2Payload.model_validate(passport["claims"])
+        if claims.change_id != change_id:
+            raise ValueError("Exported Passport belongs to another Change")
+        signer = passport.get("signer")
+        if (not isinstance(signer, dict) or
+                signer.get("fingerprint") != artifact.signer_fingerprint):
+            raise ValueError("Exported Passport signer differs from bundle")
+        sha = self._live_pr_head(repository, number, token)
+        with self._database.connection() as connection:
+            latest = connection.execute(
+                "SELECT revision, contract_json FROM changes WHERE id = ?",
+                (str(change_id),)).fetchone()
+        if latest is None:
+            raise ValueError("Change no longer exists")
+        contract_raw = latest["contract_json"]
+        latest_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
+                         if isinstance(contract_raw, str) else None)
+        signed_freshness = claims.diff_coverage.freshness
+        freshness = ("STALE" if sha != first_sha or sha != original_head or
+                     latest["revision"] != claims.change_revision or
+                     latest_digest != claims.contract_digest or
+                     claims.diff_coverage.head_sha not in {None, sha}
+                     else signed_freshness)
+        diff = claims.diff_coverage
+        checks_text = "PASS" if diff.checks_passed is True else (
+            "FAIL" if diff.checks_passed is False else "UNKNOWN")
+        conclusion = ("failure" if checks_text == "FAIL" or diff.diff_exercised == "FAIL"
+                      else "neutral" if freshness != "CURRENT" or
+                      checks_text != "PASS" or diff.diff_exercised != "PASS" or
+                      claims.execution_boundary == "UNKNOWN"
+                      else "success")
+        verify_command = f"sentinel verify change-{change_id}.sentinel --key {artifact.signer_fingerprint} --json"
+        summary = "\n".join([
+            f"Checks passed: {checks_text}",
+            f"Diff exercised: {diff.diff_exercised}",
+            f"Freshness: {freshness}",
+            f"Signed Passport freshness: {signed_freshness}",
+            f"Execution boundary: {claims.execution_boundary}",
+            f"Payload SHA-256: {artifact.payload_sha256}",
+            f"Signer fingerprint: {artifact.signer_fingerprint}",
+            f"Verify: {verify_command}",
+            "Execution of changed lines does not prove assertion quality.",
+        ])
+        body = {"name": "Sentinel Passport v2", "head_sha": sha,
+                "status": "completed", "conclusion": conclusion,
+                "output": {"title": f"Sentinel: {freshness}", "summary": summary}}
+        _, check = self._client._request(
+            "POST", f"/repos/{repository}/check-runs", token, body=body)
+        check_id = check.get("id")
+        check_sha = check.get("head_sha")
+        if type(check_id) is not int or check_id <= 0 or check_sha != sha:
+            raise ValueError("GitHub Check response differs from requested PR head")
+        url = check.get("html_url")
+        if not isinstance(url, str) or not url.startswith("https://github.com/"):
+            url = None
+        return CheckPublication(
+            "PUBLISHED", repository=repository, pr_number=number,
+            head_sha=sha, check_url=url, payload_digest=artifact.payload_sha256,
+            signer_fingerprint=artifact.signer_fingerprint,
+            checks_passed=diff.checks_passed, diff_exercised=diff.diff_exercised,
+            freshness=freshness, signed_freshness=signed_freshness,
+            execution_boundary=claims.execution_boundary,
+        )

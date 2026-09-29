@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import zipfile
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -14,8 +16,15 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.providers.github_app import app_provider_name
-from backend.app.providers.github_check import GitHubAppClient
+from backend.app.contracts.models import (PassportV2DiffClaim, ProviderOperation,
+                                          ProviderOperationRequest, ProviderOperationStatus)
+from backend.app.core.runtime_repositories import ProviderOperationRepository
+from backend.app.passport.bundle import BundleArtifact
+from backend.app.passport.jcs import canonicalize
+from backend.app.passport.v2 import PassportV2Issuer
+from backend.app.providers.github_check import GitHubAppClient, GitHubCheckPublisher
 from backend.tests.providers.fakes import FakeHttpTransport, json_response
+from backend.tests.passport.test_builder import _database, _seed_change
 
 
 def _setup(queue, *, now: datetime):
@@ -99,4 +108,133 @@ def test_bad_repository_never_reaches_http(repository: str) -> None:
     with pytest.raises(ValueError):
         client.installation_token(owner="Lab", repository=repository,
                                   actor_id=uuid4(), change_id=uuid4())
+    assert not transport.calls
+
+
+def _publisher_fixture(tmp_path, queue, *, now: datetime,
+                       on_export=None, freshness: str = "CURRENT"):
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    operation = ProviderOperation(
+        id=uuid4(), status=ProviderOperationStatus.SUCCEEDED,
+        request=ProviderOperationRequest(
+            provider="github", operation="github.pr.create", change_id=change.id,
+            actor_id=uuid4(), idempotency_key="pr-one",
+            parameters={"repository": "Lab/repo"}),
+        safe_metadata={"number": 7, "head_sha": "a" * 40},
+        started_at=now, completed_at=now,
+    )
+    ProviderOperationRepository(database).create(operation)
+    _, broker, transport, _ = _setup(queue, now=now)
+
+    def export(change_id):
+        claims = PassportV2Issuer(database).snapshot(change_id)
+        claims = claims.model_copy(update={"diff_coverage": PassportV2DiffClaim(
+            checks_passed=True, diff_exercised="PASS", freshness=freshness,
+            head_sha="a" * 40)})
+        content = canonicalize({"claims": claims.model_dump(mode="json"),
+                                "signer": {"fingerprint": "ABCDEF"}})
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("passport.json", content)
+        if on_export is not None:
+            on_export(database, change_id)
+        return BundleArtifact(f"change-{change_id}.sentinel", buffer.getvalue(),
+                              "b" * 64, "ABCDEF")
+
+    publisher = GitHubCheckPublisher(database, broker, transport,
+                                     bundle_export=export, clock=lambda: now)
+    return publisher, change, transport
+
+
+def _check_queue(now: datetime, *, first_sha: str = "a" * 40,
+                 final_sha: str = "a" * 40):
+    return [
+        json_response(200, {"id": 55}),
+        json_response(201, {"token": "ephemeral",
+                            "expires_at": (now + timedelta(minutes=30)).isoformat()}),
+        json_response(200, {"head": {"sha": first_sha}}),
+        json_response(200, {"head": {"sha": final_sha}}),
+        json_response(201, {"id": 9, "head_sha": final_sha,
+                            "html_url": "https://github.com/Lab/repo/runs/9"}),
+    ]
+
+
+def test_check_publishes_signed_claims_to_exact_pr_head(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(tmp_path, _check_queue(now), now=now)
+    result = publisher.publish(change.id)
+    assert result.state == "PUBLISHED"
+    assert result.head_sha == "a" * 40
+    assert result.freshness == "CURRENT"
+    body = json.loads(transport.calls[-1]["body"])
+    assert body["head_sha"] == "a" * 40
+    assert body["conclusion"] == "neutral"  # UNKNOWN boundary cannot become success.
+    summary = body["output"]["summary"]
+    for expected in ("Checks passed: PASS", "Diff exercised: PASS",
+                     "Freshness: CURRENT", "Execution boundary: UNKNOWN",
+                     "Payload SHA-256: " + "b" * 64,
+                     "Signer fingerprint: ABCDEF", "sentinel verify"):
+        assert expected in summary
+    assert "CANARY" not in str(transport.calls)
+
+
+def test_head_moving_during_export_is_stale_on_new_exact_head(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(
+        tmp_path, _check_queue(now, final_sha="c" * 40), now=now)
+    result = publisher.publish(change.id)
+    assert result.head_sha == "c" * 40
+    assert result.freshness == "STALE" and result.signed_freshness == "CURRENT"
+    body = json.loads(transport.calls[-1]["body"])
+    assert body["head_sha"] == "c" * 40
+    assert "Freshness: STALE" in body["output"]["summary"]
+    assert body["conclusion"] == "neutral"
+
+
+def test_policy_change_during_export_marks_check_stale(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+
+    def change_policy(database, change_id):
+        with database.connection() as connection:
+            connection.execute("UPDATE changes SET revision = revision + 1, "
+                               "contract_json = ? WHERE id = ?",
+                               ('{"required":true}', str(change_id)))
+
+    publisher, change, transport = _publisher_fixture(
+        tmp_path, _check_queue(now), now=now, on_export=change_policy)
+    result = publisher.publish(change.id)
+    assert result.freshness == "STALE" and result.signed_freshness == "CURRENT"
+    assert "Freshness: STALE" in json.loads(transport.calls[-1]["body"])["output"]["summary"]
+
+
+def test_missing_installation_is_typed_and_can_retry(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(
+        tmp_path, [json_response(404, {})] + _check_queue(now), now=now)
+    first = publisher.publish(change.id)
+    assert first.state == "GITHUB_APP_NOT_INSTALLED"
+    assert first.installation_url == "https://github.com/apps/sentinel-lab/installations/new"
+    assert len(transport.calls) == 1
+    assert publisher.publish(change.id).state == "PUBLISHED"
+
+
+def test_signed_stale_claim_is_preserved(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(
+        tmp_path, _check_queue(now), now=now, freshness="STALE")
+    result = publisher.publish(change.id)
+    assert result.freshness == "STALE" and result.signed_freshness == "STALE"
+    summary = json.loads(transport.calls[-1]["body"])["output"]["summary"]
+    assert "Signed Passport freshness: STALE" in summary
+
+
+def test_change_without_recorded_pr_cannot_publish(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    _, broker, transport, _ = _setup([], now=now)
+    publisher = GitHubCheckPublisher(database, broker, transport, clock=lambda: now)
+    with pytest.raises(ValueError, match="no recorded GitHub pull request"):
+        publisher.publish(change.id)
     assert not transport.calls
