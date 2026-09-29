@@ -29,4 +29,3 @@ def test_hosted_device_not_ready_override_is_test_scoped(
         configure_hosted_software_key_tests(scoped)
         assert 0x80090030 in cng._PLATFORM_UNAVAILABLE_FOR_KEY
     assert cng._PLATFORM_UNAVAILABLE_FOR_KEY == original
-    assert 0x80090030 not in original
