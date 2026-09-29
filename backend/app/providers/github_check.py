@@ -209,20 +209,8 @@ class GitHubCheckPublisher:
                  bundle_export: Callable[[UUID], BundleArtifact] | None = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._database = database
-        self._broker = broker
         self._client = GitHubAppClient(broker, transport, clock=clock)
         self._export = bundle_export or BundleExporter(database).export
-
-    def _pat_token(self, change_id: UUID, actor_id: UUID) -> str:
-        scope = "github.status.publish"
-        grant = self._broker.issue_grant(actor_id, change_id, [scope], 30)
-        try:
-            token = self._broker.resolve_secret(grant.id, scope=scope)
-        finally:
-            self._broker.revoke(grant.id)
-        if not isinstance(token, str) or not token or len(token) > 4096:
-            raise ValueError("GitHub token is invalid")
-        return token
 
     def _live_pr_head(self, repository: str, number: int, token: str) -> str:
         _, pr = self._client._request(
@@ -233,7 +221,10 @@ class GitHubCheckPublisher:
             raise ValueError("GitHub pull request head is malformed")
         return sha
 
-    def publish(self, change_id: UUID, *, decline_app: bool = False) -> CheckPublication:
+    def publish(self, change_id: UUID, *, decline_app: bool = False,
+                fallback_token: str | None = None) -> CheckPublication:
+        if not decline_app and fallback_token is not None:
+            raise ValueError("A fallback token requires declined App presentation")
         with self._database.connection() as connection:
             change = connection.execute("SELECT id FROM changes WHERE id = ?",
                                         (str(change_id),)).fetchone()
@@ -251,7 +242,10 @@ class GitHubCheckPublisher:
             raise ValueError("Recorded pull request is malformed")
         owner, _ = self._client._repository(repository)
         if decline_app:
-            token = self._pat_token(change_id, operation.request.actor_id)
+            if (not isinstance(fallback_token, str) or not fallback_token
+                    or len(fallback_token) > 4096):
+                raise ValueError("An authorized GitHub fallback token is required")
+            token = fallback_token
         else:
             installation, token = self._client.installation_token(
                 owner=owner, repository=repository, actor_id=operation.request.actor_id,

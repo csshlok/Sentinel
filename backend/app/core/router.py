@@ -381,11 +381,24 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
                            status_code=422)
         def publish() -> GitHubCheckPublicationResult:
             service.get(change_id)
+            operation = runtime.provider_operations.operations.get_succeeded_operation(
+                change_id, "github.pr.create")
+            if operation is None:
+                raise AppError("GITHUB_CHECK_PR_MISSING",
+                               "Change has no recorded GitHub pull request.", status_code=409)
+            grant = runtime.credentials.issue_grant(
+                operation.request.actor_id, change_id, ["github.pr.create"], 30)
+            try:
+                fallback_token = (runtime.credentials.broker.resolve_secret(
+                    grant.id, scope="github.pr.create") if decline_app else None)
+            finally:
+                runtime.credentials.revoke_grant(grant.id)
             try:
                 view = GitHubCheckPublisher(
                     service.repository.database, runtime.credentials.broker,
                     UrllibHttpTransport(),
-                ).publish(change_id, decline_app=decline_app)
+                ).publish(change_id, decline_app=decline_app,
+                          fallback_token=fallback_token)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise AppError("GITHUB_CHECK_UNAVAILABLE",
                                "GitHub Check could not be published from current evidence.",

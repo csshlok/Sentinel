@@ -247,7 +247,8 @@ def test_declined_app_uses_lesser_statuses_with_all_claims(tmp_path) -> None:
              json_response(200, {"head": {"sha": "a" * 40}})]
     queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
-    result = publisher.publish(change.id, decline_app=True)
+    result = publisher.publish(change.id, decline_app=True,
+                               fallback_token="PAT-CANARY")
     assert result.state == "PUBLISHED"
     assert result.presentation == "COMMIT_STATUS_LESSER"
     assert len(transport.calls) == 7
@@ -269,7 +270,16 @@ def test_declined_app_stale_status_never_succeeds(tmp_path) -> None:
              json_response(200, {"head": {"sha": "c" * 40}})]
     queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
-    result = publisher.publish(change.id, decline_app=True)
+    result = publisher.publish(change.id, decline_app=True,
+                               fallback_token="PAT-CANARY")
     assert result.head_sha == "c" * 40 and result.freshness == "STALE"
     assert all(json.loads(call["body"])["state"] == "error"
                for call in transport.calls[2:])
+
+
+def test_declined_app_requires_previously_authorized_fallback_token(tmp_path) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(tmp_path, [], now=now)
+    with pytest.raises(ValueError, match="authorized GitHub fallback token"):
+        publisher.publish(change.id, decline_app=True)
+    assert not transport.calls
