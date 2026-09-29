@@ -22,6 +22,7 @@ import typer
 from rich.console import Console
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.cli.github_commands import github_app_admin, github_check
 from backend.app.cli.passport_commands import (
     VerifyUsageCommand, export_passport_command, rotate_identity_command, trust_app,
     verify_command,
@@ -52,6 +53,8 @@ app.add_typer(change_app, name="change")
 app.add_typer(actor_app, name="actor")
 app.add_typer(delegation_app, name="delegation")
 app.add_typer(github_app, name="github")
+github_app.add_typer(github_app_admin, name="app")
+github_app.command("check")(github_check)
 app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(passport_app, name="passport")
