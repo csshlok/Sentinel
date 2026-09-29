@@ -4539,6 +4539,19 @@
             ],
             "title": "Policy Preset Version"
           },
+          "product_version": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Version"
+          },
           "risk_level": {
             "maxLength": 256,
             "minLength": 1,
@@ -4686,6 +4699,22 @@
           "freshness"
         ],
         "title": "PolicyPresetEvaluation",
+        "type": "object"
+      },
+      "ProductVersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "product_version": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Product Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_version"
+        ],
+        "title": "ProductVersionResponse",
         "type": "object"
       },
       "ProviderConnectRequest": {
@@ -10665,6 +10694,55 @@
         "summary": "Decide Tool Trust",
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "version_api_v1_version_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Version",
+        "tags": [
+          "system"
         ]
       }
     }

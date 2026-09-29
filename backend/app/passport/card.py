@@ -43,6 +43,8 @@ def card_facts(passport: dict[str, object], *, payload_digest: str) -> list[tupl
         denials = claims.get("policy_denials")
         if isinstance(denials, list):
             facts.extend(("Policy denial", str(reason)) for reason in denials)
+    if "product_version" in claims:
+        facts.append(("Sentinel version", str(claims["product_version"] or "UNKNOWN")))
     return facts
 
 

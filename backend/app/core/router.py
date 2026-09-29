@@ -70,6 +70,7 @@ from backend.app.contracts.models import (
     SignedPassportExport,
     PassportV2Issued,
     PolicyPresetEvaluation,
+    ProductVersionResponse,
     SigningPublicKeyResponse,
     ToolManifest,
     ToolManifestListResponse,
@@ -86,6 +87,7 @@ from backend.app.passport.bundle import BundleExporter
 from backend.app.providers.github_app import GitHubAppManifestFlows, app_provider_name
 from backend.app.providers.github_check import GitHubCheckPublisher
 from backend.app.providers.http_transport import UrllibHttpTransport
+from backend.app.policy.version import product_version
 
 
 IdempotencyHeader = Annotated[
@@ -110,6 +112,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def capabilities() -> CapabilitiesResponse:
         return service.capabilities()
+
+    @router.get("/version", response_model=ProductVersionResponse, tags=["system"])
+    def version() -> ProductVersionResponse:
+        return ProductVersionResponse(product_version=product_version())
 
     @router.get(
         "/changes/{change_id}/policy/preset",

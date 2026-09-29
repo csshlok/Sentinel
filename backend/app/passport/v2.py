@@ -25,6 +25,7 @@ from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.identity import open_signing_key
 from backend.app.policy.presets import PresetEvidence, evaluate_preset
+from backend.app.policy.version import product_version
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
@@ -171,7 +172,7 @@ class PassportV2Issuer:
             journal_integrity="PASS" if journal else "UNKNOWN",
             launch_records=bindings, execution_boundary="UNKNOWN",
             diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
-            issued_at=utc_now(),
+            issued_at=utc_now(), product_version=product_version(),
         )
         payload = self._checked_freshness(change_id, payload, change)
         if contract.policy_preset_name is None or contract.policy_change_type is None:

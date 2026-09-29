@@ -33,8 +33,18 @@ from backend.app.core.evidence_store import (
     legacy_database_path,
     migrate_store,
 )
+from backend.app.policy.version import product_version
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+@app.callback(invoke_without_command=True)
+def _root(version: bool = typer.Option(False, "--version", is_eager=True)) -> None:
+    if version:
+        typer.echo(product_version())
+        raise typer.Exit()
+
+
 change_app = typer.Typer(no_args_is_help=True)
 actor_app = typer.Typer(no_args_is_help=True)
 delegation_app = typer.Typer(no_args_is_help=True)

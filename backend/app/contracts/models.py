@@ -1263,6 +1263,7 @@ class PassportV2Payload(ContractModel):
     policy_change_type: Literal["code", "docs", "release"] | None = None
     policy_decision: Literal["ALLOW", "DENY"] = "DENY"
     policy_denials: list[ShortText] = Field(default_factory=list, max_length=16)
+    product_version: ShortText | None = None
 
 
 class PassportV2Issued(ContractModel):
@@ -1340,3 +1341,7 @@ class PolicyPresetEvaluation(ContractModel):
     decision: Literal["ALLOW", "DENY"]
     denials: list[ShortText] = Field(default_factory=list, max_length=16)
     freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+
+
+class ProductVersionResponse(ContractModel):
+    product_version: ShortText
