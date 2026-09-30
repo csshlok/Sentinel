@@ -74,6 +74,7 @@ from backend.app.providers.provider_port import GitHubProviderAdapter
 from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.app.verification.runner import SubprocessVerificationRunner
 from backend.app.workspace.manager import WorkspaceManager
+from backend.app.workspace.service import WorkspaceService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ def create_app(
         journal,
         tool_registry,
         broker=broker,
+        workspace_manager=workspace_manager,
     )
 
     @asynccontextmanager
@@ -305,6 +307,7 @@ def _build_runtime_services(
     tool_registry: ToolRegistryService | None = None,
     *,
     broker: CredentialBroker | None = None,
+    workspace_manager: WorkspaceManager | None = None,
 ) -> RuntimeServices:
     """Wires the AC-owned identity/policy/credential/provider/outcome/recovery/
     passport adapters into request-scoped use-case services (Gate 3 composition)."""
@@ -372,6 +375,8 @@ def _build_runtime_services(
         ),
         replay=replay_service,
         tools=resolved_tools,
+        workspace=(WorkspaceService(workspace_manager, policy, service, journal=resolved_journal)
+                   if workspace_manager is not None else None),
     )
 
 

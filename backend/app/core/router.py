@@ -78,10 +78,16 @@ from backend.app.contracts.models import (
     ToolDeclareRequest,
     ToolTrustRequest,
     VerificationActionRequest,
+    ChangeWorkspace,
+    WorkspaceActionRequest,
+    WorkspaceApplyPreview,
+    WorkspaceApplyRequest,
+    WorkspaceApplyResult,
+    WorkspaceSweepReport,
 )
 from backend.app.core.change_service import ChangeService
 from backend.app.core.runtime_service import RuntimeServices
-from backend.app.core.errors import AppError
+from backend.app.core.errors import AppError, adapter_unavailable
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.passport.bundle import BundleExporter
 from backend.app.providers.github_app import GitHubAppManifestFlows, app_provider_name
@@ -754,6 +760,53 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def resume_agent(change_id: UUID, run_id: UUID, request: ActorActionRequest) -> AgentRun:
         return runtime.evidence.resume_agent(change_id, run_id, request.actor_id)
+
+    # -- Claude-owned: Sentinel workspace (AppContainer clone, apply-back) -----
+
+    def _workspace():
+        if runtime.workspace is None:
+            raise adapter_unavailable("workspace")
+        return runtime.workspace
+
+    @router.get(
+        "/changes/{change_id}/workspace",
+        response_model=ChangeWorkspace,
+        tags=["workspace"],
+    )
+    def get_workspace(change_id: UUID) -> ChangeWorkspace:
+        return _workspace().show(change_id)
+
+    @router.post(
+        "/changes/{change_id}/workspace/preview",
+        response_model=WorkspaceApplyPreview,
+        tags=["workspace"],
+    )
+    def preview_workspace(change_id: UUID) -> WorkspaceApplyPreview:
+        return _workspace().preview(change_id)
+
+    @router.post(
+        "/changes/{change_id}/workspace/apply",
+        response_model=WorkspaceApplyResult,
+        tags=["workspace"],
+    )
+    def apply_workspace(change_id: UUID, request: WorkspaceApplyRequest) -> WorkspaceApplyResult:
+        return _workspace().apply(change_id, request)
+
+    @router.post(
+        "/changes/{change_id}/workspace/discard",
+        response_model=ChangeWorkspace,
+        tags=["workspace"],
+    )
+    def discard_workspace(change_id: UUID, request: WorkspaceActionRequest) -> ChangeWorkspace:
+        return _workspace().discard(change_id, request)
+
+    @router.post(
+        "/workspaces/sweep",
+        response_model=WorkspaceSweepReport,
+        tags=["workspace"],
+    )
+    def sweep_workspaces() -> WorkspaceSweepReport:
+        return _workspace().sweep()
 
     @router.post(
         "/changes/{change_id}/assurance/plan",

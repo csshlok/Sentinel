@@ -530,6 +530,62 @@
         "title": "AgentRunStatus",
         "type": "string"
       },
+      "AppContainerBoundary": {
+        "additionalProperties": false,
+        "description": "Facts read from a run's live process token and Job Object before it ran.",
+        "properties": {
+          "capability_sids": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Capability Sids",
+            "type": "array"
+          },
+          "integrity_rid": {
+            "pattern": "^0x[0-9a-f]+$",
+            "title": "Integrity Rid",
+            "type": "string"
+          },
+          "is_appcontainer": {
+            "title": "Is Appcontainer",
+            "type": "boolean"
+          },
+          "job_verified": {
+            "title": "Job Verified",
+            "type": "boolean"
+          },
+          "package_sid": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Package Sid",
+            "type": "string"
+          },
+          "profile_name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "verified_at": {
+            "format": "date-time",
+            "title": "Verified At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_name",
+          "package_sid",
+          "is_appcontainer",
+          "integrity_rid",
+          "job_verified",
+          "verified_at"
+        ],
+        "title": "AppContainerBoundary",
+        "type": "object"
+      },
       "AssuranceCheck": {
         "additionalProperties": false,
         "properties": {
@@ -1727,6 +1783,199 @@
           "review_state"
         ],
         "title": "ChangeView",
+        "type": "object"
+      },
+      "ChangeWorkspace": {
+        "additionalProperties": false,
+        "description": "The Change's workspace clone, its AppContainer profile and apply-back outcome.",
+        "properties": {
+          "active_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Run Id"
+          },
+          "applied_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Sha"
+          },
+          "base_branch": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Branch"
+          },
+          "base_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Sha"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "cleaned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleaned At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_staged": {
+            "default": false,
+            "title": "Credential Staged",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "package_sid": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Sid"
+          },
+          "profile_name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "refusal_reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal Reason"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRunRecord"
+            },
+            "maxItems": 1000,
+            "title": "Runs",
+            "type": "array"
+          },
+          "sealed_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed Sha"
+          },
+          "source_repository": {
+            "anyOf": [
+              {
+                "maxLength": 32767,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Repository"
+          },
+          "state": {
+            "$ref": "#/components/schemas/WorkspaceState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "maxLength": 32767,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "state",
+          "profile_name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ChangeWorkspace",
         "type": "object"
       },
       "ChangedPath": {
@@ -5884,6 +6133,399 @@
         ],
         "title": "VerificationStatus",
         "type": "string"
+      },
+      "WorkspaceActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id"
+        ],
+        "title": "WorkspaceActionRequest",
+        "type": "object"
+      },
+      "WorkspaceApplyPreview": {
+        "additionalProperties": false,
+        "description": "What apply-back would land; ``approval_token`` is null whenever apply cannot succeed.",
+        "properties": {
+          "approval_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Token"
+          },
+          "base_sha": {
+            "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+            "title": "Base Sha",
+            "type": "string"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "changed_paths": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceChangedPath"
+            },
+            "maxItems": 10000,
+            "title": "Changed Paths",
+            "type": "array"
+          },
+          "commits": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceCommit"
+            },
+            "maxItems": 256,
+            "title": "Commits",
+            "type": "array"
+          },
+          "commits_truncated": {
+            "default": false,
+            "title": "Commits Truncated",
+            "type": "boolean"
+          },
+          "fast_forward_possible": {
+            "title": "Fast Forward Possible",
+            "type": "boolean"
+          },
+          "limitations": {
+            "items": {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "patch": {
+            "default": "",
+            "maxLength": 262144,
+            "title": "Patch",
+            "type": "string"
+          },
+          "patch_truncated": {
+            "default": false,
+            "title": "Patch Truncated",
+            "type": "boolean"
+          },
+          "refusal_reason": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal Reason"
+          },
+          "sealed_sha": {
+            "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+            "title": "Sealed Sha",
+            "type": "string"
+          },
+          "user_branch": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Branch"
+          },
+          "user_head": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Head"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "change_id",
+          "workspace_id",
+          "base_sha",
+          "sealed_sha",
+          "fast_forward_possible"
+        ],
+        "title": "WorkspaceApplyPreview",
+        "type": "object"
+      },
+      "WorkspaceApplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "approval_token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Approval Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "approval_token"
+        ],
+        "title": "WorkspaceApplyRequest",
+        "type": "object"
+      },
+      "WorkspaceApplyResult": {
+        "additionalProperties": false,
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceApplyPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/ChangeWorkspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "applied"
+        ],
+        "title": "WorkspaceApplyResult",
+        "type": "object"
+      },
+      "WorkspaceChangedPath": {
+        "additionalProperties": false,
+        "properties": {
+          "flags": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Flags",
+            "type": "array"
+          },
+          "new_mode": {
+            "pattern": "^[0-7]{6}$",
+            "title": "New Mode",
+            "type": "string"
+          },
+          "old_mode": {
+            "pattern": "^[0-7]{6}$",
+            "title": "Old Mode",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 32767,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "path",
+          "old_mode",
+          "new_mode"
+        ],
+        "title": "WorkspaceChangedPath",
+        "type": "object"
+      },
+      "WorkspaceCommit": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "maxLength": 512,
+            "title": "Author",
+            "type": "string"
+          },
+          "sha": {
+            "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+            "title": "Sha",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 1024,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "author",
+          "subject"
+        ],
+        "title": "WorkspaceCommit",
+        "type": "object"
+      },
+      "WorkspaceRunRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "boundary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppContainerBoundary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "limitations": {
+            "items": {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "WorkspaceRunRecord",
+        "type": "object"
+      },
+      "WorkspaceState": {
+        "description": "Lifecycle of a Sentinel-owned AppContainer workspace clone for one Change.",
+        "enum": [
+          "CREATING",
+          "READY",
+          "SEALED",
+          "APPLIED",
+          "APPLY_REFUSED",
+          "DISCARDED",
+          "CLEANED",
+          "CLEANUP_FAILED"
+        ],
+        "title": "WorkspaceState",
+        "type": "string"
+      },
+      "WorkspaceSweepFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "reason"
+        ],
+        "title": "WorkspaceSweepFailure",
+        "type": "object"
+      },
+      "WorkspaceSweepReport": {
+        "additionalProperties": false,
+        "properties": {
+          "cleaned": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Cleaned",
+            "type": "array"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceSweepFailure"
+            },
+            "maxItems": 10000,
+            "title": "Failed",
+            "type": "array"
+          },
+          "preserved": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Preserved",
+            "type": "array"
+          }
+        },
+        "title": "WorkspaceSweepReport",
+        "type": "object"
       }
     }
   },
@@ -9866,6 +10508,262 @@
         ]
       }
     },
+    "/api/v1/changes/{change_id}/workspace": {
+      "get": {
+        "operationId": "get_workspace_api_v1_changes__change_id__workspace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/workspace/apply": {
+      "post": {
+        "operationId": "apply_workspace_api_v1_changes__change_id__workspace_apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceApplyResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/workspace/discard": {
+      "post": {
+        "operationId": "discard_workspace_api_v1_changes__change_id__workspace_discard_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeWorkspace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/workspace/preview": {
+      "post": {
+        "operationId": "preview_workspace_api_v1_changes__change_id__workspace_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceApplyPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Workspace",
+        "tags": [
+          "workspace"
+        ]
+      }
+    },
     "/api/v1/delegations": {
       "post": {
         "operationId": "create_delegation_api_v1_delegations_post",
@@ -10748,6 +11646,55 @@
         "summary": "Version",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/v1/workspaces/sweep": {
+      "post": {
+        "operationId": "sweep_workspaces_api_v1_workspaces_sweep_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSweepReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sweep Workspaces",
+        "tags": [
+          "workspace"
         ]
       }
     }

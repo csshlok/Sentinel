@@ -14,6 +14,7 @@ the application).
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -78,6 +79,10 @@ from backend.app.outcomes.tracker import OutcomeTracker
 from backend.app.providers.repository_slug import resolve_github_repository_slug
 
 Clock = Callable[[], datetime]
+
+
+if TYPE_CHECKING:  # avoids a core -> workspace import cycle at runtime
+    from backend.app.workspace.service import WorkspaceService
 
 
 class IdentityAdminService:
@@ -719,3 +724,4 @@ class RuntimeServices:
     evidence: EvidenceAdminService
     replay: ReplayService
     tools: ToolRegistryService
+    workspace: WorkspaceService | None = None

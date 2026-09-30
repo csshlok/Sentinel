@@ -309,6 +309,12 @@ class WorkspaceManager:
     def live_for_change(self, change_id: UUID) -> WorkspaceRecord | None:
         return self.repository.live_for_change(change_id)
 
+    def latest_for_change(self, change_id: UUID) -> WorkspaceRecord | None:
+        """The live workspace, else the most recent (possibly CLEANED) one; None if never."""
+
+        return (self.repository.live_for_change(change_id)
+                or self.repository.latest_for_change(change_id))
+
     # ------------------------------------------------------------------ git helpers
 
     def _git(
@@ -848,6 +854,49 @@ class WorkspaceManager:
         self._validate_workspace_git(record)
         try:
             sealed = self._seal(record, change_id)
+        except AppError as exc:
+            if exc.code.startswith("WORKSPACE_"):
+                raise
+            raise workspace_seal_failed("Git failed while sealing") from exc
+        refusal, assessed = self._assess(record, change_id, base, sealed)
+        token: str | None = None
+        # A new seal (first preview, or content that changed since the last one) is journaled.
+        sealed_event = (JournalEventType.WORKSPACE_SEALED
+                        if record.state != WorkspaceState.SEALED or record.sealed_sha != sealed
+                        else None)
+        sealed_payload = {"base_sha": base, "sealed_sha": sealed,
+                          "refusal_reason": refusal.value if refusal else None}
+        if refusal is None:
+            token = secrets.token_urlsafe(32)
+            record = self._save(
+                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
+                approval_digest=_digest(token), approved_base_sha=base,
+                approved_sealed_sha=sealed, refusal_reason=None,
+                event=sealed_event, payload=sealed_payload,
+            )
+        else:
+            record = self._save(
+                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
+                approval_digest=None, approved_base_sha=None, approved_sealed_sha=None,
+                refusal_reason=refusal.value, event=sealed_event, payload=sealed_payload,
+            )
+        LOGGER.info("workspace %s previewed (refusal=%s)", record.id,
+                    refusal.value if refusal else None)
+        return replace(assessed, approval_token=token, limitations=tuple(dict.fromkeys(
+            record.limitations + assessed.limitations)))
+
+    def _assess(
+        self, record: WorkspaceRecord, change_id: UUID, base: str, sealed: str,
+    ) -> tuple[ApplyRefusal | None, ApplyPreview]:
+        """(refusal, token-less preview) of ``base..sealed``: shared by preview and inspect.
+
+        Read-only: the workspace is described and scanned, the user repository's
+        branch and HEAD are read. The caller has already validated ``.git``.
+        """
+
+        if record.source_repository is None:
+            raise workspace_state_conflict(record.state.value, "preview")
+        try:
             diverged, commits, commits_truncated, changed, patch, patch_truncated, blobs = (
                 self._describe(record, base, sealed))
             scan_refusal, flagged = self._scan_for_credentials(record, base, sealed, blobs)
@@ -873,38 +922,35 @@ class WorkspaceManager:
         refusal = (scan_refusal
                    or (ApplyRefusal.WORKSPACE_HISTORY_DIVERGED if diverged
                        else self._user_refusal(record, detached, user_branch, user_head)))
-        token: str | None = None
-        # A new seal (first preview, or content that changed since the last one) is journaled.
-        sealed_event = (JournalEventType.WORKSPACE_SEALED
-                        if record.state != WorkspaceState.SEALED or record.sealed_sha != sealed
-                        else None)
-        sealed_payload = {"base_sha": base, "sealed_sha": sealed,
-                          "refusal_reason": refusal.value if refusal else None}
-        if refusal is None:
-            token = secrets.token_urlsafe(32)
-            record = self._save(
-                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
-                approval_digest=_digest(token), approved_base_sha=base,
-                approved_sealed_sha=sealed, refusal_reason=None,
-                event=sealed_event, payload=sealed_payload,
-            )
-        else:
-            record = self._save(
-                record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
-                approval_digest=None, approved_base_sha=None, approved_sealed_sha=None,
-                refusal_reason=refusal.value, event=sealed_event, payload=sealed_payload,
-            )
-        LOGGER.info("workspace %s previewed (refusal=%s)", record.id,
-                    refusal.value if refusal else None)
-        return ApplyPreview(
+        return refusal, ApplyPreview(
             change_id=change_id, workspace_id=record.id, base_sha=base, sealed_sha=sealed,
-            commits=commits, changed_paths=changed, approval_token=token,
+            commits=commits, changed_paths=changed, approval_token=None,
             refusal_reason=refusal.value if refusal else None,
             user_branch=user_branch, user_head=user_head,
             fast_forward_possible=refusal is None,
             patch=patch, patch_truncated=patch_truncated, commits_truncated=commits_truncated,
-            limitations=tuple(dict.fromkeys(
-                record.limitations + PREVIEW_LIMITATIONS + tuple(extra))),
+            limitations=PREVIEW_LIMITATIONS + tuple(extra),
+        )
+
+    def inspect(self, change_id: UUID) -> ApplyPreview:
+        """A read-only preview of the already-sealed commit: no seal, no commit, no token.
+
+        Used to explain a refused apply. The recorded refusal reason wins over a
+        freshly computed one (it is what apply actually decided); the approval
+        token is always None and nothing is persisted.
+        """
+
+        record = self._live(change_id)
+        if record.sealed_sha is None or record.active_run_id is not None:
+            raise workspace_state_conflict(record.state.value, "inspect")
+        self._validate_workspace_git(record)
+        base = record.base_sha or ""
+        refusal, assessed = self._assess(record, change_id, base, record.sealed_sha)
+        reason = record.refusal_reason or (refusal.value if refusal else None)
+        return replace(
+            assessed, approval_token=None, refusal_reason=reason,
+            fast_forward_possible=reason is None,
+            limitations=tuple(dict.fromkeys(record.limitations + assessed.limitations)),
         )
 
     # ------------------------------------------------------------------ apply
@@ -924,6 +970,11 @@ class WorkspaceManager:
             payload={"reason": reason.value, "base_sha": record.base_sha,
                      "sealed_sha": record.sealed_sha},
         )
+
+    def approval_matches(self, record: WorkspaceRecord, approval_token: object) -> bool:
+        """Whether ``approval_token`` is the one issued for ``record`` (constant time, no Git)."""
+
+        return self._token_matches(record, approval_token)
 
     @staticmethod
     def _token_matches(record: WorkspaceRecord, approval_token: object) -> bool:
