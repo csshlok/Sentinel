@@ -808,6 +808,12 @@ class JournalEventType(StrEnum):
     AGENT_PAUSED = "agent.paused"
     AGENT_RESUMED = "agent.resumed"
     CHANGE_FORKED = "change.forked"
+    # D-07: Sentinel-owned AppContainer workspace transitions (Phase 1, plan 01-05).
+    WORKSPACE_CREATED = "workspace.created"
+    WORKSPACE_SEALED = "workspace.sealed"
+    WORKSPACE_APPLIED = "workspace.applied"
+    WORKSPACE_APPLY_REFUSED = "workspace.apply_refused"
+    WORKSPACE_CLEANED = "workspace.cleaned"
 
 
 class JournalEvent(ContractModel):
@@ -1345,3 +1351,117 @@ class PolicyPresetEvaluation(ContractModel):
 
 class ProductVersionResponse(ContractModel):
     product_version: ShortText
+
+
+# --------------------------------------------------------------------------
+# Sentinel-owned AppContainer workspace contracts (Phase 1, plan 01-05).
+# Field names state observed facts; they make no isolation claim.
+
+# A commit id of a SHA-1 (40 hex) or SHA-256 (64 hex) repository, as Git prints it.
+WorkspaceSha = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")]
+# Limitation and reason texts are reported verbatim (never whitespace-normalized).
+WorkspaceText = Annotated[str, StringConstraints(min_length=1, max_length=8192)]
+
+
+class AppContainerBoundary(ContractModel):
+    """Facts read from a run's live process token and Job Object before it ran."""
+
+    profile_name: ShortText
+    package_sid: ShortText
+    is_appcontainer: bool
+    integrity_rid: Annotated[str, StringConstraints(pattern=r"^0x[0-9a-f]+$")]
+    capability_sids: list[ShortText] = Field(default_factory=list, max_length=32)
+    job_verified: bool
+    verified_at: AwareDatetime
+
+
+class WorkspaceRunRecord(ContractModel):
+    run_id: UUID
+    status: ShortText
+    boundary: AppContainerBoundary | None = None
+    limitations: list[WorkspaceText] = Field(default_factory=list, max_length=32)
+    finished_at: AwareDatetime | None = None
+
+
+class WorkspaceChangedPath(ContractModel):
+    status: Annotated[str, StringConstraints(min_length=1, max_length=8)]
+    path: Annotated[str, StringConstraints(min_length=1, max_length=32767)]
+    old_mode: Annotated[str, StringConstraints(pattern=r"^[0-7]{6}$")]
+    new_mode: Annotated[str, StringConstraints(pattern=r"^[0-7]{6}$")]
+    flags: list[ShortText] = Field(default_factory=list, max_length=8)
+
+
+class WorkspaceCommit(ContractModel):
+    sha: WorkspaceSha
+    author: Annotated[str, StringConstraints(max_length=512)]
+    subject: Annotated[str, StringConstraints(max_length=1024)]
+
+
+class ChangeWorkspace(ContractModel):
+    """The Change's workspace clone, its AppContainer profile and apply-back outcome."""
+
+    id: UUID
+    change_id: UUID
+    state: WorkspaceState
+    profile_name: ShortText
+    package_sid: ShortText | None = None
+    workspace_path: RepositoryPath | None = None
+    source_repository: RepositoryPath | None = None
+    base_branch: Annotated[str, StringConstraints(min_length=1, max_length=1024)] | None = None
+    base_sha: WorkspaceSha | None = None
+    sealed_sha: WorkspaceSha | None = None
+    applied_sha: WorkspaceSha | None = None
+    refusal_reason: ShortText | None = None
+    active_run_id: UUID | None = None
+    runs: list[WorkspaceRunRecord] = Field(default_factory=list, max_length=1000)
+    credential_staged: bool = False
+    limitations: list[WorkspaceText] = Field(default_factory=list, max_length=64)
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    cleaned_at: AwareDatetime | None = None
+
+
+class WorkspaceApplyPreview(ContractModel):
+    """What apply-back would land; ``approval_token`` is null whenever apply cannot succeed."""
+
+    change_id: UUID
+    workspace_id: UUID
+    base_sha: WorkspaceSha
+    sealed_sha: WorkspaceSha
+    user_branch: Annotated[str, StringConstraints(min_length=1, max_length=1024)] | None = None
+    user_head: WorkspaceSha | None = None
+    fast_forward_possible: bool
+    refusal_reason: ShortText | None = None
+    commits: list[WorkspaceCommit] = Field(default_factory=list, max_length=256)
+    commits_truncated: bool = False
+    changed_paths: list[WorkspaceChangedPath] = Field(default_factory=list, max_length=10000)
+    patch: str = Field(default="", max_length=262144)
+    patch_truncated: bool = False
+    approval_token: Annotated[str, StringConstraints(min_length=1, max_length=256)] | None = None
+    limitations: list[WorkspaceText] = Field(default_factory=list, max_length=64)
+
+
+class WorkspaceApplyRequest(ContractModel):
+    actor_id: UUID
+    approval_token: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
+class WorkspaceActionRequest(ContractModel):
+    actor_id: UUID
+
+
+class WorkspaceApplyResult(ContractModel):
+    workspace: ChangeWorkspace
+    applied: bool
+    preview: WorkspaceApplyPreview | None = None
+
+
+class WorkspaceSweepFailure(ContractModel):
+    workspace_id: UUID
+    reason: WorkspaceText
+
+
+class WorkspaceSweepReport(ContractModel):
+    cleaned: list[UUID] = Field(default_factory=list, max_length=10000)
+    preserved: list[UUID] = Field(default_factory=list, max_length=10000)
+    failed: list[WorkspaceSweepFailure] = Field(default_factory=list, max_length=10000)

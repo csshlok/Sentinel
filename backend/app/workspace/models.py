@@ -11,7 +11,17 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from backend.app.contracts.models import WorkspaceState
+from backend.app.contracts.models import (
+    AppContainerBoundary,
+    ChangeWorkspace,
+    WorkspaceApplyPreview,
+    WorkspaceChangedPath,
+    WorkspaceCommit,
+    WorkspaceRunRecord,
+    WorkspaceState,
+    WorkspaceSweepFailure,
+    WorkspaceSweepReport,
+)
 
 
 class ApplyRefusal(StrEnum):
@@ -214,3 +224,96 @@ class ApplyPreview:
     patch_truncated: bool = False
     commits_truncated: bool = False
     limitations: tuple[str, ...] = ()
+
+
+# ---------------------------------------------------------------------- wire mapping
+
+
+def _boundary(facts: Any) -> AppContainerBoundary | None:
+    """The verified AppContainer facts a run recorded (None when nothing was verified)."""
+
+    if not isinstance(facts, dict):
+        return None
+    return AppContainerBoundary(
+        profile_name=facts["profile_name"],
+        package_sid=facts["package_sid"],
+        is_appcontainer=bool(facts["is_appcontainer"]),
+        integrity_rid=str(facts["integrity_rid"]).lower(),
+        capability_sids=list(facts.get("capability_sids") or ()),
+        job_verified=bool(facts["job_verified"]),
+        verified_at=datetime.fromisoformat(facts["verified_at"]),
+    )
+
+
+def _run(entry: dict[str, Any]) -> WorkspaceRunRecord:
+    return WorkspaceRunRecord(
+        run_id=UUID(str(entry["run_id"])),
+        status=str(entry.get("status") or "UNKNOWN"),
+        boundary=_boundary(entry.get("facts")),
+        limitations=[item for item in entry.get("limitations") or () if item][:32],
+        finished_at=_time(entry.get("finished_at")),
+    )
+
+
+def record_to_contract(record: WorkspaceRecord) -> ChangeWorkspace:
+    """The public view of a workspace record.
+
+    Never exposes the approval digest, the approved shas or the credential
+    fingerprints; ``credential_staged`` only says whether any credential was staged.
+    """
+
+    return ChangeWorkspace(
+        id=record.id,
+        change_id=record.change_id,
+        state=record.state,
+        profile_name=record.profile_name,
+        package_sid=record.package_sid,
+        workspace_path=str(record.workspace_path) if record.workspace_path else None,
+        source_repository=str(record.source_repository) if record.source_repository else None,
+        base_branch=record.base_branch,
+        base_sha=record.base_sha,
+        sealed_sha=record.sealed_sha,
+        applied_sha=record.applied_sha,
+        refusal_reason=record.refusal_reason,
+        active_run_id=UUID(record.active_run_id) if record.active_run_id else None,
+        runs=[_run(entry) for entry in record.runs],
+        credential_staged=bool(record.credential_fingerprints),
+        limitations=[item for item in record.limitations if item],
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        cleaned_at=record.cleaned_at,
+    )
+
+
+def preview_to_contract(preview: ApplyPreview) -> WorkspaceApplyPreview:
+    return WorkspaceApplyPreview(
+        change_id=preview.change_id,
+        workspace_id=preview.workspace_id,
+        base_sha=preview.base_sha,
+        sealed_sha=preview.sealed_sha,
+        user_branch=preview.user_branch or None,
+        user_head=preview.user_head or None,
+        fast_forward_possible=preview.fast_forward_possible,
+        refusal_reason=preview.refusal_reason,
+        commits=[WorkspaceCommit(sha=sha, author=author[:512], subject=subject[:1024])
+                 for sha, author, subject in preview.commits],
+        commits_truncated=preview.commits_truncated,
+        changed_paths=[
+            WorkspaceChangedPath(status=status[:8], path=path, old_mode=old_mode,
+                                 new_mode=new_mode, flags=list(flags)[:8])
+            for status, path, old_mode, new_mode, flags in preview.changed_paths
+        ],
+        patch=preview.patch[:PREVIEW_PATCH_LIMIT],
+        patch_truncated=preview.patch_truncated or len(preview.patch) > PREVIEW_PATCH_LIMIT,
+        approval_token=preview.approval_token,
+        limitations=[item for item in preview.limitations if item],
+    )
+
+
+def sweep_to_contract(report: SweepReport) -> WorkspaceSweepReport:
+    return WorkspaceSweepReport(
+        cleaned=list(report.cleaned),
+        preserved=list(report.preserved),
+        failed=[WorkspaceSweepFailure(workspace_id=workspace_id, reason=reason or "unknown")
+                for workspace_id, reason in report.failed],
+    )

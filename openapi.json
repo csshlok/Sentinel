@@ -4032,7 +4032,12 @@
           "tool.trust.invalidated",
           "agent.paused",
           "agent.resumed",
-          "change.forked"
+          "change.forked",
+          "workspace.created",
+          "workspace.sealed",
+          "workspace.applied",
+          "workspace.apply_refused",
+          "workspace.cleaned"
         ],
         "title": "JournalEventType",
         "type": "string"

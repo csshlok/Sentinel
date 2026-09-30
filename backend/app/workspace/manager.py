@@ -40,9 +40,10 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from backend.app.contracts.models import WorkspaceState, utc_now
+from backend.app.contracts.models import JournalEventType, WorkspaceState, utc_now
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
+from backend.app.core.journal import JournalWriter
 from backend.app.execution._process import CapturedProcess
 from backend.app.execution.agent_ports import (
     CredentialFingerprint,
@@ -281,6 +282,7 @@ class WorkspaceManager:
         git_timeout: float = 300.0, clock: Callable[[], datetime] = utc_now,
         baseline_head: Callable[[UUID], str | None] | None = None,
         credential_purger: Callable[[Path], bool] | None = None,
+        journal: JournalWriter | None = None,
     ) -> None:
         validate_profile_name(profile_prefix + "0" * 32)
         self.repository = WorkspaceRepository(database)
@@ -289,6 +291,7 @@ class WorkspaceManager:
         self._clock = clock
         self._baseline_head = baseline_head
         self._credential_purger = credential_purger
+        self._journal = journal
         # Runs started by THIS process; the sweep treats any other recorded run
         # as interrupted (its Job Object died with the process that owned it).
         self._live_runs: set[str] = set()
@@ -339,10 +342,36 @@ class WorkspaceManager:
         )
 
     def _save(
-        self, record: WorkspaceRecord, expected: WorkspaceState, **changes: Any
+        self, record: WorkspaceRecord, expected: WorkspaceState, *,
+        event: JournalEventType | None = None, payload: Mapping[str, Any] | None = None,
+        **changes: Any,
     ) -> WorkspaceRecord:
+        """Persist ``record`` with ``changes`` (compare-and-set on ``expected``).
+
+        With ``event`` (and a journal), the row update and the journal event
+        commit in ONE transaction: a failed append rolls the transition back.
+        The append is skipped, never failed, when the Change row no longer
+        exists (the workspace row deliberately outlives its Change, D-08).
+        Payloads carry ids, shas and reasons only -- never an approval token,
+        patch text or credential material.
+        """
+
         updated = replace(record, updated_at=self._clock(), **changes)
-        self.repository.update(updated, expected_state=expected)
+        if event is None or self._journal is None:
+            self.repository.update(updated, expected_state=expected)
+        else:
+            body = {"workspace_id": str(record.id), "profile_name": record.profile_name,
+                    **dict(payload or {})}
+            with self.repository.database.connection(immediate=True) as connection:
+                self.repository.update(updated, expected_state=expected, connection=connection)
+                exists = connection.execute(
+                    "SELECT 1 FROM changes WHERE id = ?", (str(record.change_id),)
+                ).fetchone()
+                if exists is not None:
+                    self._journal.append(
+                        record.change_id, event, subject_type="workspace",
+                        subject_id=record.id, payload=body, connection=connection,
+                    )
         # The run lease column is authoritative; never hand back a stale copy of it.
         return self.repository.get(updated.id) or updated
 
@@ -464,10 +493,15 @@ class WorkspaceManager:
             if head.returncode != 0 or _text(head) != base_sha:
                 raise workspace_clone_failed("the workspace HEAD is not the source HEAD")
             self._pin_line_endings(record)
-            return self._save(record, WorkspaceState.CREATING, state=WorkspaceState.READY)
+            return self._save(
+                record, WorkspaceState.CREATING, state=WorkspaceState.READY,
+                event=JournalEventType.WORKSPACE_CREATED,
+                payload={"package_sid": record.package_sid, "base_branch": record.base_branch,
+                         "base_sha": record.base_sha},
+            )
         except Exception as exc:
             try:
-                self.cleanup(record.id)
+                self.cleanup(record.id, reason="create_failed")
             except Exception:  # the row stays CLEANUP_FAILED for the sweep
                 pass
             if isinstance(exc, AppError) and exc.code == "WORKSPACE_CLONE_FAILED":
@@ -840,18 +874,25 @@ class WorkspaceManager:
                    or (ApplyRefusal.WORKSPACE_HISTORY_DIVERGED if diverged
                        else self._user_refusal(record, detached, user_branch, user_head)))
         token: str | None = None
+        # A new seal (first preview, or content that changed since the last one) is journaled.
+        sealed_event = (JournalEventType.WORKSPACE_SEALED
+                        if record.state != WorkspaceState.SEALED or record.sealed_sha != sealed
+                        else None)
+        sealed_payload = {"base_sha": base, "sealed_sha": sealed,
+                          "refusal_reason": refusal.value if refusal else None}
         if refusal is None:
             token = secrets.token_urlsafe(32)
             record = self._save(
                 record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
                 approval_digest=_digest(token), approved_base_sha=base,
                 approved_sealed_sha=sealed, refusal_reason=None,
+                event=sealed_event, payload=sealed_payload,
             )
         else:
             record = self._save(
                 record, record.state, state=WorkspaceState.SEALED, sealed_sha=sealed,
                 approval_digest=None, approved_base_sha=None, approved_sealed_sha=None,
-                refusal_reason=refusal.value,
+                refusal_reason=refusal.value, event=sealed_event, payload=sealed_payload,
             )
         LOGGER.info("workspace %s previewed (refusal=%s)", record.id,
                     refusal.value if refusal else None)
@@ -879,6 +920,9 @@ class WorkspaceManager:
             record, record.state, state=WorkspaceState.APPLY_REFUSED,
             refusal_reason=reason.value, limitations=limitations, approval_digest=None,
             approved_base_sha=None, approved_sealed_sha=None,
+            event=JournalEventType.WORKSPACE_APPLY_REFUSED,
+            payload={"reason": reason.value, "base_sha": record.base_sha,
+                     "sealed_sha": record.sealed_sha},
         )
 
     @staticmethod
@@ -906,7 +950,7 @@ class WorkspaceManager:
                 raise workspace_approval_invalid()
             if record.state == WorkspaceState.APPLIED:
                 try:
-                    return self.cleanup(record.id)
+                    return self.cleanup(record.id, reason="applied")
                 except AppError:
                     return self.get(record.id)
             return record
@@ -983,6 +1027,9 @@ class WorkspaceManager:
             record = self._save(
                 record, WorkspaceState.SEALED, state=WorkspaceState.APPLIED,
                 applied_sha=_text(after), refusal_reason=None,
+                event=JournalEventType.WORKSPACE_APPLIED,
+                payload={"base_sha": record.base_sha, "sealed_sha": record.sealed_sha,
+                         "applied_sha": _text(after), "base_branch": record.base_branch},
             )
             LOGGER.info("workspace %s applied as %s", record.id, record.applied_sha)
         except AppError as exc:
@@ -995,7 +1042,7 @@ class WorkspaceManager:
             except AppError:
                 pass
         try:
-            return self.cleanup(record.id)
+            return self.cleanup(record.id, reason="applied")
         except AppError:
             return self.get(record.id)  # CLEANUP_FAILED stays visible for the sweep
 
@@ -1064,11 +1111,19 @@ class WorkspaceManager:
                 problems.append(f"could not remove the profile folder ({type(exc).__name__})")
         return not os.path.lexists(packages) and not profile_exists(record.profile_name)
 
-    def cleanup(self, workspace_id: UUID) -> WorkspaceRecord:
+    _CLEANUP_REASONS = {
+        WorkspaceState.APPLIED: "applied",
+        WorkspaceState.DISCARDED: "discarded",
+        WorkspaceState.CREATING: "create_failed",
+    }
+
+    def cleanup(self, workspace_id: UUID, *, reason: str | None = None) -> WorkspaceRecord:
         """Remove the workspace, the profile folder and the AppContainer profile.
 
         Idempotent for CLEANED. Any failure records CLEANUP_FAILED (visible to the
-        DB-driven sweep) and raises ``WORKSPACE_CLEANUP_FAILED``.
+        DB-driven sweep) and raises ``WORKSPACE_CLEANUP_FAILED``. ``reason``
+        ("applied", "discarded", "swept", "create_failed") is journaled with
+        ``workspace.cleaned``; by default it is derived from the state.
         """
 
         record = self.get(workspace_id)
@@ -1087,6 +1142,10 @@ class WorkspaceManager:
             LOGGER.info("workspace %s cleaned (was %s)", record.id, record.state.value)
             return self._save(
                 record, record.state, state=WorkspaceState.CLEANED, cleaned_at=self._clock(),
+                event=JournalEventType.WORKSPACE_CLEANED,
+                payload={"reason": reason or self._CLEANUP_REASONS.get(record.state, "cleanup"),
+                         "previous_state": record.state.value,
+                         "applied_sha": record.applied_sha},
             )
         if not problems:
             problems.append("the profile folder or mapping still exists")
@@ -1120,7 +1179,7 @@ class WorkspaceManager:
                 approved_base_sha=None, approved_sealed_sha=None,
             )
             LOGGER.info("workspace %s discarded", record.id)
-        return self.cleanup(record.id)
+        return self.cleanup(record.id, reason="discarded")
 
     # ------------------------------------------------------------------ sweep
 
@@ -1191,7 +1250,7 @@ class WorkspaceManager:
                                     record.id, record.state.value)
                         preserved.append(record.id)
                     continue
-                self.cleanup(record.id)
+                self.cleanup(record.id, reason="swept")
                 LOGGER.info("sweep: workspace %s cleaned (was %s)", record.id,
                             record.state.value)
                 cleaned.append(record.id)

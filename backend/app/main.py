@@ -169,7 +169,7 @@ def create_app(
 
     workspace_manager = WorkspaceManager(
         database, baseline_head=baseline_head,
-        credential_purger=broker.purge_staged_credentials,
+        credential_purger=broker.purge_staged_credentials, journal=journal,
     )
     # claude resolves to the AppContainer profile: it launches only inside
     # this manager's workspace, with the broker's staged credential.
