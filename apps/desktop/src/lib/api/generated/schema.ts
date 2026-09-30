@@ -906,6 +906,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workspace */
+        get: operations["get_workspace_api_v1_changes__change_id__workspace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{change_id}/workspace/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Workspace */
+        post: operations["apply_workspace_api_v1_changes__change_id__workspace_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{change_id}/workspace/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard Workspace */
+        post: operations["discard_workspace_api_v1_changes__change_id__workspace_discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/changes/{change_id}/workspace/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Workspace */
+        post: operations["preview_workspace_api_v1_changes__change_id__workspace_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delegations": {
         parameters: {
             query?: never;
@@ -1195,6 +1263,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sweep Workspaces */
+        post: operations["sweep_workspaces_api_v1_workspaces_sweep_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1415,6 +1500,29 @@ export interface components {
          * @enum {string}
          */
         AgentRunStatus: "ATTACHED" | "RUNNING" | "PAUSED" | "PASSED" | "FAILED" | "TIMED_OUT" | "CANCELLED" | "ERROR";
+        /**
+         * AppContainerBoundary
+         * @description Facts read from a run's live process token and Job Object before it ran.
+         */
+        AppContainerBoundary: {
+            /** Capability Sids */
+            capability_sids?: string[];
+            /** Integrity Rid */
+            integrity_rid: string;
+            /** Is Appcontainer */
+            is_appcontainer: boolean;
+            /** Job Verified */
+            job_verified: boolean;
+            /** Package Sid */
+            package_sid: string;
+            /** Profile Name */
+            profile_name: string;
+            /**
+             * Verified At
+             * Format: date-time
+             */
+            verified_at: string;
+        };
         /** AssuranceCheck */
         AssuranceCheck: {
             /** Args */
@@ -1890,6 +1998,64 @@ export interface components {
             verification?: components["schemas"]["VerificationResult"] | null;
             /** Verification Evidence Revision */
             verification_evidence_revision?: number | null;
+        };
+        /**
+         * ChangeWorkspace
+         * @description The Change's workspace clone, its AppContainer profile and apply-back outcome.
+         */
+        ChangeWorkspace: {
+            /** Active Run Id */
+            active_run_id?: string | null;
+            /** Applied Sha */
+            applied_sha?: string | null;
+            /** Base Branch */
+            base_branch?: string | null;
+            /** Base Sha */
+            base_sha?: string | null;
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Cleaned At */
+            cleaned_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Credential Staged
+             * @default false
+             */
+            credential_staged: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Package Sid */
+            package_sid?: string | null;
+            /** Profile Name */
+            profile_name: string;
+            /** Refusal Reason */
+            refusal_reason?: string | null;
+            /** Runs */
+            runs?: components["schemas"]["WorkspaceRunRecord"][];
+            /** Sealed Sha */
+            sealed_sha?: string | null;
+            /** Source Repository */
+            source_repository?: string | null;
+            state: components["schemas"]["WorkspaceState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Workspace Path */
+            workspace_path?: string | null;
         };
         /** ChangedPath */
         ChangedPath: {
@@ -2765,7 +2931,7 @@ export interface components {
          *     event types below; it is not a filesystem or tool-call trace.
          * @enum {string}
          */
-        JournalEventType: "change.created" | "change.contract_updated" | "change.transitioned" | "change.git_summary_refreshed" | "change.legacy_verification_run" | "change.deleted" | "delegation.issued" | "delegation.revoked" | "credential.grant.issued" | "credential.grant.revoked" | "credential.secret.resolved" | "git.checkpoint.captured" | "agent.launched" | "agent.attached" | "agent.stop_requested" | "agent.completed" | "agent.descendant.observed" | "agent.descendant.terminated" | "agent.process_tree.terminated" | "environment.passport.captured" | "dependency.report.captured" | "assurance.plan.created" | "assurance.check.completed" | "provider.pull_request.created" | "provider.pull_request.refreshed" | "provider.pull_request.closed" | "provider.ci_refreshed" | "outcome.recorded" | "recovery.plan.created" | "recovery.action.completed" | "recovery.plan.completed" | "passport.built" | "passport.export.signed" | "policy.decision.denied" | "tool.manifest.registered" | "tool.trust.decided" | "tool.trust.invalidated" | "agent.paused" | "agent.resumed" | "change.forked";
+        JournalEventType: "change.created" | "change.contract_updated" | "change.transitioned" | "change.git_summary_refreshed" | "change.legacy_verification_run" | "change.deleted" | "delegation.issued" | "delegation.revoked" | "credential.grant.issued" | "credential.grant.revoked" | "credential.secret.resolved" | "git.checkpoint.captured" | "agent.launched" | "agent.attached" | "agent.stop_requested" | "agent.completed" | "agent.descendant.observed" | "agent.descendant.terminated" | "agent.process_tree.terminated" | "environment.passport.captured" | "dependency.report.captured" | "assurance.plan.created" | "assurance.check.completed" | "provider.pull_request.created" | "provider.pull_request.refreshed" | "provider.pull_request.closed" | "provider.ci_refreshed" | "outcome.recorded" | "recovery.plan.created" | "recovery.action.completed" | "recovery.plan.completed" | "passport.built" | "passport.export.signed" | "policy.decision.denied" | "tool.manifest.registered" | "tool.trust.decided" | "tool.trust.invalidated" | "agent.paused" | "agent.resumed" | "change.forked" | "workspace.created" | "workspace.sealed" | "workspace.applied" | "workspace.apply_refused" | "workspace.cleaned";
         /** Outcome */
         Outcome: {
             /**
@@ -3502,6 +3668,144 @@ export interface components {
          * @enum {string}
          */
         VerificationStatus: "PASSED" | "FAILED" | "TIMED_OUT" | "ERROR";
+        /** WorkspaceActionRequest */
+        WorkspaceActionRequest: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+        };
+        /**
+         * WorkspaceApplyPreview
+         * @description What apply-back would land; ``approval_token`` is null whenever apply cannot succeed.
+         */
+        WorkspaceApplyPreview: {
+            /** Approval Token */
+            approval_token?: string | null;
+            /** Base Sha */
+            base_sha: string;
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Changed Paths */
+            changed_paths?: components["schemas"]["WorkspaceChangedPath"][];
+            /** Commits */
+            commits?: components["schemas"]["WorkspaceCommit"][];
+            /**
+             * Commits Truncated
+             * @default false
+             */
+            commits_truncated: boolean;
+            /** Fast Forward Possible */
+            fast_forward_possible: boolean;
+            /** Limitations */
+            limitations?: string[];
+            /**
+             * Patch
+             * @default
+             */
+            patch: string;
+            /**
+             * Patch Truncated
+             * @default false
+             */
+            patch_truncated: boolean;
+            /** Refusal Reason */
+            refusal_reason?: string | null;
+            /** Sealed Sha */
+            sealed_sha: string;
+            /** User Branch */
+            user_branch?: string | null;
+            /** User Head */
+            user_head?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceApplyRequest */
+        WorkspaceApplyRequest: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Approval Token */
+            approval_token: string;
+        };
+        /** WorkspaceApplyResult */
+        WorkspaceApplyResult: {
+            /** Applied */
+            applied: boolean;
+            preview?: components["schemas"]["WorkspaceApplyPreview"] | null;
+            workspace: components["schemas"]["ChangeWorkspace"];
+        };
+        /** WorkspaceChangedPath */
+        WorkspaceChangedPath: {
+            /** Flags */
+            flags?: string[];
+            /** New Mode */
+            new_mode: string;
+            /** Old Mode */
+            old_mode: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
+        };
+        /** WorkspaceCommit */
+        WorkspaceCommit: {
+            /** Author */
+            author: string;
+            /** Sha */
+            sha: string;
+            /** Subject */
+            subject: string;
+        };
+        /** WorkspaceRunRecord */
+        WorkspaceRunRecord: {
+            boundary?: components["schemas"]["AppContainerBoundary"] | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Limitations */
+            limitations?: string[];
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * WorkspaceState
+         * @description Lifecycle of a Sentinel-owned AppContainer workspace clone for one Change.
+         * @enum {string}
+         */
+        WorkspaceState: "CREATING" | "READY" | "SEALED" | "APPLIED" | "APPLY_REFUSED" | "DISCARDED" | "CLEANED" | "CLEANUP_FAILED";
+        /** WorkspaceSweepFailure */
+        WorkspaceSweepFailure: {
+            /** Reason */
+            reason: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceSweepReport */
+        WorkspaceSweepReport: {
+            /** Cleaned */
+            cleaned?: string[];
+            /** Failed */
+            failed?: components["schemas"]["WorkspaceSweepFailure"][];
+            /** Preserved */
+            preserved?: string[];
+        };
     };
     responses: never;
     parameters: never;
@@ -5526,6 +5830,146 @@ export interface operations {
             };
         };
     };
+    get_workspace_api_v1_changes__change_id__workspace_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeWorkspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_workspace_api_v1_changes__change_id__workspace_apply_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceApplyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_workspace_api_v1_changes__change_id__workspace_discard_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeWorkspace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_workspace_api_v1_changes__change_id__workspace_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceApplyPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_delegation_api_v1_delegations_post: {
         parameters: {
             query?: never;
@@ -6050,6 +6494,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductVersionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sweep_workspaces_api_v1_workspaces_sweep_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSweepReport"];
                 };
             };
             /** @description Validation Error */
