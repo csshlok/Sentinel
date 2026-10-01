@@ -315,6 +315,45 @@ class WorkspaceManager:
         return (self.repository.live_for_change(change_id)
                 or self.repository.latest_for_change(change_id))
 
+    def has_live_workspace(self, change_id: UUID) -> bool:
+        """Whether the Change owns any workspace row that is not CLEANED (D-08)."""
+
+        return self.repository.live_for_change(change_id) is not None
+
+    def unapplied_work(self, change_id: UUID) -> bool:
+        """Whether agent work may still sit in the Change's workspace, unapplied.
+
+        True for a CREATING workspace, an active run, a sealed commit beyond the
+        base, a workspace HEAD beyond the base or a dirty work tree. APPLIED,
+        DISCARDED and CLEANUP_FAILED hold nothing to apply. Host-side Git reads
+        the workspace only after ``_validate_workspace_git``; a tampered ``.git``
+        or any Git failure answers True (fail closed). Read-only.
+        """
+
+        record = self.repository.live_for_change(change_id)
+        if record is None:
+            return False
+        if record.state == WorkspaceState.CREATING or record.active_run_id is not None:
+            return True
+        if record.state in (WorkspaceState.APPLIED, WorkspaceState.DISCARDED,
+                            WorkspaceState.CLEANUP_FAILED):
+            return False
+        if record.sealed_sha is not None and record.sealed_sha != record.base_sha:
+            return True
+        try:
+            self._validate_workspace_git(record)
+            head = self._ws_git(record, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])
+            if head.returncode != 0 or _text(head) != record.base_sha:
+                return True
+            status = self._ws_git(
+                record, ["status", "--porcelain=v1", "--untracked-files=all"])
+            if status.returncode != 0 or status.truncated or status.stdout.strip():
+                return True
+        except Exception:  # tampered .git, unreadable workspace, Git failure: fail closed
+            LOGGER.warning("workspace %s could not be inspected for unapplied work", record.id)
+            return True
+        return False
+
     # ------------------------------------------------------------------ git helpers
 
     def _git(

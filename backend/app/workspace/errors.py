@@ -134,3 +134,12 @@ def workspace_git_tampered(check: str) -> AppError:
         status_code=409,
         details={"check": check},
     )
+
+
+def workspace_not_applied() -> AppError:
+    return AppError(
+        "WORKSPACE_NOT_APPLIED",
+        "The agent's changes are still in the Sentinel workspace; preview and apply them "
+        "(or discard the workspace) before capturing evidence of the repository.",
+        status_code=409,
+    )

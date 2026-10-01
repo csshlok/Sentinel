@@ -73,6 +73,7 @@ from backend.app.providers.http_transport import HttpTransport, UrllibHttpTransp
 from backend.app.providers.provider_port import GitHubProviderAdapter
 from backend.app.recovery.git_recovery import GitRecoveryEngine
 from backend.app.verification.runner import SubprocessVerificationRunner
+from backend.app.workspace.guard import WorkspaceGuardedGitState
 from backend.app.workspace.manager import WorkspaceManager
 from backend.app.workspace.service import WorkspaceService
 
@@ -179,6 +180,7 @@ def create_app(
     )
     evidence_service = evidence or EvidenceService(
         evidence_store, journal=journal, launcher=agent_launcher,
+        git_state=WorkspaceGuardedGitState(workspace_manager),
     )
     change_delegations = DelegationRepository(database)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
