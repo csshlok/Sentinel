@@ -300,6 +300,10 @@ class ApiClient:
     def list_outcomes(self, change_id: UUID) -> Any:
         return self._request("GET", f"/api/v1/changes/{change_id}/outcomes")
 
+    # -- confined check runs --
+    def list_check_runs(self, change_id: UUID) -> Any:
+        return self._request("GET", f"/api/v1/changes/{change_id}/checks")
+
     # -- recovery --
     def preview_recovery(self, change_id: UUID) -> Any:
         return self._request("POST", f"/api/v1/changes/{change_id}/recovery/preview")

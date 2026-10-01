@@ -629,6 +629,21 @@ class CheckRunFacts:
     incomplete: bool = False
 
 
+def verified_boundary(facts: CheckRunFacts) -> str | None:
+    """The boundary to report for a box run: APPCONTAINER only for verified token facts.
+
+    Production launches are refused before resume unless the token verifies, so
+    this is None only for a test layer (or a regression) whose facts do not
+    verify; a contract field must then not claim the box boundary.
+    """
+
+    token = facts.appcontainer
+    if (facts.boundary == BOUNDARY_APPCONTAINER and token.is_appcontainer is True
+            and token.job_verified is True):
+        return BOUNDARY_APPCONTAINER
+    return None
+
+
 def argv_digest(argv: Sequence[str]) -> str:
     return hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest()
 

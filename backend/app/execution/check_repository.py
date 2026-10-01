@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from backend.app.core.database import Database
@@ -176,3 +177,118 @@ class CheckRunRepository:
                 (str(change_id),),
             ).fetchall()
         return [CheckRunRecord.from_row(row) for row in rows]
+
+    def events_for_change(
+        self, change_id: UUID, *, connection: sqlite3.Connection | None = None
+    ) -> list[CheckRunEvent]:
+        """The Change's ``check.confined_run`` / ``check.unconfined_run`` journal events."""
+
+        with self.database.connection_or(connection) as conn:
+            rows = conn.execute(
+                "SELECT event_type, subject_id, payload_json FROM journal_events "
+                "WHERE change_id = ? AND event_type IN (?, ?) ORDER BY seq",
+                (str(change_id), CONFINED_RUN_EVENT, UNCONFINED_RUN_EVENT),
+            ).fetchall()
+        return check_run_events((row["event_type"], row["subject_id"], row["payload_json"])
+                                for row in rows)
+
+
+# --------------------------------------------------------------------------- facts
+#
+# Phase 5 (05-04): the observed boundary of a check run, and the Change-level
+# ``confined_checks`` fact. A run counts as confined only when BOTH its row and
+# every journaled ``check.confined_run`` event for it carry verified token facts
+# (AppContainer token, Job Object verified before resume). Anything absent,
+# mixed or unverifiable is UNKNOWN or FAIL, never PASS.
+
+CONFINED_RUN_EVENT = "check.confined_run"
+UNCONFINED_RUN_EVENT = "check.unconfined_run"
+BOUNDARY_APPCONTAINER = "APPCONTAINER"
+BOUNDARY_UNCONFINED = "UNCONFINED"
+
+Fact = Literal["PASS", "FAIL", "UNKNOWN"]
+
+
+@dataclass(frozen=True, slots=True)
+class CheckRunEvent:
+    event_type: str
+    subject_id: str | None
+    payload: Mapping[str, Any] | None  # None: malformed payload
+
+
+def check_run_events(rows: Iterable[tuple[str, str | None, str | None]]) -> list[CheckRunEvent]:
+    events: list[CheckRunEvent] = []
+    for event_type, subject_id, raw in rows:
+        if event_type not in (CONFINED_RUN_EVENT, UNCONFINED_RUN_EVENT):
+            continue
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else None
+        except (ValueError, RecursionError):
+            payload = None
+        events.append(CheckRunEvent(event_type, subject_id,
+                                    payload if isinstance(payload, dict) else None))
+    return events
+
+
+def verified_token_facts(facts: Mapping[str, Any] | None) -> bool:
+    """True only for facts read from an AppContainer token whose Job Object was verified."""
+
+    return (isinstance(facts, Mapping) and facts.get("is_appcontainer") is True
+            and facts.get("job_verified") is True)
+
+
+def _run_events(run_id: UUID, events: Sequence[CheckRunEvent]) -> list[CheckRunEvent]:
+    key = str(run_id)
+    return [event for event in events
+            if event.subject_id == key
+            or (event.payload is not None and event.payload.get("check_run_id") == key)]
+
+
+def check_run_fact(
+    run_id: UUID | None, claimed: str | None, *,
+    records: Mapping[UUID, CheckRunRecord], events: Sequence[CheckRunEvent],
+) -> tuple[Fact, str | None]:
+    """Classify one check run behind a piece of evidence; the reason explains non-PASS."""
+
+    if run_id is None or claimed is None:
+        return "UNKNOWN", "the evidence records no check run or boundary"
+    mine = _run_events(run_id, events)
+    if claimed == BOUNDARY_UNCONFINED or any(
+            event.event_type == UNCONFINED_RUN_EVENT for event in mine):
+        return "FAIL", "a check ran UNCONFINED (delegated checks.unconfined opt-in)"
+    if claimed != BOUNDARY_APPCONTAINER:
+        return "UNKNOWN", "the evidence names an unrecognized check boundary"
+    record = records.get(run_id)
+    confined = [event for event in mine if event.event_type == CONFINED_RUN_EVENT]
+    if record is None or not confined:
+        return "UNKNOWN", "the check run record or its journal event is missing"
+    if record.facts is None:
+        return "UNKNOWN", "the check run recorded no verified launch"
+    if not verified_token_facts(record.facts):
+        return "FAIL", "the check run's boundary verification failed"
+    for event in confined:
+        payload = event.payload
+        if (payload is None or event.subject_id != str(run_id)
+                or payload.get("check_run_id") != str(run_id)
+                or payload.get("boundary") != BOUNDARY_APPCONTAINER
+                or payload.get("package_sid") != record.package_sid
+                or not verified_token_facts(payload)):
+            return "FAIL", "a journaled check run failed boundary verification"
+    return "PASS", None
+
+
+def confined_checks_fact(
+    bound: Sequence[tuple[UUID | None, str | None]], *,
+    records: Mapping[UUID, CheckRunRecord], events: Sequence[CheckRunEvent],
+) -> tuple[Fact, str | None]:
+    """PASS only when every bound run is a verified box run; any FAIL wins; none ran -> UNKNOWN."""
+
+    if not bound:
+        return "UNKNOWN", "no check run feeds the evaluated evidence"
+    results = [check_run_fact(run_id, claimed, records=records, events=events)
+               for run_id, claimed in bound]
+    for fact in ("FAIL", "UNKNOWN"):
+        for state, reason in results:
+            if state == fact:
+                return state, reason
+    return "PASS", None

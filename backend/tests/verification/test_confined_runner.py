@@ -82,7 +82,11 @@ def test_runner_goes_through_a_box_and_reports_its_boundary(setup, runner_type) 
     assert checked.result.status is VerificationStatus.PASSED
     # The tree is the repository copy: tracked code present, the ignored .env absent.
     assert checked.result.stdout.split() == ["2", "False"]
-    assert checked.boundary == "APPCONTAINER"
+    # 05-04: the host harness reports unverified token facts (is_appcontainer=False), so
+    # neither the runner nor the contract result may claim the box boundary.
+    assert checked.boundary is None
+    assert checked.result.boundary is None
+    assert checked.result.check_run_id == checked.check_run_id
     record = boxes.repository.get(checked.check_run_id)
     assert record is not None and record.state.value == "CLEANED"
     assert windows.spawned[0]["cwd"].name == "tree"
@@ -311,6 +315,8 @@ def test_real_verification_runs_contained(tmp_path, real_cache) -> None:
     assert Path(probe["cwd"]).name == "tree"
     assert not (repo / "escaped.txt").exists()
     assert checked.boundary == "APPCONTAINER"
+    assert checked.result.boundary == "APPCONTAINER"  # verified real box run (05-04)
+    assert checked.result.check_run_id == checked.check_run_id
     confined = [e for e in _events(database, change_id) if e["type"] == "check.confined_run"]
     assert len(confined) == 1
     assert confined[0]["payload"]["is_appcontainer"] is True

@@ -29,7 +29,7 @@ from uuid import UUID, uuid4
 from backend.app.contracts.models import VerificationResult
 from backend.app.core.errors import AppError
 from backend.app.execution._process import CapturedProcess, capture, minimal_environment
-from backend.app.execution.check_box import CheckBoxes
+from backend.app.execution.check_box import CheckBoxes, verified_boundary
 from backend.app.execution.check_toolchains import (
     BOUNDARY_APPCONTAINER,
     BOUNDARY_UNCONFINED,
@@ -66,7 +66,7 @@ class CheckCommandResult:
     timed_out: bool
     incomplete: bool
     duration_ms: int
-    boundary: str
+    boundary: str | None
     check_run_id: UUID
 
 
@@ -111,7 +111,7 @@ def run_confined_check(
     return CheckCommandResult(
         returncode=facts.exit_code, stdout=facts.stdout, stderr=facts.stderr,
         truncated=facts.truncated, timed_out=facts.timed_out, incomplete=facts.incomplete,
-        duration_ms=facts.duration_ms, boundary=facts.boundary,
+        duration_ms=facts.duration_ms, boundary=verified_boundary(facts),
         check_run_id=facts.check_run_id,
     )
 

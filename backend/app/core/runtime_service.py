@@ -24,7 +24,10 @@ from backend.app.contracts.models import (
     Actor,
     ActorCreateRequest,
     ActorListResponse,
+    AppContainerBoundary,
     ChangePassport,
+    CheckRunListResponse,
+    CheckRunView,
     ChangeView,
     CredentialGrant,
     Delegation,
@@ -68,6 +71,13 @@ from backend.app.core.runtime_repositories import (
 )
 from backend.app.core.evidence_runtime import EvidenceAdminService
 from backend.app.credentials.broker import CredentialBroker
+from backend.app.execution.check_repository import (
+    BOUNDARY_APPCONTAINER,
+    BOUNDARY_UNCONFINED,
+    UNCONFINED_RUN_EVENT,
+    CheckRunRepository,
+    check_run_fact,
+)
 from backend.app.identity.errors import (
     actor_not_found,
     delegation_not_found,
@@ -711,6 +721,63 @@ class PassportService:
         return self._signing.public_key()
 
 
+class CheckRunService:
+    """Read-only view of a Change's check runs and the boundary each ran under.
+
+    Box runs come from ``check_runs`` rows; delegated unconfined runs have no row
+    and come from their ``check.unconfined_run`` journal event. A row reads
+    APPCONTAINER only when its row and journal facts verify (``check_run_fact``).
+    No argv text and no output are exposed.
+    """
+
+    def __init__(self, repository: CheckRunRepository, change_service: ChangeService) -> None:
+        self.repository = repository
+        self.change_service = change_service
+
+    def list_for_change(self, change_id: UUID) -> CheckRunListResponse:
+        self.change_service.get(change_id)  # 404 for an unknown Change
+        with self.repository.database.connection() as connection:
+            records = self.repository.for_change(change_id, connection=connection)
+            events = self.repository.events_for_change(change_id, connection=connection)
+        by_id = {record.id: record for record in records}
+        items: list[CheckRunView] = []
+        for record in records:
+            state, _reason = check_run_fact(record.id, BOUNDARY_APPCONTAINER,
+                                            records=by_id, events=events)
+            token = None
+            if record.facts is not None:
+                try:
+                    token = AppContainerBoundary.model_validate(record.facts)
+                except ValueError:
+                    token = None
+            items.append(CheckRunView(
+                id=record.id, change_id=record.change_id, state=record.state.value,
+                boundary=BOUNDARY_APPCONTAINER if state == "PASS" else None,
+                network=record.network, tree_digest=record.tree_digest,
+                runtime_manifest_digests=[grant.manifest_digest
+                                          for grant in record.runtime_grants],
+                exit_code=record.exit_code, timed_out=record.timed_out, token=token,
+                created_at=record.created_at, updated_at=record.updated_at,
+            ))
+        for event in events:
+            payload = event.payload
+            if event.event_type != UNCONFINED_RUN_EVENT or payload is None:
+                continue
+            try:
+                run_id = UUID(str(payload.get("check_run_id")))
+            except ValueError:
+                continue
+            exit_code = payload.get("exit_code")
+            timed_out = payload.get("timed_out")
+            items.append(CheckRunView(
+                id=run_id, change_id=change_id, state="FINISHED",
+                boundary=BOUNDARY_UNCONFINED,
+                exit_code=exit_code if type(exit_code) is int else None,
+                timed_out=timed_out if isinstance(timed_out, bool) else None,
+            ))
+        return CheckRunListResponse(items=items, count=len(items))
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeServices:
     """Bundles the AC-domain use-case services for router composition."""
@@ -725,3 +792,4 @@ class RuntimeServices:
     replay: ReplayService
     tools: ToolRegistryService
     workspace: WorkspaceService | None = None
+    checks: CheckRunService | None = None

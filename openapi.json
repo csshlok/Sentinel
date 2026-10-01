@@ -2109,6 +2109,163 @@
         "title": "CheckResult",
         "type": "object"
       },
+      "CheckRunListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CheckRunView"
+            },
+            "maxItems": 10000,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "CheckRunListResponse",
+        "type": "object"
+      },
+      "CheckRunView": {
+        "additionalProperties": false,
+        "description": "One check run of a Change and the boundary it was observed to run under.\n\n``boundary`` is APPCONTAINER only for a box run whose live token and Job\nObject were verified before it ran; UNCONFINED for a delegated opt-in run;\nNone when no verified run is recorded. No argv text and no output.",
+        "properties": {
+          "boundary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPCONTAINER",
+                  "UNCONFINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
+          "change_id": {
+            "format": "uuid",
+            "title": "Change Id",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "runtime_manifest_digests": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Runtime Manifest Digests",
+            "type": "array"
+          },
+          "state": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "State",
+            "type": "string"
+          },
+          "timed_out": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timed Out"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppContainerBoundary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tree_digest": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tree Digest"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "change_id",
+          "state"
+        ],
+        "title": "CheckRunView",
+        "type": "object"
+      },
       "CredentialGrant": {
         "additionalProperties": false,
         "properties": {
@@ -2816,6 +2973,21 @@
             "title": "Baseline Checkpoint Id",
             "type": "string"
           },
+          "boundary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPCONTAINER",
+                  "UNCONFINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
           "caveat": {
             "default": "executed \u2260 verified",
             "title": "Caveat",
@@ -2837,6 +3009,18 @@
             ],
             "title": "Changed Executable Lines"
           },
+          "check_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Run Id"
+          },
           "checks_passed": {
             "anyOf": [
               {
@@ -2849,8 +3033,11 @@
             "title": "Checks Passed"
           },
           "collection_boundary": {
-            "const": "UNCONFINED_IN_PROCESS",
             "default": "UNCONFINED_IN_PROCESS",
+            "enum": [
+              "UNCONFINED_IN_PROCESS",
+              "APPCONTAINER_IN_PROCESS"
+            ],
             "title": "Collection Boundary",
             "type": "string"
           },
@@ -4656,6 +4843,16 @@
             "title": "Change Revision",
             "type": "integer"
           },
+          "confined_checks": {
+            "default": "UNKNOWN",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN"
+            ],
+            "title": "Confined Checks",
+            "type": "string"
+          },
           "contract_digest": {
             "anyOf": [
               {
@@ -6064,6 +6261,33 @@
             "maxItems": 64,
             "title": "Args",
             "type": "array"
+          },
+          "boundary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPCONTAINER",
+                  "UNCONFINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
+          "check_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Run Id"
           },
           "completed_at": {
             "format": "date-time",
@@ -8086,6 +8310,65 @@
         "summary": "Cancel Change",
         "tags": [
           "changes"
+        ]
+      }
+    },
+    "/api/v1/changes/{change_id}/checks": {
+      "get": {
+        "operationId": "list_check_runs_api_v1_changes__change_id__checks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Check Runs",
+        "tags": [
+          "checks"
         ]
       }
     },

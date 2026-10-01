@@ -128,8 +128,9 @@ class BoundedVerificationRunner:
                 started_at=started_at, completed_at=utc_now(),
             )
             return CheckedVerification(result, None, None)
-        return CheckedVerification(_from_outcome(request, started_at, outcome),
-                                   outcome.boundary, outcome.check_run_id)
+        result = _from_outcome(request, started_at, outcome).model_copy(update={
+            "check_run_id": outcome.check_run_id, "boundary": outcome.boundary})
+        return CheckedVerification(result, outcome.boundary, outcome.check_run_id)
 
 
 def _from_outcome(request: VerificationRequest, started_at, outcome: CheckCommandResult,

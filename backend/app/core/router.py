@@ -30,6 +30,7 @@ from backend.app.contracts.models import (
     AssuranceRunActionRequest,
     AssuranceRunListResponse,
     ChainVerificationResult,
+    CheckRunListResponse,
     DependencyReport,
     DiffCoverageRequest,
     DiffCoverageResult,
@@ -799,6 +800,17 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
     )
     def discard_workspace(change_id: UUID, request: WorkspaceActionRequest) -> ChangeWorkspace:
         return _workspace().discard(change_id, request)
+
+    # -- Claude-owned: confined check runs (Phase 5) -----------------------
+    @router.get(
+        "/changes/{change_id}/checks",
+        response_model=CheckRunListResponse,
+        tags=["checks"],
+    )
+    def list_check_runs(change_id: UUID) -> CheckRunListResponse:
+        if runtime.checks is None:
+            raise adapter_unavailable("checks")
+        return runtime.checks.list_for_change(change_id)
 
     @router.post(
         "/workspaces/sweep",

@@ -20,7 +20,7 @@ from backend.app.contracts.models import (
 )
 from backend.app.assurance.engine import contract_digest
 from backend.app.core.errors import AppError
-from backend.app.execution.check_box import CheckBox, CheckBoxes
+from backend.app.execution.check_box import CheckBox, CheckBoxes, verified_boundary
 from backend.app.execution.commands import check_boxes_unavailable
 from backend.app.git.state import GitStateTracker
 
@@ -433,6 +433,13 @@ def collect_diff_coverage(
                     "-o", "addopts=", f"--junitxml={junit}"]
             result = result.model_copy(update={"command": argv})
             run = box.run(argv, timeout=300, limit=262_144)
+            # Phase 5 (05-04): box.run returns only for a token verified before resume.
+            boundary = verified_boundary(run)
+            result = result.model_copy(update={
+                "check_run_id": run.check_run_id, "boundary": boundary,
+                "collection_boundary": ("APPCONTAINER_IN_PROCESS"
+                                        if boundary == "APPCONTAINER"
+                                        else "UNCONFINED_IN_PROCESS")})
             if on_check_run is not None:
                 on_check_run(run.check_run_id, run.boundary)
             if run.timed_out or run.incomplete:

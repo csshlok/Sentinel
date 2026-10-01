@@ -57,11 +57,13 @@ from backend.app.core.runtime_service import (
     PassportService,
     ProviderOperationService,
     RecoveryService,
+    CheckRunService,
     RuntimeServices,
 )
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.windows_store import WindowsCredentialStore
 from backend.app.execution.check_box import CheckBoxes
+from backend.app.execution.check_repository import CheckRunRepository
 from backend.app.execution.launcher import AgentLauncher
 from backend.app.execution.signature import check_signature
 from backend.app.git.adapter import GitRepositoryInspector
@@ -417,6 +419,7 @@ def _build_runtime_services(
         tools=resolved_tools,
         workspace=(WorkspaceService(workspace_manager, policy, service, journal=resolved_journal)
                    if workspace_manager is not None else None),
+        checks=CheckRunService(CheckRunRepository(database), service),
     )
 
 

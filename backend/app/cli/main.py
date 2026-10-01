@@ -1,5 +1,5 @@
 """Typer CLI: create/list/show changes, identity, provider, outcome,
-recovery, workspace (show/preview/apply/discard/sweep), passport, evidence,
+recovery, workspace (show/preview/apply/discard/sweep), checks (list), passport, evidence,
 agent, and assurance commands, all through
 `ApiClient` only -- except `migrate-store`, which never contacts the API and
 operates on local store files while the backend is stopped.
@@ -61,6 +61,7 @@ events_app = typer.Typer(no_args_is_help=True)
 replay_app = typer.Typer(no_args_is_help=True)
 tool_app = typer.Typer(no_args_is_help=True)
 workspace_app = typer.Typer(no_args_is_help=True)
+checks_app = typer.Typer(no_args_is_help=True)
 app.add_typer(change_app, name="change")
 app.add_typer(actor_app, name="actor")
 app.add_typer(delegation_app, name="delegation")
@@ -70,6 +71,7 @@ github_app.command("check")(github_check)
 app.add_typer(outcome_app, name="outcome")
 app.add_typer(recovery_app, name="recovery")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(checks_app, name="checks")
 app.add_typer(passport_app, name="passport")
 app.add_typer(trust_app, name="trust")
 app.command("verify", cls=VerifyUsageCommand)(verify_command)
@@ -399,6 +401,13 @@ def outcome_refresh(
 @outcome_app.command("list")
 def outcome_list(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
     _run(lambda: ApiClient(api_url).list_outcomes(change_id), as_json=json_, no_color=no_color)
+
+
+@checks_app.command("list")
+def checks_list(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption,
+                no_color: bool = NoColorOption) -> None:
+    """List the Change's check runs and the boundary each was observed to run under."""
+    _run(lambda: ApiClient(api_url).list_check_runs(change_id), as_json=json_, no_color=no_color)
 
 
 @recovery_app.command("preview")

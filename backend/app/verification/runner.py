@@ -99,8 +99,9 @@ class SubprocessVerificationRunner:
                 truncated=False,
             )
             return CheckedVerification(result, None, None)
-        return CheckedVerification(self._from_outcome(request, started_at, outcome),
-                                   outcome.boundary, outcome.check_run_id)
+        result = self._from_outcome(request, started_at, outcome).model_copy(update={
+            "check_run_id": outcome.check_run_id, "boundary": outcome.boundary})
+        return CheckedVerification(result, outcome.boundary, outcome.check_run_id)
 
     def _from_outcome(
         self, request: VerificationRequest, started_at: datetime, outcome: CheckCommandResult,

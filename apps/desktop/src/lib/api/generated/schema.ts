@@ -310,6 +310,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/changes/{change_id}/checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Check Runs */
+        get: operations["list_check_runs_api_v1_changes__change_id__checks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/changes/{change_id}/contract": {
         parameters: {
             query?: never;
@@ -2099,6 +2116,52 @@ export interface components {
              */
             summary: string;
         };
+        /** CheckRunListResponse */
+        CheckRunListResponse: {
+            /** Count */
+            count: number;
+            /** Items */
+            items?: components["schemas"]["CheckRunView"][];
+        };
+        /**
+         * CheckRunView
+         * @description One check run of a Change and the boundary it was observed to run under.
+         *
+         *     ``boundary`` is APPCONTAINER only for a box run whose live token and Job
+         *     Object were verified before it ran; UNCONFINED for a delegated opt-in run;
+         *     None when no verified run is recorded. No argv text and no output.
+         */
+        CheckRunView: {
+            /** Boundary */
+            boundary?: ("APPCONTAINER" | "UNCONFINED") | null;
+            /**
+             * Change Id
+             * Format: uuid
+             */
+            change_id: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Network */
+            network?: boolean | null;
+            /** Runtime Manifest Digests */
+            runtime_manifest_digests?: string[];
+            /** State */
+            state: string;
+            /** Timed Out */
+            timed_out?: boolean | null;
+            token?: components["schemas"]["AppContainerBoundary"] | null;
+            /** Tree Digest */
+            tree_digest?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** CredentialGrant */
         CredentialGrant: {
             /**
@@ -2378,6 +2441,8 @@ export interface components {
              * Format: uuid
              */
             baseline_checkpoint_id: string;
+            /** Boundary */
+            boundary?: ("APPCONTAINER" | "UNCONFINED") | null;
             /**
              * Caveat
              * @default executed ≠ verified
@@ -2390,14 +2455,16 @@ export interface components {
             change_id: string;
             /** Changed Executable Lines */
             changed_executable_lines?: number | null;
+            /** Check Run Id */
+            check_run_id?: string | null;
             /** Checks Passed */
             checks_passed?: boolean | null;
             /**
              * Collection Boundary
              * @default UNCONFINED_IN_PROCESS
-             * @constant
+             * @enum {string}
              */
-            collection_boundary: "UNCONFINED_IN_PROCESS";
+            collection_boundary: "UNCONFINED_IN_PROCESS" | "APPCONTAINER_IN_PROCESS";
             /**
              * Collection Caveat
              * @default Tests and coverage share a process at user authority; agent-authored code can influence coverage data.
@@ -3088,6 +3155,12 @@ export interface components {
             change_id: string;
             /** Change Revision */
             change_revision: number;
+            /**
+             * Confined Checks
+             * @default UNKNOWN
+             * @enum {string}
+             */
+            confined_checks: "PASS" | "FAIL" | "UNKNOWN";
             /** Contract Digest */
             contract_digest?: string | null;
             diff_coverage?: components["schemas"]["PassportV2DiffClaim"];
@@ -3636,6 +3709,10 @@ export interface components {
         VerificationResult: {
             /** Args */
             args?: string[];
+            /** Boundary */
+            boundary?: ("APPCONTAINER" | "UNCONFINED") | null;
+            /** Check Run Id */
+            check_run_id?: string | null;
             /**
              * Completed At
              * Format: date-time
@@ -4572,6 +4649,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChangeView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_check_runs_api_v1_changes__change_id__checks_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                Authorization?: string | null;
+            };
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckRunListResponse"];
                 };
             };
             /** @description Validation Error */

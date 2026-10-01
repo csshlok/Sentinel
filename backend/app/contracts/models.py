@@ -249,6 +249,10 @@ class VerificationResult(ContractModel):
     output_truncated: bool = False
     started_at: AwareDatetime
     completed_at: AwareDatetime
+    # Phase 5 (additive): the check run behind this result and the boundary it was
+    # observed to run under. None for legacy rows and for a command that never started.
+    check_run_id: UUID | None = None
+    boundary: Literal["APPCONTAINER", "UNCONFINED"] | None = None
 
 
 class ChangeContract(ContractModel):
@@ -1206,7 +1210,11 @@ class DiffCoverageResult(ContractModel):
     started_at: AwareDatetime
     completed_at: AwareDatetime
     collector_status: ShortText
-    collection_boundary: Literal["UNCONFINED_IN_PROCESS"] = "UNCONFINED_IN_PROCESS"
+    # Phase 5 (additive): APPCONTAINER_IN_PROCESS only when the collection ran in a
+    # verified check box; legacy rows keep UNCONFINED_IN_PROCESS.
+    collection_boundary: Literal["UNCONFINED_IN_PROCESS", "APPCONTAINER_IN_PROCESS"] = (
+        "UNCONFINED_IN_PROCESS"
+    )
     collection_caveat: str = (
         "Tests and coverage share a process at user authority; agent-authored code can influence coverage data."
     )
@@ -1224,6 +1232,8 @@ class DiffCoverageResult(ContractModel):
     threshold: float | None = None
     policy_version: ShortText | None = None
     gate_satisfied: bool | None = None
+    check_run_id: UUID | None = None
+    boundary: Literal["APPCONTAINER", "UNCONFINED"] | None = None
 
 
 class PassportV2LaunchBinding(ContractModel):
@@ -1274,6 +1284,10 @@ class PassportV2Payload(ContractModel):
     policy_decision: Literal["ALLOW", "DENY"] = "DENY"
     policy_denials: list[ShortText] = Field(default_factory=list, max_length=16)
     product_version: ShortText | None = None
+    # Phase 5 (additive): PASS only when every check run behind the evaluated evidence
+    # ran in a verified AppContainer box; FAIL if any was UNCONFINED or failed
+    # verification; UNKNOWN when none ran or the records cannot establish it.
+    confined_checks: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
 
 
 class PassportV2Issued(ContractModel):
@@ -1469,3 +1483,30 @@ class WorkspaceSweepReport(ContractModel):
     cleaned: list[UUID] = Field(default_factory=list, max_length=10000)
     preserved: list[UUID] = Field(default_factory=list, max_length=10000)
     failed: list[WorkspaceSweepFailure] = Field(default_factory=list, max_length=10000)
+
+
+class CheckRunView(ContractModel):
+    """One check run of a Change and the boundary it was observed to run under.
+
+    ``boundary`` is APPCONTAINER only for a box run whose live token and Job
+    Object were verified before it ran; UNCONFINED for a delegated opt-in run;
+    None when no verified run is recorded. No argv text and no output.
+    """
+
+    id: UUID
+    change_id: UUID
+    state: ShortText
+    boundary: Literal["APPCONTAINER", "UNCONFINED"] | None = None
+    network: bool | None = None
+    tree_digest: ShortText | None = None
+    runtime_manifest_digests: list[ShortText] = Field(default_factory=list, max_length=64)
+    exit_code: int | None = None
+    timed_out: bool | None = None
+    token: AppContainerBoundary | None = None
+    created_at: AwareDatetime | None = None
+    updated_at: AwareDatetime | None = None
+
+
+class CheckRunListResponse(ContractModel):
+    items: list[CheckRunView] = Field(default_factory=list, max_length=10000)
+    count: int = Field(ge=0)
