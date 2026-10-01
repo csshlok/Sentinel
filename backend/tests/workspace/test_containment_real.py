@@ -202,9 +202,13 @@ def test_the_appcontainer_agent_is_denied_host_resources_that_the_host_can_reach
         assert loopback["elapsed_ms"] <= 4000, loopback
         assert accepted_from_container == 0
         # Credential Manager: the container sees no such target.
-        assert probe["cmdkey"]["ok"] is True, probe["cmdkey"]
-        assert "NONE" in probe["cmdkey"]["value"]["output"], probe["cmdkey"]
-        assert "Target:" not in probe["cmdkey"]["value"]["output"]
+        # Some hosts (GitHub's windows-latest) deny the spawn itself; that is a
+        # stronger denial, but then the empty-store observation is not made.
+        if probe["cmdkey"]["ok"] is False:
+            assert probe["cmdkey"]["code"] in DENIED_CODES, probe["cmdkey"]
+        else:
+            assert "NONE" in probe["cmdkey"]["value"]["output"], probe["cmdkey"]
+            assert "Target:" not in probe["cmdkey"]["value"]["output"]
         # Positive control for the boundary being usable: the workspace write landed.
         assert probe["workspace_write"]["ok"] is True, probe["workspace_write"]
         record = workspace_manager.live_for_change(change_id)

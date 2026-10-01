@@ -24,9 +24,12 @@ import pytest
 from backend.app.contracts.models import AgentRun, AgentRunStatus, WorkspaceState
 from backend.app.execution.process_supervisor import IS_WINDOWS, is_process_running
 from backend.app.workspace.manager import WorkspaceManager
-from backend.tests.workspace.conftest import FakeNodeLauncher
+from backend.tests.workspace.conftest import HOSTED_RUNNER_APPCONTAINER_GAP, FakeNodeLauncher
 
-pytestmark = pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only")
+pytestmark = [
+    pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only"),
+    HOSTED_RUNNER_APPCONTAINER_GAP,
+]
 
 POWERSHELL = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32",
                           "WindowsPowerShell", "v1.0", "powershell.exe")

@@ -21,9 +21,12 @@ from backend.app.execution.launcher import AgentAdapter, AgentLauncher
 from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.app.workspace.manager import WorkspaceManager
 from backend.tests.support_kb import git
-from backend.tests.workspace.conftest import repo_fingerprint
+from backend.tests.workspace.conftest import HOSTED_RUNNER_APPCONTAINER_GAP, repo_fingerprint
 
-pytestmark = pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only")
+pytestmark = [
+    pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only"),
+    HOSTED_RUNNER_APPCONTAINER_GAP,
+]
 
 
 def _boxed_git(workspace_manager: WorkspaceManager) -> AgentLauncher:
