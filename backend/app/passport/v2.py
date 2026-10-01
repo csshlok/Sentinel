@@ -21,6 +21,9 @@ from backend.app.contracts.models import (
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError, change_not_found
 from backend.app.core.journal import compute_event_hash
+from backend.app.execution.check_repository import (
+    CheckRunRepository, check_run_events, confined_checks_fact,
+)
 from backend.app.git.state import GitStateTracker
 from backend.app.policy.path_evidence import documentation_paths
 from backend.app.passport.cng import CngKey, fingerprint
@@ -71,6 +74,8 @@ class PassportV2Issuer:
             coverage = connection.execute(
                 "SELECT payload_json FROM diff_coverage_results WHERE change_id = ? "
                 "ORDER BY rowid DESC LIMIT 1", (str(change_id),)).fetchone()
+            check_runs = CheckRunRepository(self._database).for_change(
+                change_id, connection=connection)
         if len(journal) > _MAX_JOURNAL_EVENTS or len(launches) > _MAX_LAUNCHES:
             raise AppError("PASSPORT_EVIDENCE_LIMIT", "Too many journal or launch records to bind.",
                            status_code=409)
@@ -164,6 +169,9 @@ class PassportV2Issuer:
             limitations.append("No launch records exist for this Change.")
         if diff_limit:
             limitations.append(diff_limit)
+        confined_checks, confined_limit = self._confined_checks(coverage, journal, check_runs)
+        if confined_limit:
+            limitations.append(confined_limit)
         contract_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
                            if isinstance(contract_raw, str) else None)
         payload = PassportV2Payload(
@@ -175,6 +183,7 @@ class PassportV2Issuer:
             launch_records=bindings, execution_boundary="UNKNOWN",
             diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
             issued_at=utc_now(), product_version=product_version(),
+            confined_checks=confined_checks,
         )
         payload = self._checked_freshness(change_id, payload, change)
         if contract.policy_preset_name is None or contract.policy_change_type is None:
@@ -199,7 +208,7 @@ class PassportV2Issuer:
                 mode_changed_paths=mode_paths,
                 path_evidence_error=path_error,
                 execution_boundary=payload.execution_boundary,
-                confined_checks="UNKNOWN",
+                confined_checks=payload.confined_checks,
             ),
         )
         return payload.model_copy(update={
@@ -289,6 +298,23 @@ class PassportV2Issuer:
                                status_code=409)
             previous = calculated
         return previous
+
+    @staticmethod
+    def _confined_checks(coverage: object | None, journal: list[object],
+                         check_runs: list[object]) -> tuple[str, str | None]:
+        """Phase 5: the bound coverage run's observed check boundary (hash-verified journal)."""
+        bound: list[tuple[UUID | None, str | None]] = []
+        if coverage is not None:
+            try:
+                result = DiffCoverageResult.model_validate_json(coverage["payload_json"])
+            except (ValueError, TypeError, RecursionError):
+                return "UNKNOWN", "Confined checks UNKNOWN: the coverage record is malformed."
+            bound.append((result.check_run_id, result.boundary))
+        fact, reason = confined_checks_fact(
+            bound, records={record.id: record for record in check_runs},
+            events=check_run_events((row["event_type"], row["subject_id"], row["payload_json"])
+                                    for row in journal))
+        return fact, (f"Confined checks {fact}: {reason}." if reason else None)
 
     @staticmethod
     def _coverage_claim(row: object | None,
