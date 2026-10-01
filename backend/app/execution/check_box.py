@@ -22,6 +22,7 @@ and digests only (no argv text, output or host paths).
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import logging
@@ -35,7 +36,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from types import MappingProxyType, TracebackType
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID, uuid4
 
 from backend.app.contracts.models import JournalEventType, utc_now
@@ -697,6 +698,85 @@ def list_check_tree(
     return files
 
 
+_GENERIC_READ = 0x80000000
+_FILE_SHARE_READ = 0x00000001
+_OPEN_EXISTING = 3
+_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_FILE_ATTRIBUTE_TAG_INFO_CLASS = 9
+_FILE_ATTRIBUTE_DIRECTORY = 0x10
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+_INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+
+class _FileAttributeTagInfo(ctypes.Structure):
+    _fields_ = [("FileAttributes", ctypes.c_uint32), ("ReparseTag", ctypes.c_uint32)]
+
+
+def _open_listed_file(path: Path, relpath: str) -> BinaryIO:
+    """Open ``path`` for reading WITHOUT following a link anywhere on it (WR-04).
+
+    The listing checked every component, but a parent directory or the leaf can
+    be swapped for a junction or symlink before the copy opens it. The file is
+    opened with ``FILE_FLAG_OPEN_REPARSE_POINT`` (a link is opened as itself,
+    never followed), the handle must be a regular non-reparse file, and its
+    final path must be exactly ``path``: a junction on any parent resolves the
+    handle somewhere else and is refused.
+    """
+
+    if os.name != "nt":
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        return os.fdopen(os.open(path, flags), "rb")
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                     ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                     wintypes.HANDLE]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                      ctypes.c_void_p, wintypes.DWORD]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    kernel32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR,
+                                                   wintypes.DWORD, wintypes.DWORD]
+    kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateFileW(
+        str(path), _GENERIC_READ, _FILE_SHARE_READ, None, _OPEN_EXISTING,
+        _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS, None)
+    if handle is None or handle == _INVALID_HANDLE:
+        error = ctypes.get_last_error()
+        if error in (2, 3):
+            raise check_tree_refused("CHECK_TREE_REPARSE_POINT",
+                                     "a listed path disappeared before it was copied", relpath)
+        raise OSError(0, "CreateFileW failed", str(path), error)
+    try:
+        info = _FileAttributeTagInfo()
+        if not kernel32.GetFileInformationByHandleEx(handle, _FILE_ATTRIBUTE_TAG_INFO_CLASS,
+                                                     ctypes.byref(info), ctypes.sizeof(info)):
+            raise OSError(0, "GetFileInformationByHandleEx failed", str(path),
+                          ctypes.get_last_error())
+        if info.FileAttributes & (_FILE_ATTRIBUTE_REPARSE_POINT | _FILE_ATTRIBUTE_DIRECTORY):
+            raise check_tree_refused(
+                "CHECK_TREE_REPARSE_POINT", "a listed path changed into a link", relpath)
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = kernel32.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
+        if not length or length >= len(buffer):
+            raise OSError(0, "GetFinalPathNameByHandleW failed", str(path),
+                          ctypes.get_last_error())
+        if os.path.normcase(buffer.value) != os.path.normcase(str(_long(path))):
+            raise check_tree_refused(
+                "CHECK_TREE_REPARSE_POINT",
+                "a directory on a listed path changed into a link", relpath)
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
+    return os.fdopen(descriptor, "rb")
+
+
 def copy_check_tree(
     source: Path, files: Sequence[str], destination: Path, *,
     size_limit: int = DEFAULT_TREE_SIZE_LIMIT_BYTES,
@@ -720,7 +800,7 @@ def copy_check_tree(
         target.parent.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
-        with open(path, "rb") as reader, open(target, "xb") as writer:
+        with _open_listed_file(path, relpath) as reader, open(target, "xb") as writer:
             for chunk in iter(lambda: reader.read(_CHUNK), b""):
                 size += len(chunk)
                 total += len(chunk)

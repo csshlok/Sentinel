@@ -513,6 +513,74 @@ def test_reparse_point_on_a_listed_path_is_refused(boxes, windows, repo, runtime
                                     "CHECK_TREE_REPARSE_POINT")
 
 
+@windows_only
+def test_a_parent_swapped_for_a_junction_after_the_listing_is_refused_by_the_copy(
+    repo, tmp_path,
+) -> None:
+    """WR-04: the copy re-checks every component, not only the leaf (listing/copy TOCTOU)."""
+
+    import _winapi
+
+    from backend.app.execution.check_box import copy_check_tree, list_check_tree
+
+    source = repo.resolve()
+    files = list_check_tree(source)
+    assert "pkg/mod.py" in files
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "mod.py").write_text("STOLEN = 'host secret'\n", encoding="utf-8")
+    remove_tree_no_follow(repo / "pkg")
+    _winapi.CreateJunction(str(outside), str(repo / "pkg"))
+    destination = tmp_path / "box-tree"
+    destination.mkdir()
+    with pytest.raises(AppError) as error:
+        copy_check_tree(source, files, destination)
+    assert error.value.code == "CHECK_TREE_REPARSE_POINT"
+    assert not any("STOLEN" in path.read_text(encoding="utf-8")
+                   for path in destination.rglob("*.py"))
+
+
+@windows_only
+def test_a_leaf_swapped_for_a_symlink_after_its_check_is_refused_by_the_open(
+    repo, tmp_path, monkeypatch,
+) -> None:
+    """WR-04: the open itself never follows a link, even if the leaf check raced."""
+
+    from backend.app.execution.check_box import copy_check_tree, list_check_tree
+
+    source = repo.resolve()
+    files = list_check_tree(source)
+    assert files[:2] == [".gitignore", "calc.py"]
+    secret = tmp_path / "id_ed25519"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    probe = tmp_path / "probe-link"
+    try:
+        os.symlink(secret, probe)
+    except OSError as exc:
+        pytest.skip(f"symlinks are unavailable here ({exc!r})")
+    probe.unlink()
+    # Simulate the race exactly: the copy checks calc.py, then creates its target
+    # folder, then opens it. The swap lands between the check and the open.
+    original_mkdir = Path.mkdir
+    calls: list[Path] = []
+
+    def racing_mkdir(self, *args, **kwargs):
+        original_mkdir(self, *args, **kwargs)
+        calls.append(self)
+        if len(calls) == 2:  # the target folder of calc.py (the second listed file)
+            (repo / "calc.py").unlink()
+            os.symlink(secret, repo / "calc.py")
+
+    destination = tmp_path / "box-tree"
+    destination.mkdir()
+    monkeypatch.setattr(Path, "mkdir", racing_mkdir)
+    with pytest.raises(AppError) as error:
+        copy_check_tree(source, files, destination)
+    assert error.value.code == "CHECK_TREE_REPARSE_POINT"
+    assert not any("PRIVATE KEY" in path.read_text(encoding="utf-8")
+                   for path in destination.rglob("*") if path.is_file())
+
+
 # ---------------------------------------------------------------------- CR-01: ignore rules
 
 
