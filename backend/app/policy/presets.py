@@ -9,7 +9,7 @@ from typing import Literal
 
 PresetName = Literal["strict", "standard", "docs-only"]
 ChangeType = Literal["code", "docs", "release"]
-PRESET_VERSION = "1.2.0"
+PRESET_VERSION = "1.3.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +75,7 @@ def _docs_path(path: str) -> bool:
             or name.startswith("setup.") or name.endswith((".lock", ".in"))):
         return False
     if name.startswith(("readme", "changelog", "contributing", "authors", "notice", "license")):
-        return True
+        return parsed.suffix.casefold() in {"", ".md", ".rst", ".txt", ".markdown", ".adoc"}
     return parsed.suffix.casefold() in {".md", ".rst"} or (
         parsed.suffix.casefold() == ".txt" and parts[0] in {"docs", "doc"})
 

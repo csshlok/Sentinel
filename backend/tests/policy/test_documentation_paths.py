@@ -46,7 +46,8 @@ def test_docs_preset_uses_full_git_inventory(tmp_path, change: str) -> None:
 
 def test_docs_allowlist_excludes_agent_instructions_and_build_files() -> None:
     for path in ("CLAUDE.md", "AGENTS.md", ".claude/skills/guide.md",
-                 ".github/copilot-instructions.md", "requirements.txt", "CMakeLists.txt"):
+                 ".github/copilot-instructions.md", "requirements.txt", "CMakeLists.txt",
+                 "README.py"):
         result = evaluate_preset(preset_name="docs-only", change_type="docs",
                                  evidence=PresetEvidence(checks_passed=True,
                                                          freshness="CURRENT", changed_paths=(path,)))

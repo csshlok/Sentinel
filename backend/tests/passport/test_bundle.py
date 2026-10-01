@@ -79,7 +79,7 @@ def test_selected_preset_and_denials_are_signed_in_bundle_and_card(tmp_path: Pat
             html = archive.read("visuals/passport.html")
         claims = passport["claims"]
         assert claims["policy_preset_name"] == "strict"
-        assert claims["policy_preset_version"] == "1.2.0"
+        assert claims["policy_preset_version"] == "1.3.0"
         assert claims["policy_decision"] == "DENY"
         assert any("confined checks" in reason for reason in claims["policy_denials"])
         assert any("AppContainer" in reason for reason in claims["policy_denials"])
