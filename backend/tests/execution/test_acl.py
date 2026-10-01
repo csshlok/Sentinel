@@ -190,6 +190,10 @@ def test_real_icacls_leaves_only_the_user_and_system_without_inheritance(tmp_pat
     assert username, "USERNAME must be set on Windows (only used to read icacls output)"
     directory = tmp_path / "Sentinel"
     directory.mkdir()
+    # Python 3.13+ may give pytest's tmp tree an explicit ACL; /reset makes the
+    # directory inherit, so the precondition below holds on any host.
+    subprocess.run([str(acl.icacls_executable()), str(directory), "/reset"],
+                   capture_output=True, check=True)
 
     assert _ace_lines(directory) and any("(I)" in line for line in _ace_lines(directory))
     assert restrict_to_current_user(directory, directory=True) is True
