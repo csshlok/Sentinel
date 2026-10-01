@@ -53,6 +53,7 @@ from backend.app.execution.check_repository import (
     RuntimeGrant,
 )
 from backend.app.execution.check_runtime import (
+    SITE_PACKAGES_ENV,
     ManifestEntry,
     PythonRuntime,
     RuntimeSnapshot,
@@ -475,7 +476,11 @@ class BoxRuntime:
 
 
 def python_box_runtime(runtime: PythonRuntime) -> BoxRuntime:
-    """The snapshot interpreter (``PYTHONHOME``) plus its dependency snapshot (``PYTHONPATH``)."""
+    """The snapshot interpreter (``PYTHONHOME``) plus its dependency snapshot (``PYTHONPATH``).
+
+    ``SENTINEL_CHECK_SITE_PACKAGES`` lets the snapshot's ``sitecustomize`` make the
+    dependency snapshot a real site directory, so its ``.pth`` files work (WR-05).
+    """
 
     interpreter, dependencies, limitations = runtime
     return BoxRuntime(
@@ -483,6 +488,7 @@ def python_box_runtime(runtime: PythonRuntime) -> BoxRuntime:
         env={
             "PYTHONHOME": str(interpreter.path),
             "PYTHONPATH": str(dependencies.path),
+            SITE_PACKAGES_ENV: str(dependencies.path),
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         },

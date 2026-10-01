@@ -56,6 +56,25 @@ PYTHON_BASE_IGNORE = frozenset({
 })
 PYTHON_DEPS_IGNORE = frozenset({"__pycache__"})
 
+# WR-05: PYTHONPATH entries are not site directories, so ``.pth`` files in the
+# dependency snapshot would never be processed (relative path entries such as
+# pywin32's ``win32``, ``import`` lines such as ``distutils-precedence.pth``).
+# The interpreter snapshot therefore carries this ``sitecustomize`` (imported by
+# ``site`` at startup), which makes the dependency snapshot a real site
+# directory exactly as the venv's site-packages is. It runs inside the box only.
+SITE_PACKAGES_ENV = "SENTINEL_CHECK_SITE_PACKAGES"
+SITECUSTOMIZE_RELPATH = "Lib/sitecustomize.py"
+SITECUSTOMIZE_SOURCE = (
+    '"""Sentinel check box: process the dependency snapshot as a site directory."""\n'
+    "import os as _os\n"
+    "import site as _site\n"
+    "\n"
+    f"_deps = _os.environ.get({SITE_PACKAGES_ENV!r})\n"
+    "if _deps:\n"
+    "    _site.addsitedir(_deps)\n"
+    "del _os, _site, _deps\n"
+).encode("utf-8")
+
 _PROBE_SOURCE = (
     "import json, sys, sysconfig; "
     "print(json.dumps({'base_prefix': sys.base_prefix, "
@@ -419,8 +438,13 @@ def _inside(path: Path, directory: Path) -> bool:
     return child == parent or child.startswith(parent.rstrip("\\/") + os.sep)
 
 
-def _path_limitations(purelib: Path) -> tuple[str, ...]:
-    """``.pth``/``.egg-link`` entries whose import path the box cannot read."""
+def _path_limitations(purelib: Path, *, site_hook: bool = True) -> tuple[str, ...]:
+    """``.pth``/``.egg-link`` entries whose import path the box cannot read.
+
+    Without the snapshot's ``sitecustomize`` hook (the interpreter ships its own
+    ``sitecustomize.py``), no ``.pth`` file is processed in the box at all, and
+    every one is reported.
+    """
 
     limitations: list[str] = []
     try:
@@ -437,6 +461,10 @@ def _path_limitations(purelib: Path) -> tuple[str, ...]:
             continue
         if lowered.startswith("__editable__"):
             limitations.append(f"{name}: editable install whose source is outside the dependency snapshot")
+            continue
+        if not site_hook:
+            limitations.append(f"{name}: .pth file not processed in the box (the interpreter "
+                               "ships its own sitecustomize.py)")
             continue
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -469,11 +497,21 @@ def python_runtime(
         raise check_runtime_failed("python", "the interpreter must be an absolute file path")
     base_prefix, purelib = _interpreter_facts(interpreter_path)
     cache = None if root is None else Path(root)
-    base = _snapshot([("", base_prefix)], kind="python", root=cache,
-                     ignore=PYTHON_BASE_IGNORE, size_limit=size_limit)
+    site_hook = not os.path.lexists(base_prefix / Path(SITECUSTOMIZE_RELPATH))
+    hook_directory = Path(tempfile.mkdtemp(prefix="sentinel-sitehook-"))
+    try:
+        sources: list[tuple[str, Path]] = [("", base_prefix)]
+        if site_hook:
+            hook = hook_directory / "sitecustomize.py"
+            hook.write_bytes(SITECUSTOMIZE_SOURCE)
+            sources.append((SITECUSTOMIZE_RELPATH, hook))
+        base = _snapshot(sources, kind="python", root=cache,
+                         ignore=PYTHON_BASE_IGNORE, size_limit=size_limit)
+    finally:
+        remove_tree_no_follow(hook_directory)
     deps = _snapshot([("", purelib)], kind="python-deps", root=cache,
                      ignore=PYTHON_DEPS_IGNORE, size_limit=size_limit)
-    return PythonRuntime(base, deps, _path_limitations(purelib))
+    return PythonRuntime(base, deps, _path_limitations(purelib, site_hook=site_hook))
 
 
 # ---------------------------------------------------------------------- node

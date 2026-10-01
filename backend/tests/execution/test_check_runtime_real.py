@@ -123,6 +123,55 @@ def _cannot_load(result) -> bool:
 IMPORT_PROBE = "import pytest, coverage, sys; print(sys.prefix); print(pytest.__file__)"
 
 
+PTH_PROBE = ("import os, relmod; "
+             "print(relmod.VALUE, os.environ.get('SENTINEL_PTH_IMPORT_LINE_RAN'))")
+
+
+@HOSTED_PYTHON_HAS_REPARSE_POINT
+def test_pth_files_in_the_dependency_snapshot_work_in_the_box(
+    runtime, profile, tmp_path,
+) -> None:
+    """WR-05: relative ``.pth`` path entries and ``import`` lines behave as in the venv."""
+
+    from backend.app.execution._process import capture
+    from backend.app.execution.acl import grant_package_read, revoke_package_read
+    from backend.app.execution.appcontainer import base_environment, spawn_appcontainer_supervised
+    from backend.app.execution.check_box import python_box_runtime
+    from backend.app.execution.check_runtime import PythonRuntime, snapshot_tree
+
+    cache, snapshots = runtime
+    interpreter = snapshots.interpreter
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "vendored").mkdir(parents=True)
+    (site_packages / "vendored" / "relmod.py").write_text("VALUE = 'relative-pth-ok'\n",
+                                                          encoding="utf-8")
+    (site_packages / "extra.pth").write_text(
+        "vendored\nimport os; os.environ['SENTINEL_PTH_IMPORT_LINE_RAN'] = 'yes'\n",
+        encoding="utf-8")
+    dependencies = snapshot_tree(site_packages, kind="python-deps", root=cache)
+    box_runtime = python_box_runtime(PythonRuntime(interpreter, dependencies, ()))
+    env = base_environment(profile.container_path)
+    env.update(box_runtime.env)
+
+    def factory(argv, cwd, env):
+        return spawn_appcontainer_supervised(
+            argv, cwd=cwd, env=env, redact=lambda text: text, profile_name=profile.name,
+            expected_package_sid=profile.package_sid, capabilities=())
+
+    entries = (interpreter.path, dependencies.path)
+    for entry in entries:
+        grant_package_read(entry, profile.package_sid, allowed_root=cache)
+    try:
+        result = capture([str(box_runtime.executable), "-c", PTH_PROBE],
+                         cwd=profile.container_path, env=env, timeout=120, limit=65_536,
+                         process_factory=factory)
+    finally:
+        for entry in entries:
+            revoke_package_read(entry, profile.package_sid, allowed_root=cache)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert result.stdout.decode().split() == ["relative-pth-ok", "yes"]
+
+
 @HOSTED_PYTHON_HAS_REPARSE_POINT
 def test_snapshot_python_runs_in_the_box_only_while_granted(runtime, profile) -> None:
     from backend.app.execution.acl import grant_package_read, revoke_package_read

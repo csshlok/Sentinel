@@ -257,7 +257,11 @@ def test_python_runtime_snapshots_stdlib_and_deps(fake_python, cache: Path) -> N
     runtime = python_runtime(interpreter, root=cache)
     base_snapshot, deps, limitations = runtime
     assert base_snapshot.path.parent == cache / "python"
-    assert sorted(_files(base_snapshot.path)) == ["Lib/os.py", "python.exe", "python314.dll"]
+    assert sorted(_files(base_snapshot.path)) == [
+        "Lib/os.py", "Lib/sitecustomize.py", "python.exe", "python314.dll"]
+    # WR-05: the snapshot's sitecustomize makes the dependency snapshot a site directory.
+    assert (base_snapshot.path / "Lib" / "sitecustomize.py").read_bytes() == (
+        check_runtime.SITECUSTOMIZE_SOURCE)
     assert deps.path.parent == cache / "python-deps"
     assert "pytest/__init__.py" in _files(deps.path)
     assert not any("__pycache__" in name for name in _files(deps.path))
@@ -266,6 +270,19 @@ def test_python_runtime_snapshots_stdlib_and_deps(fake_python, cache: Path) -> N
         "legacy.egg-link: egg-link to a source tree outside the dependency snapshot",
         "outside.pth: path entry outside the dependency snapshot",
     )
+
+
+def test_an_interpreter_with_its_own_sitecustomize_reports_every_pth(
+    fake_python, cache: Path,
+) -> None:
+    """WR-05: without Sentinel's site hook no .pth file is processed, so each is reported."""
+
+    interpreter, base, _, _ = fake_python
+    (base / "Lib" / "sitecustomize.py").write_text("# the vendor's own", encoding="utf-8")
+    base_snapshot, _, limitations = python_runtime(interpreter, root=cache)
+    assert (base_snapshot.path / "Lib" / "sitecustomize.py").read_text(
+        encoding="utf-8") == "# the vendor's own"
+    assert any(item.startswith("inside.pth: .pth file not processed") for item in limitations)
 
 
 def test_interpreter_facts_probe_runs_isolated_outside_the_repository(
