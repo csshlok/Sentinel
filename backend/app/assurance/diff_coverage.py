@@ -75,23 +75,42 @@ def _fixture_definition(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 def _test_module_risk(
     *, root: Path, path: str, changed_lines: set[int], report_paths: set[str],
+    changed_production_lines: dict[str, set[int]] | None = None,
 ) -> str | None:
-    """Find changed production-shaped definitions or production imports of a test module."""
+    """Allow changed test code only within collected test or fixture bodies."""
     source = root / path
     if source.is_symlink() or not source.is_file() or source.stat().st_size > 1_048_576:
         return f"Changed test module cannot be inspected: {path}."
     tree = ast.parse(source.read_text(encoding="utf-8-sig"), filename=path)
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        if node.name.startswith("test_") or node.name.startswith("pytest_"):
-            continue
+    allowed: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            allowed.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                node.name.startswith("test_") or _fixture_definition(node)):
+            allowed.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+            for decorator in node.decorator_list:
+                allowed.update(range(decorator.lineno, (decorator.end_lineno or decorator.lineno) + 1))
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            allowed.add(node.lineno)
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    allowed.update(range(child.lineno, (child.end_lineno or child.lineno) + 1))
+                    for decorator in child.decorator_list:
+                        allowed.update(range(decorator.lineno, (decorator.end_lineno or decorator.lineno) + 1))
+    if (tree.body and isinstance(tree.body[0], ast.Expr) and
+            isinstance(tree.body[0].value, ast.Constant) and
+            isinstance(tree.body[0].value.value, str)):
+        doc = tree.body[0]
+        allowed.update(range(doc.lineno, (doc.end_lineno or doc.lineno) + 1))
+    lines = source.read_text(encoding="utf-8-sig").splitlines()
+    for line in sorted(changed_lines):
+        if line in allowed:
             continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _fixture_definition(node):
+        if line <= len(lines) and (not lines[line - 1].strip() or
+                                   lines[line - 1].lstrip().startswith("#")):
             continue
-        if changed_lines.intersection(range(node.lineno, (node.end_lineno or node.lineno) + 1)):
-            return f"Changed test module contains production-shaped code: {path}:{node.lineno}."
+        return f"Changed test module contains production-shaped code: {path}:{line}."
     module = path.removesuffix(".py").replace("/", ".")
     parent, _, leaf = module.rpartition(".")
     for other in report_paths:
@@ -106,10 +125,28 @@ def _test_module_risk(
                     alias.name == module or alias.name.startswith(module + ".")
                     for alias in node.names):
                 return f"Production source imports a changed test module: {other} -> {path}."
-            if isinstance(node, ast.ImportFrom) and (
-                    node.module == module or
-                    node.module == parent and any(alias.name == leaf for alias in node.names)):
-                return f"Production source imports a changed test module: {other} -> {path}."
+            if isinstance(node, ast.ImportFrom):
+                importing_package = other.removesuffix(".py").replace("/", ".").rpartition(".")[0]
+                parts = importing_package.split(".") if importing_package else []
+                if node.level > len(parts) + 1:
+                    return f"Production relative import cannot be resolved: {other}."
+                prefix = ".".join(parts[:len(parts) - node.level + 1]) if node.level else ""
+                imported = ".".join(filter(None, (prefix, node.module))) if node.level else node.module
+                if imported == module or (imported == parent and
+                                          any(alias.name == leaf for alias in node.names)):
+                    return f"Production source imports a changed test module: {other} -> {path}."
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "__import__" and (
+                    changed_production_lines is None or bool(set(range(
+                        node.lineno, (node.end_lineno or node.lineno) + 1)) &
+                        changed_production_lines.get(other, set()))):
+                return f"Production source uses a dynamic import: {other}:{node.lineno}."
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and (
+                    isinstance(node.func.value, ast.Name) and node.func.value.id == "importlib" and
+                    node.func.attr == "import_module" and
+                    (changed_production_lines is None or bool(set(range(
+                        node.lineno, (node.end_lineno or node.lineno) + 1)) &
+                        changed_production_lines.get(other, set())))):
+                return f"Production source uses a dynamic import: {other}:{node.lineno}."
     return None
 
 
@@ -233,6 +270,7 @@ def evaluate_report(
                     root=root, path=path,
                     changed_lines=(excluded_changed_lines or {}).get(path, set()),
                     report_paths=set(files) | set(changed),
+                    changed_production_lines=changed,
                 )
             except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
                 risk = f"Changed test module cannot be classified safely: {path}."
