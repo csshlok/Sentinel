@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import UUID
 
 from backend.app.assurance.diff_map import _classification, map_diff
+from backend.app.assurance.test_call_monitor import assess_record
 from backend.app.contracts.models import (
     ChangeView, DiffCoverageFile, DiffCoverageRequest, DiffCoverageResult, GitCheckpoint, utc_now,
 )
@@ -185,6 +186,8 @@ def evaluate_report(
     rule: DiffCoverageRequest,
     collected_test_paths: set[str] | None = None,
     excluded_changed_lines: dict[str, set[int]] | None = None,
+    monitor_record: bytes | None = None,
+    monitor_requested: bool = False,
 ) -> DiffCoverageResult:
     """Pure report comparison; missing or inconsistent file records remain UNKNOWN."""
 
@@ -306,6 +309,13 @@ def evaluate_report(
             if risk:
                 state = "UNKNOWN"
                 override_reasons.append(risk)
+    if rule.rule.required and monitor_requested:
+        monitored = sorted(path for path, reason in excluded.items()
+                           if reason == "test code" and path.lower().endswith(".py"))
+        monitor_reason = assess_record(monitor_record, monitored)
+        if monitor_reason:
+            state = "UNKNOWN"
+            override_reasons.append(monitor_reason)
     gate = ((state == "PASS" or (state == "NOT_APPLICABLE" and rule.rule.not_applicable_satisfies))
             and result.checks_passed is True) if rule.rule.required else None
     return DiffCoverageResult.model_validate({**result.model_dump(), **{
