@@ -11,6 +11,7 @@ from uuid import UUID
 from backend.app.contracts.models import (
     ChangeContract,
     DiffCoverageResult,
+    GitCheckpoint,
     PassportV2DiffClaim,
     PassportV2Issued,
     PassportV2LaunchBinding,
@@ -21,6 +22,7 @@ from backend.app.core.database import Database
 from backend.app.core.errors import AppError, change_not_found
 from backend.app.core.journal import compute_event_hash
 from backend.app.git.state import GitStateTracker
+from backend.app.policy.path_evidence import documentation_paths
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.identity import open_signing_key
@@ -179,6 +181,12 @@ class PassportV2Issuer:
             return payload.model_copy(update={
                 "policy_denials": ["No versioned policy preset is selected."],
             })
+        preset_paths = changed_paths
+        mode_paths: tuple[str, ...] = ()
+        path_error: str | None = None
+        if contract.policy_change_type == "docs":
+            preset_paths, mode_paths, path_error = self._preset_paths(
+                change_id, change["repository_path"], coverage)
         decision = evaluate_preset(
             preset_name=contract.policy_preset_name,
             change_type=contract.policy_change_type,
@@ -187,7 +195,9 @@ class PassportV2Issuer:
                 diff_exercised=payload.diff_coverage.diff_exercised,
                 measured_percent=measured_percent,
                 freshness=payload.diff_coverage.freshness,
-                changed_paths=changed_paths,
+                changed_paths=preset_paths,
+                mode_changed_paths=mode_paths,
+                path_evidence_error=path_error,
                 execution_boundary=payload.execution_boundary,
                 confined_checks="UNKNOWN",
             ),
@@ -199,6 +209,28 @@ class PassportV2Issuer:
             "policy_decision": decision.status,
             "policy_denials": list(decision.reasons),
         })
+
+    def _preset_paths(self, change_id: UUID, root: str, coverage: object | None) -> tuple[
+        tuple[str, ...], tuple[str, ...], str | None,
+    ]:
+        if coverage is None:
+            return (), (), "coverage checkpoints are absent"
+        try:
+            result = DiffCoverageResult.model_validate_json(coverage["payload_json"])
+            with self._database.connection() as connection:
+                records = [connection.execute(
+                    "SELECT payload_json FROM git_checkpoints WHERE id = ? AND change_id = ?",
+                    (str(identifier), str(change_id))).fetchone()
+                    for identifier in (result.baseline_checkpoint_id, result.tested_checkpoint_id)]
+            if any(record is None for record in records):
+                return (), (), "bound checkpoint is missing"
+            baseline, tested = (GitCheckpoint.model_validate_json(record["payload_json"])
+                                for record in records)
+            if tested.repository_root != root or tested.head_sha != result.head_sha:
+                return (), (), "tested checkpoint does not match coverage"
+            return documentation_paths(baseline, tested)
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
+            return (), (), f"bound checkpoint inspection failed ({type(exc).__name__})"
 
     @staticmethod
     def _checked_freshness(change_id: UUID, claims: PassportV2Payload,

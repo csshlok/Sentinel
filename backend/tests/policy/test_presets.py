@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from backend.app.assurance.engine import contract_digest
 from backend.app.contracts.models import ChangeContract, DiffCoverageRule
-from backend.app.policy.presets import PresetEvidence, evaluate_preset
+from backend.app.policy.presets import PRESET_VERSION, PresetEvidence, evaluate_preset
 from backend.tests.passport.test_builder import _database, _seed_change
 
 
@@ -19,7 +19,7 @@ def test_strict_code_names_each_unknown_requirement_and_is_deterministic() -> No
     first = evaluate_preset(preset_name="strict", change_type="code", evidence=evidence)
     second = evaluate_preset(preset_name="strict", change_type="code", evidence=evidence)
     assert first == second
-    assert first.status == "DENY" and first.preset_version == "1.0.0"
+    assert first.status == "DENY" and first.preset_version == PRESET_VERSION
     assert any("checks" in reason for reason in first.reasons)
     assert any("freshness" in reason for reason in first.reasons)
     assert any("diff coverage" in reason for reason in first.reasons)

@@ -9,7 +9,7 @@ from typing import Literal
 
 PresetName = Literal["strict", "standard", "docs-only"]
 ChangeType = Literal["code", "docs", "release"]
-PRESET_VERSION = "1.0.0"
+PRESET_VERSION = "1.1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +42,9 @@ class PresetEvidence:
     confined_checks: str = "UNKNOWN"
     execution_boundary: str = "UNKNOWN"
     changed_paths: tuple[str, ...] = ()
+    path_evidence_error: str | None = None
+    deleted_paths: tuple[str, ...] = ()
+    mode_changed_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +63,20 @@ def _docs_path(path: str) -> bool:
     parsed = PurePosixPath(path)
     if ".." in parsed.parts or "." in parsed.parts:
         return False
-    return parsed.suffix.casefold() in {".md", ".rst", ".txt"}
+    parts = tuple(part.casefold() for part in parsed.parts)
+    name = parts[-1]
+    if (name in {"claude.md", "agents.md", "copilot-instructions.md"}
+            or ".claude" in parts):
+        return False
+    if (name.startswith(("requirements", "constraints", "pipfile"))
+            or name in {"cmakelists.txt", "pyproject.toml", "poetry.lock", "uv.lock",
+                        "pdm.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"}
+            or name.startswith("setup.") or name.endswith((".lock", ".in"))):
+        return False
+    if name.startswith(("readme", "changelog", "contributing", "authors", "notice", "license")):
+        return True
+    return parsed.suffix.casefold() in {".md", ".rst"} or (
+        parsed.suffix.casefold() == ".txt" and parts[0] in {"docs", "doc"})
 
 
 def evaluate_preset(*, preset_name: str, change_type: str,
@@ -71,9 +87,13 @@ def evaluate_preset(*, preset_name: str, change_type: str,
         return PresetDecision(preset_name, PRESET_VERSION, change_type, "DENY",
                               ("preset/change type combination is not permitted",))
     reasons: list[str] = []
+    if rule.docs_paths_only and evidence.path_evidence_error:
+        reasons.append(f"documentation path evidence unavailable: {evidence.path_evidence_error}")
     if rule.docs_paths_only and (not evidence.changed_paths or
                                  any(not _docs_path(path) for path in evidence.changed_paths)):
         reasons.append("docs-only paths are missing or include non-documentation files")
+    if rule.docs_paths_only and evidence.mode_changed_paths:
+        reasons.append("documentation path mode changed: " + ", ".join(evidence.mode_changed_paths[:8]))
     if rule.passing_checks and evidence.checks_passed is not True:
         reasons.append("passing checks are required; result is FAIL or UNKNOWN")
     if rule.current_freshness and evidence.freshness != "CURRENT":

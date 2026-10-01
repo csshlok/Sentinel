@@ -37,6 +37,8 @@ The verifier returns exit code 0 for valid, 1 for invalid, 2 for indeterminate, 
 
 Versioned `strict`, `standard`, and `docs-only` policy presets evaluate persisted Change evidence and name each unmet requirement. Unknown evidence denies. Preset selections and decisions are included in new Passport v2 payloads. The preset decision is available through the API, but its hook into the lifecycle transition gate is still pending; do not treat the preset result as an enforced release gate yet. Confined-check and observed AppContainer claims remain `UNKNOWN` until their structured evidence is wired in.
 
+For the `docs` change type, documentation means `.md` and `.rst` files, `.txt` files within `docs/` or `doc/`, and README, CHANGELOG, CONTRIBUTING, AUTHORS, NOTICE, or LICENSE named files. Dependency and build manifests are excluded. Agent instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, and `.github/copilot-instructions.md`) are excluded.
+
 ## Development
 
 Python 3.12 or newer and Windows are required for the real execution paths. Install the package and pinned test dependencies, then run the suite:
