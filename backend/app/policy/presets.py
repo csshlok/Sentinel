@@ -9,7 +9,7 @@ from typing import Literal
 
 PresetName = Literal["strict", "standard", "docs-only"]
 ChangeType = Literal["code", "docs", "release"]
-PRESET_VERSION = "1.3.0"
+PRESET_VERSION = "1.3.1"
 
 
 @dataclass(frozen=True, slots=True)

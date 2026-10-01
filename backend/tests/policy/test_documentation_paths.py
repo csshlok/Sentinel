@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import os
 from uuid import uuid4
 
 import pytest
@@ -147,3 +148,21 @@ def test_docs_inventory_ignores_build_output(tmp_path) -> None:
                                                        changed_paths=paths, mode_changed_paths=modes,
                                                        path_evidence_error=error))
     assert decision.status == "ALLOW"
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_docs_inventory_denies_new_symlink(tmp_path, staged: bool) -> None:
+    from backend.app.policy.path_evidence import documentation_paths
+    root = make_repo(tmp_path / "repo", {"README.md": "hello\n"})
+    git(root, "config", "core.symlinks", "true")
+    tracker = GitStateTracker()
+    identifier = uuid4()
+    baseline = tracker.capture(identifier, "BASELINE", str(root), 1, 1_048_576)
+    os.symlink(root / "README.md", root / "linked.md")
+    if staged:
+        git(root, "add", "linked.md")
+    tested = tracker.capture(identifier, "TESTED", str(root), 1, 1_048_576)
+    paths, modes, error = documentation_paths(baseline, tested)
+    assert error is None
+    assert "linked.md" in paths
+    assert "linked.md" in modes

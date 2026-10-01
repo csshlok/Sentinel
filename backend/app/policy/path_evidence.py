@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import stat
+
 from backend.app.contracts.models import GitCheckpoint
 from backend.app.core.errors import AppError
 from backend.app.git.safe_exec import run_git
@@ -59,9 +62,17 @@ def documentation_paths(baseline: GitCheckpoint, tested: GitCheckpoint) -> tuple
             path = raw_entries[index + 1].decode("utf-8")
             if len(header) != 5 or not header[0].startswith(":"):
                 return (), (), "malformed raw diff"
-            if header[0][1:] != "000000" and header[1] != "000000" and header[0][1:] != header[1]:
+            if (header[0][1:] == "000000" and header[1] not in {"100644", "100755"}):
+                modes.add(path)
+            elif (header[0][1:] != "000000" and header[1] != "000000"
+                  and header[0][1:] != header[1]):
                 modes.add(path)
         untracked = {entry.decode("utf-8") for entry in other.stdout.split(b"\0") if entry}
+        for path in untracked:
+            info = os.lstat(os.path.join(root, path))
+            if (not stat.S_ISREG(info.st_mode) or
+                    getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                modes.add(path)
         bound = {entry.path for entry in tested.summary.files
                  if entry.status.value == "UNTRACKED"}
         if untracked - bound:
