@@ -23,6 +23,7 @@ from backend.app.passport.bundle import BundleArtifact
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.providers.github_check import GitHubAppClient, GitHubCheckPublisher
+import backend.app.providers.github_check as github_check_module
 from backend.tests.providers.fakes import FakeHttpTransport, json_response
 from backend.tests.passport.test_builder import _database, _seed_change
 
@@ -175,9 +176,32 @@ def test_check_publishes_signed_claims_to_exact_pr_head(tmp_path) -> None:
     for expected in ("Checks passed: PASS", "Diff exercised: PASS",
                      "Freshness: CURRENT", "Execution boundary: UNKNOWN",
                      "Payload SHA-256: " + "b" * 64,
-                     "Signer fingerprint: ABCDEF", "sentinel verify"):
+                     "Signer fingerprint: ABCDEF", "no preset selected",
+                     "Policy decision: UNSELECTED", "fingerprint you already trust"):
         assert expected in summary
     assert "CANARY" not in str(transport.calls)
+
+
+def test_signed_policy_deny_caps_otherwise_successful_check(tmp_path, monkeypatch) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    publisher, change, transport = _publisher_fixture(tmp_path, _check_queue(now), now=now)
+    validate = github_check_module.PassportV2Payload.model_validate
+
+    def with_boundary_and_deny(cls, value):
+        return validate(value).model_copy(update={
+            "execution_boundary": "APPCONTAINER",
+            "policy_preset_name": "strict", "policy_preset_version": "1.1.0",
+            "policy_decision": "DENY", "policy_denials": ["confined checks must be PASS"],
+        })
+
+    monkeypatch.setattr(github_check_module.PassportV2Payload, "model_validate",
+                        classmethod(with_boundary_and_deny))
+    publisher.publish(change.id)
+    body = json.loads(transport.calls[-1]["body"])
+    assert body["conclusion"] == "neutral"
+    assert "Policy preset: strict" in body["output"]["summary"]
+    assert "Policy decision: DENY" in body["output"]["summary"]
+    assert "confined checks must be PASS" in body["output"]["summary"]
 
 
 def test_head_moving_during_export_is_stale_on_new_exact_head(tmp_path) -> None:
@@ -245,20 +269,21 @@ def test_declined_app_uses_lesser_statuses_with_all_claims(tmp_path) -> None:
     now = datetime(2026, 9, 28, tzinfo=UTC)
     queue = [json_response(200, {"head": {"sha": "a" * 40}}),
              json_response(200, {"head": {"sha": "a" * 40}})]
-    queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 8))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
     result = publisher.publish(change.id, decline_app=True,
                                fallback_token="PAT-CANARY")
     assert result.state == "PUBLISHED"
     assert result.presentation == "COMMIT_STATUS_LESSER"
-    assert len(transport.calls) == 7
+    assert len(transport.calls) == 9
     statuses = transport.calls[2:]
     assert all(call["url"].endswith("/statuses/" + "a" * 40) for call in statuses)
     bodies = [json.loads(call["body"]) for call in statuses]
     assert all(body["state"] == "error" for body in bodies)  # UNKNOWN boundary.
     joined = " ".join(body["description"] for body in bodies)
     for expected in ("checks PASS", "diff PASS", "freshness CURRENT", "boundary UNKNOWN",
-                     "payload SHA-256 " + "b" * 64, "signer ABCDEF", "sentinel verify"):
+                     "payload SHA-256 " + "b" * 64, "signer ABCDEF",
+                     "no preset selected", "UNSELECTED", "Policy denials:"):
         assert expected in joined
     assert all(len(body["description"]) <= 140 for body in bodies)
     assert "PAT-CANARY" not in joined
@@ -268,7 +293,7 @@ def test_declined_app_stale_status_never_succeeds(tmp_path) -> None:
     now = datetime(2026, 9, 28, tzinfo=UTC)
     queue = [json_response(200, {"head": {"sha": "c" * 40}}),
              json_response(200, {"head": {"sha": "c" * 40}})]
-    queue.extend(json_response(201, {"id": index}) for index in range(1, 6))
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 8))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
     result = publisher.publish(change.id, decline_app=True,
                                fallback_token="PAT-CANARY")

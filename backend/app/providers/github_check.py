@@ -287,21 +287,28 @@ class GitHubCheckPublisher:
         diff = claims.diff_coverage
         checks_text = "PASS" if diff.checks_passed is True else (
             "FAIL" if diff.checks_passed is False else "UNKNOWN")
+        selected_preset = bool(claims.policy_preset_name and claims.policy_preset_version)
+        policy_decision = claims.policy_decision if selected_preset else "UNSELECTED"
         conclusion = ("failure" if checks_text == "FAIL" or diff.diff_exercised == "FAIL"
                       else "neutral" if freshness != "CURRENT" or
                       checks_text != "PASS" or diff.diff_exercised != "PASS" or
-                      claims.execution_boundary == "UNKNOWN"
+                      claims.execution_boundary == "UNKNOWN" or policy_decision != "ALLOW"
                       else "success")
-        verify_command = f"sentinel verify change-{change_id}.sentinel --key {artifact.signer_fingerprint} --json"
+        verify_command = (f"Verify: export change-{change_id}.sentinel from Sentinel; use "
+                          "a fingerprint you already trust.")
         summary = "\n".join([
             f"Checks passed: {checks_text}",
             f"Diff exercised: {diff.diff_exercised}",
             f"Freshness: {freshness}",
             f"Signed Passport freshness: {signed_freshness}",
             f"Execution boundary: {claims.execution_boundary}",
+            f"Policy preset: {claims.policy_preset_name or 'no preset selected'}",
+            f"Policy preset version: {claims.policy_preset_version or 'none'}",
+            f"Policy decision: {policy_decision}",
+            f"Policy denials: {', '.join(claims.policy_denials) or 'none'}",
             f"Payload SHA-256: {artifact.payload_sha256}",
             f"Signer fingerprint: {artifact.signer_fingerprint}",
-            f"Verify: {verify_command}",
+            verify_command,
             "Execution of changed lines does not prove assertion quality.",
         ])
         body = {"name": "Sentinel Passport v2", "head_sha": sha,
@@ -317,7 +324,13 @@ class GitHubCheckPublisher:
                 "payload": f"Commit status (lesser): payload SHA-256 {artifact.payload_sha256}",
                 "signer": f"Commit status (lesser): signer {artifact.signer_fingerprint}",
                 "verify-lesser": verify_command,
+                "policy": (f"Commit status (lesser): preset "
+                           f"{claims.policy_preset_name or 'no preset selected'} "
+                           f"v{claims.policy_preset_version or 'none'}; {policy_decision}"),
             }
+            denial_text = "Policy denials: " + ("; ".join(claims.policy_denials) or "none")
+            for index in range(0, len(denial_text), 120):
+                descriptions[f"policy-denials-{index // 120 + 1}"] = denial_text[index:index + 120]
             if any(len(value) > 140 for value in descriptions.values()):
                 raise ValueError("Signed claims exceed GitHub commit status limit")
             for context, description in descriptions.items():
