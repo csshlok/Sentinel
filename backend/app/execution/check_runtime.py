@@ -27,7 +27,8 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -44,6 +45,11 @@ LOGGER = logging.getLogger(__name__)
 STORE_DIRECTORY_NAME = "Sentinel"
 RUNTIME_DIRECTORY_NAME = "check-runtimes"
 DEFAULT_SIZE_LIMIT_BYTES = 2 * 1024**3
+# WR-08 cache sweep (startup): crash-orphaned partial copies and entries unused
+# for this long are removed; an entry a non-CLEANED check run names never is.
+PARTIAL_MAX_AGE_SECONDS = 3600
+UNUSED_ENTRY_MAX_AGE_SECONDS = 14 * 24 * 3600
+LAST_USE_SUFFIX = ".last-use"
 PROBE_TIMEOUT_SECONDS = 30
 PROBE_OUTPUT_LIMIT = 64 * 1024
 _CHUNK = 1 << 20
@@ -332,8 +338,8 @@ def _snapshot(
             kind_directory.mkdir()
         target = kind_directory / digest
         if os.path.lexists(target):
-            return _verified_existing(target, entries, kind=kind, digest=digest,
-                                      total=total, size_limit=size_limit)
+            return _mark_used(_verified_existing(target, entries, kind=kind, digest=digest,
+                                                 total=total, size_limit=size_limit))
         partial = kind_directory / f".{digest}.{uuid4().hex}.partial"
         try:
             partial.mkdir()
@@ -344,16 +350,110 @@ def _snapshot(
                 if not os.path.lexists(target):
                     raise
                 # Another builder published the same digest first; verify theirs.
-                return _verified_existing(target, entries, kind=kind, digest=digest,
-                                          total=total, size_limit=size_limit)
+                return _mark_used(_verified_existing(target, entries, kind=kind, digest=digest,
+                                                     total=total, size_limit=size_limit))
         finally:
             if os.path.lexists(partial):
                 remove_tree_no_follow(partial)
-        return RuntimeSnapshot(target, digest, total)
+        return _mark_used(RuntimeSnapshot(target, digest, total))
     except AppError:
         raise
     except OSError as exc:
         raise check_runtime_failed(kind, type(exc).__name__) from exc
+
+
+def _last_use_path(entry: Path) -> Path:
+    return entry.parent / f".{entry.name}{LAST_USE_SUFFIX}"
+
+
+def _mark_used(snapshot: RuntimeSnapshot) -> RuntimeSnapshot:
+    """Record the entry's last use in a sibling marker (the entry itself is never mutated)."""
+
+    marker = _last_use_path(snapshot.path)
+    try:
+        if os.path.lexists(marker) and _is_reparse(marker):
+            return snapshot  # never write through a link; the sweep then uses the entry's mtime
+        with open(marker, "w", encoding="ascii") as handle:
+            handle.write(str(int(time.time())))
+    except OSError:
+        LOGGER.warning("Could not record the last use of check runtime %s", snapshot.path)
+    return snapshot
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCacheSweepReport:
+    removed_partials: tuple[str, ...] = ()
+    evicted: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+
+def _age(path: Path, now: float) -> float:
+    return now - os.lstat(path).st_mtime
+
+
+def sweep_runtime_cache(
+    root: str | Path | None = None, *, in_use: Collection[str | Path] = (),
+    now: float | None = None, partial_max_age: float = PARTIAL_MAX_AGE_SECONDS,
+    unused_max_age: float = UNUSED_ENTRY_MAX_AGE_SECONDS,
+) -> RuntimeCacheSweepReport:
+    """Remove crash-orphaned ``.partial`` copies and long-unused entries (WR-08).
+
+    Run at startup, before any box opens. ``in_use`` names entries a non-CLEANED
+    check run still references (and may still be granted to): those are never
+    removed. An entry is evicted once its last use (the sibling ``.last-use``
+    marker, else the entry folder's own mtime) is older than ``unused_max_age``.
+    Only real directories directly under ``<root>/<kind>`` are touched; links
+    are never followed or removed. Failures are collected, never raised.
+    """
+
+    cache = check_runtime_root(create=False) if root is None else Path(root)
+    current = time.time() if now is None else now
+    if (not os.path.lexists(cache) or _is_reparse(cache)
+            or not stat.S_ISDIR(os.lstat(cache).st_mode)):
+        return RuntimeCacheSweepReport()
+    keep = {os.path.normcase(os.path.abspath(path)) for path in in_use}
+    removed: list[str] = []
+    evicted: list[str] = []
+    failed: list[str] = []
+    with os.scandir(cache) as kinds:
+        kind_names = sorted(entry.name for entry in kinds)
+    for kind in kind_names:
+        kind_directory = cache / kind
+        if (not _KIND_PATTERN.fullmatch(kind) or _is_reparse(kind_directory)
+                or not stat.S_ISDIR(os.lstat(kind_directory).st_mode)):
+            continue
+        with os.scandir(kind_directory) as children:
+            names = sorted(child.name for child in children)
+        for name in names:
+            path = kind_directory / name
+            label = f"{kind}/{name}"
+            try:
+                if _is_reparse(path) or not stat.S_ISDIR(os.lstat(path).st_mode):
+                    continue
+                if name.startswith(".") and name.endswith(".partial"):
+                    if _age(path, current) > partial_max_age:
+                        remove_tree_no_follow(path)
+                        removed.append(label)
+                    continue
+                if not _DIGEST_PATTERN.fullmatch(name):
+                    continue
+                if os.path.normcase(os.path.abspath(path)) in keep:
+                    continue
+                marker = _last_use_path(path)
+                last_use = (marker if os.path.lexists(marker) and not _is_reparse(marker)
+                            else path)
+                if _age(last_use, current) <= unused_max_age:
+                    continue
+                remove_tree_no_follow(path)
+                for sibling in (marker, path.parent / f".{name}.acl-lock"):
+                    if os.path.lexists(sibling) and not _is_reparse(sibling):
+                        os.unlink(sibling)
+                evicted.append(label)
+            except OSError as exc:
+                LOGGER.warning("check runtime cache sweep could not remove %s (%s)", label,
+                               type(exc).__name__)
+                failed.append(label)
+    return RuntimeCacheSweepReport(tuple(removed), tuple(evicted), tuple(failed))
 
 
 def _verified_existing(

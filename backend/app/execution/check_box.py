@@ -359,6 +359,19 @@ class CheckBoxes:
                 failed.append((record.id, reason))
         return SweepReport(cleaned=tuple(cleaned), failed=tuple(failed))
 
+    def sweep_runtime_cache(self) -> Any:
+        """Startup sweep of this manager's runtime cache (WR-08); a ``RuntimeCacheSweepReport``.
+
+        Entries named by any check run that is not CLEANED (an open box, or a row
+        the box sweep could not finish) are kept: they may still carry a grant.
+        """
+
+        from backend.app.execution.check_runtime import sweep_runtime_cache
+
+        in_use = [grant.path for record in self.repository.list_unclean()
+                  for grant in record.runtime_grants]
+        return sweep_runtime_cache(self._runtime_root, in_use=in_use)
+
     # ------------------------------------------------------------------ open
 
     def baseline_for(self, change_id: UUID) -> str:

@@ -75,8 +75,9 @@ def test_snapshot_copies_exactly_the_source_under_its_digest(source: Path, cache
     assert snapshot.path == cache / "python-deps" / snapshot.manifest_digest
     assert _files(snapshot.path) == _files(source)
     assert snapshot.bytes == sum(len(v) for v in _files(source).values())
-    # No partial directories remain.
-    assert [p.name for p in (cache / "python-deps").iterdir()] == [snapshot.manifest_digest]
+    # No partial directories remain; beside the entry only its last-use marker (WR-08).
+    assert sorted(p.name for p in (cache / "python-deps").iterdir()) == sorted([
+        snapshot.manifest_digest, f".{snapshot.manifest_digest}.last-use"])
 
 
 def test_identical_source_reuses_the_entry(source: Path, cache: Path, tmp_path: Path) -> None:
@@ -218,6 +219,94 @@ def test_source_that_is_itself_a_junction_is_refused(source: Path, cache: Path, 
 def test_invalid_kind_is_rejected(source: Path, cache: Path) -> None:
     with pytest.raises(ValueError):
         snapshot_tree(source, kind="../escape", root=cache)
+
+
+# --------------------------------------------------------------------- WR-08 cache sweep
+
+
+def _age_to(path: Path, seconds_ago: float) -> None:
+    import time
+
+    stamp = time.time() - seconds_ago
+    os.utime(path, (stamp, stamp))
+
+
+def test_cache_sweep_removes_orphaned_partials_and_long_unused_entries(
+    source: Path, cache: Path, tmp_path: Path,
+) -> None:
+    from backend.app.execution.check_runtime import sweep_runtime_cache
+
+    day = 24 * 3600
+    used_recently = snapshot_tree(source, kind="node-modules", root=cache)
+    stale = snapshot_tree(_tree(tmp_path / "old", {"x.js": "1"}), kind="node-modules", root=cache)
+    granted = snapshot_tree(_tree(tmp_path / "live", {"y.js": "2"}), kind="node-modules",
+                            root=cache)
+    for snapshot in (stale, granted):
+        _age_to(snapshot.path.parent / f".{snapshot.path.name}.last-use", 30 * day)
+    kind = cache / "node-modules"
+    orphan = kind / (".%s.%s.partial" % ("c" * 64, "d" * 32))
+    (orphan / "half").mkdir(parents=True)
+    _age_to(orphan, 2 * 3600)
+    in_progress = kind / (".%s.%s.partial" % ("e" * 64, "f" * 32))
+    in_progress.mkdir()
+
+    report = sweep_runtime_cache(cache, in_use=[granted.path])
+    assert report.removed_partials == (f"node-modules/{orphan.name}",)
+    assert report.evicted == (f"node-modules/{stale.path.name}",)
+    assert report.failed == ()
+    assert not orphan.exists() and in_progress.exists()  # a fresh partial may be a live build
+    assert not stale.path.exists()
+    assert not (kind / f".{stale.path.name}.last-use").exists()
+    assert used_recently.path.exists()
+    assert granted.path.exists()  # named by a non-CLEANED check run: never evicted
+    # A reused entry is fresh again (its last use is recorded on every reuse).
+    _age_to(used_recently.path.parent / f".{used_recently.path.name}.last-use", 30 * day)
+    assert snapshot_tree(source, kind="node-modules", root=cache) == used_recently
+    assert sweep_runtime_cache(cache).evicted == (f"node-modules/{granted.path.name}",)
+    assert used_recently.path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
+def test_cache_sweep_never_follows_or_removes_a_link(cache: Path, tmp_path: Path) -> None:
+    import _winapi
+
+    from backend.app.execution.check_runtime import sweep_runtime_cache
+
+    outside = _tree(tmp_path / "precious", {"keep.txt": "keep"})
+    kind = cache / "node"
+    kind.mkdir(parents=True)
+    _winapi.CreateJunction(str(outside), str(kind / ("a" * 64)))
+    _age_to(outside, 365 * 24 * 3600)
+    report = sweep_runtime_cache(cache)
+    assert report.evicted == () and (outside / "keep.txt").exists()
+
+
+def test_startup_sweeps_the_runtime_cache_keeping_entries_of_unclean_runs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from backend.app.core.config import Settings
+    from backend.app.credentials.memory_store import InMemoryCredentialStore
+    from backend.app.execution.check_box import CheckBoxes
+    from backend.app.main import create_app
+
+    seen: list[object] = []
+    original = CheckBoxes.sweep_runtime_cache
+
+    def spy(self):
+        report = original(self)
+        seen.append(report)
+        return report
+
+    monkeypatch.setattr(CheckBoxes, "sweep_runtime_cache", spy)
+    app = create_app(settings=Settings(database_path=tmp_path / "api.sqlite3"),
+                     credential_store=InMemoryCredentialStore())
+    with TestClient(app) as client:
+        client.headers["Authorization"] = f"Bearer {app.state.api_token}"
+        assert client.get("/api/v1/health").status_code == 200
+    assert len(seen) == 1
+    assert app.state.runtime_cache_sweep_report is seen[0]
 
 
 # --------------------------------------------------------------------- python_runtime

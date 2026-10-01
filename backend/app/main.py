@@ -256,6 +256,19 @@ def create_app(
                 "Startup check box sweep: %d cleaned, %d failed",
                 len(check_report.cleaned), len(check_report.failed),
             )
+        # WR-08: then the runtime cache (orphaned partial copies, long-unused entries).
+        app_.state.runtime_cache_sweep_report = None
+        try:
+            cache_report = check_boxes.sweep_runtime_cache()
+        except Exception:
+            LOGGER.exception("Startup check runtime cache sweep failed")
+        else:
+            app_.state.runtime_cache_sweep_report = cache_report
+            LOGGER.info(
+                "Startup check runtime cache sweep: %d partial, %d evicted, %d failed",
+                len(cache_report.removed_partials), len(cache_report.evicted),
+                len(cache_report.failed),
+            )
         yield
 
     app = FastAPI(
