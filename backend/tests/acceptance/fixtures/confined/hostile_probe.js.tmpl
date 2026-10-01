@@ -1,8 +1,14 @@
-// Agent-authored package.json `test` script (hostile fixture for test_confined_checks.py).
-// `npm test` runs this file; each attempt reports "allowed" or "denied:<code>".
+// Agent-authored package.json script (hostile fixture for test_confined_checks.py).
+// `npm test` (a `test` script) or `npm install` (a `postinstall` script) runs this
+// file; each attempt reports "allowed" or "denied:<code>". Node has no Win32 FFI,
+// so the optional `native` attempts (Credential Manager, CNG key) run as
+// PowerShell -EncodedCommand children, exactly as an agent's script could; they
+// print their own SENTINEL_NATIVE lines.
 "use strict";
 const fs = require("fs");
 const net = require("net");
+const path = require("path");
+const { spawnSync } = require("child_process");
 
 const CONFIG = JSON.parse(String.raw`__CONFIG__`);
 const results = { cwd: process.cwd(), tree_has_ignored_env: fs.existsSync(".env") };
@@ -37,6 +43,16 @@ for (const [label, target] of Object.entries(CONFIG.reads)) {
 }
 for (const [label, target] of Object.entries(CONFIG.lists)) {
   attempt("list_" + label, () => fs.readdirSync(target));
+}
+
+// A Node child with piped stdio was observed to hang inside the box (Windows 11;
+// cause not established), so each PowerShell child inherits this script's stdio
+// and prints its own 'SENTINEL_NATIVE <label> <outcome>' line.
+for (const encoded of Object.values(CONFIG.native || {})) {
+  const powershell = path.join(process.env.SystemRoot || "C:/Windows", "System32",
+                               "WindowsPowerShell", "v1.0", "powershell.exe");
+  spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            { stdio: "inherit", timeout: 120000, windowsHide: true });
 }
 
 (async () => {

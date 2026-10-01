@@ -23,7 +23,10 @@ mean anything. The attempts are:
   when the host itself is offline, because then the control cannot pass).
 
 The Node variant (``npm test`` running a package.json script) covers the file
-and port attempts; it does not attempt Win32 credential or key APIs.
+and port attempts. The ``npm install`` variant (an agent-authored ``postinstall``,
+offline, with a vendored dependency tarball) covers the same file and port
+attempts plus the Credential Manager and CNG key attempts, which a Node script
+makes through PowerShell children since Node has no Win32 FFI.
 The unsupported-toolchain test uses a stand-in ``cargo.bat`` on PATH (no Rust
 toolchain is needed to prove how Sentinel routes ``cargo``).
 """
@@ -568,6 +571,179 @@ def test_node_package_script_escapes_are_denied_through_the_api(
         assert probe["connect_" + name] in {"denied:ETIMEDOUT", "denied:TIMEOUT"}, probe
     assert not any(path.exists() for path in canaries)
     assert len(api.listener.accepted) == accepted_before
+    _assert_confined_run(api, change_id, verification)
+    _no_test_profiles_left()
+
+
+# ------------------------------------------------------------------ SC1 (npm install)
+
+# Node has no Win32 FFI, so the postinstall script reaches Credential Manager and
+# CNG the way an agent's script could: a PowerShell child (encoded command).
+CREDENTIAL_PS = """
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SentinelProbeCred {
+  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern bool CredReadW(string target, int type, int flags, out IntPtr cred);
+  [DllImport("advapi32.dll")]
+  public static extern void CredFree(IntPtr cred);
+}
+'@
+  $pointer = [IntPtr]::Zero
+  if ([SentinelProbeCred]::CredReadW('__TARGET__', 1, 0, [ref]$pointer)) {
+    [SentinelProbeCred]::CredFree($pointer); 'RESULT allowed'
+  } else {
+    'RESULT denied:' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+  }
+} catch { 'RESULT error:' + $_.Exception.GetType().Name + ':' + $_.Exception.Message }
+"""
+
+SIGNING_KEY_PS = """
+$ErrorActionPreference = 'Stop'
+$codes = @()
+foreach ($name in @('Microsoft Platform Crypto Provider', 'Microsoft Software Key Storage Provider')) {
+  try {
+    $provider = New-Object System.Security.Cryptography.CngProvider($name)
+    $key = [System.Security.Cryptography.CngKey]::Open('__KEY__', $provider)
+    $key.Dispose(); 'RESULT allowed'; exit 0
+  } catch {
+    $inner = $_.Exception
+    while ($inner.InnerException) { $inner = $inner.InnerException }
+    $codes += ('0x{0:x8}' -f $inner.HResult)
+  }
+}
+'RESULT denied:' + ($codes -join ',')
+"""
+
+
+NATIVE_MARKER = "SENTINEL_NATIVE "
+
+
+def _encoded_powershell(label: str, script: str) -> str:
+    """The script as -EncodedCommand; its outcome line becomes ``SENTINEL_NATIVE <label> ...``."""
+
+    import base64
+
+    labelled = script.replace("'RESULT ", f"'{NATIVE_MARKER}{label} ")
+    return base64.b64encode(labelled.encode("utf-16-le")).decode("ascii")
+
+
+def _native_lines(stdout: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if line.startswith(NATIVE_MARKER):
+            label, _, outcome = line[len(NATIVE_MARKER):].strip().partition(" ")
+            assert label not in found, stdout
+            found[label] = outcome
+    return found
+
+
+def _vendored_tarball(path: Path) -> None:
+    """A tiny npm package tarball (``package/`` prefix, as ``npm pack`` writes it)."""
+
+    import io
+    import tarfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    members = {
+        "package/package.json": json.dumps({"name": "tiny-add", "version": "1.0.0",
+                                            "main": "index.js"}) + "\n",
+        "package/index.js": "module.exports = (a, b) => a + b;\n",
+    }
+    with tarfile.open(path, "w:gz") as archive:
+        for name, text in members.items():
+            data = text.encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mtime = 0
+            archive.addfile(info, io.BytesIO(data))
+
+
+NPM_INSTALL_ARGS = ["install", "--foreground-scripts", "--offline", "--no-audit", "--no-fund"]
+
+
+def test_npm_install_postinstall_escapes_are_denied_through_the_api(
+    live_api: LiveApi, tmp_path: Path, credential: str, signing_key: str,
+) -> None:
+    """D1: an agent-authored ``postinstall`` runs confined under ``npm install``."""
+
+    node = _node()
+    npm_cli = node.parent / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    api = live_api
+    repo = make_repo(tmp_path / "repo", {
+        ".gitignore": ".env\nnode_modules/\n",
+        "package.json": json.dumps({
+            "name": "hostile-install", "version": "1.0.0", "private": True,
+            "dependencies": {"tiny-add": "file:vendor/tiny-add-1.0.0.tgz"},
+            "scripts": {"postinstall": "node probe.js"}}, indent=2) + "\n",
+    })
+    write(repo, ".env", "SECRET=canary-in-the-user-repository\n")
+    _vendored_tarball(repo / "vendor" / "tiny-add-1.0.0.tgz")
+    canary = f"escaped-{uuid4().hex}.txt"
+    config, canaries = _escape_config(api, repo, canary)
+    config["native"] = {
+        "credential": _encoded_powershell(
+            "credential", CREDENTIAL_PS.replace("__TARGET__", credential)),
+        "signing_key": _encoded_powershell(
+            "signing_key", SIGNING_KEY_PS.replace("__KEY__", signing_key)),
+    }
+    write(repo, "probe.js", _render("hostile_probe.js.tmpl", config))
+    git(repo, "add", "probe.js", "vendor/tiny-add-1.0.0.tgz")
+    git(repo, "commit", "-q", "-m", "agent: add a postinstall script")
+
+    # Positive control: the same install on the host, outside Sentinel, succeeds at
+    # every attempt (and really installs the vendored dependency offline).
+    control_copy = _copy_outside(repo, tmp_path / "control-copy")
+    control_run = subprocess.run([str(node), str(npm_cli), *NPM_INSTALL_ARGS], cwd=control_copy,
+                                 capture_output=True, text=True, timeout=600, env=_host_env())
+    assert control_run.returncode == 0, control_run.stdout + control_run.stderr
+    control = _probe_line(control_run.stdout)
+    attempts = {key: value for key, value in control.items()
+                if key not in {"cwd", "tree_has_ignored_env"}}
+    assert attempts and all(value == "allowed" for value in attempts.values()), control
+    assert _native_lines(control_run.stdout) == {"credential": "allowed",
+                                                 "signing_key": "allowed"}, control_run.stdout
+    assert (control_copy / "node_modules" / "tiny-add" / "index.js").is_file()
+    assert all(path.exists() for path in canaries)
+    _remove(canaries)
+    accepted_before = len(api.listener.accepted)
+
+    change_id = _create_change(api, repo)
+    actor = _actor(api, change_id, ["change.legacy_verify"])
+    requests_before, sent_before = api.log.count(), len(api.sent)
+    response = _verify(api, change_id, actor, "npm", NPM_INSTALL_ARGS)
+    assert response.status_code == 200, response.text
+    assert api.log.count() - requests_before == len(api.sent) - sent_before
+    verification = response.json()["verification"]
+    assert verification["status"] == "PASSED", verification["stdout"] + verification["stderr"]
+    probe = _probe_line(verification["stdout"])
+    print("confined postinstall probe:", json.dumps(probe, sort_keys=True))
+
+    assert Path(probe["cwd"]).name == "tree"  # the install ran in the box's tree copy
+    assert probe["tree_has_ignored_env"] is False
+    for name in config["writes"]:
+        assert probe["write_" + name] == "denied:EPERM", probe
+    for name in config["reads"]:
+        assert probe["read_" + name] == "denied:EPERM", probe
+    for name in config["lists"]:
+        assert probe["list_" + name] == "denied:EPERM", probe
+    for name in config["ports"]:
+        assert probe["connect_" + name] in {"denied:ETIMEDOUT", "denied:TIMEOUT"}, probe
+    native = _native_lines(verification["stdout"])
+    # Credential Manager refuses the AppContainer token outright (ERROR_ACCESS_DENIED).
+    assert native["credential"] == "denied:5", verification["stdout"]
+    # The per-user CNG key the control opened does not exist for the box
+    # (NTE_BAD_KEYSET 0x80090016 from both providers on this machine).
+    assert native["signing_key"].startswith("denied:0x8"), verification["stdout"]
+    assert "canary-secret" not in verification["stdout"]
+    assert not any(path.exists() for path in canaries)
+    assert len(api.listener.accepted) == accepted_before
+    # The install wrote only inside the box: the user repository is untouched.
+    assert not (repo / "node_modules").exists()
+    assert not (repo / "package-lock.json").exists()
     _assert_confined_run(api, change_id, verification)
     _no_test_profiles_left()
 
