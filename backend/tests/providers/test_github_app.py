@@ -28,6 +28,7 @@ def _flow(*, owner: str = "example", response: object | None = None) -> tuple[
         "id": 42, "slug": "sentinel-example",
         "pem": "-----BEGIN RSA PRIVATE KEY-----\nsecret-canary\n-----END RSA PRIVATE KEY-----",
         "webhook_secret": "webhook-canary",
+        "owner": {"login": owner, "type": "Organization"},
     })])
     flow = GitHubAppManifestFlow(
         owner=owner, account_kind="organization", broker=broker,
@@ -115,6 +116,23 @@ def test_malformed_conversion_fails_closed_and_hides_response() -> None:
     assert status == 400
     assert b"secret-canary" not in body
     assert "secret-canary" not in repr(flow.view())
+    assert broker.store.get(f"provider:{app_provider_name('example')}") is None
+
+
+@pytest.mark.parametrize("owner", [
+    {"login": "someone-else", "type": "Organization"},
+    {"login": "example", "type": "User"},
+    None,
+])
+def test_converted_app_owner_must_match_request(owner) -> None:
+    response = {"id": 42, "slug": "sentinel-example",
+                "pem": "-----BEGIN RSA PRIVATE KEY-----\nsecret-canary\n-----END RSA PRIVATE KEY-----",
+                "owner": owner}
+    flow, broker, _ = _flow(response=response)
+    flow.start()
+    assert _callback(flow, state=flow._state)[0] == 400
+    assert flow.view().status == "FAILED"
+    assert flow.view().reason == "APP_OWNER_MISMATCH"
     assert broker.store.get(f"provider:{app_provider_name('example')}") is None
 
 

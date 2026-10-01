@@ -23,6 +23,10 @@ _MAX_CALLBACK_PATH = 4096
 _MAX_CONVERSION_BYTES = 256_000
 
 
+class AppOwnerMismatch(ValueError):
+    """The converted App belongs to a different GitHub account."""
+
+
 def app_provider_name(owner: str) -> str:
     """A broker provider namespace unique to one GitHub user or organization."""
     if not _OWNER.fullmatch(owner):
@@ -113,6 +117,8 @@ class GitHubAppManifestFlow:
                         raise ValueError("Invalid callback code")
                     flow._convert(code)
                     status = 200
+                except AppOwnerMismatch:
+                    flow._finish("FAILED", reason="APP_OWNER_MISMATCH")
                 except (ValueError, TransportTimeout):
                     flow._finish("FAILED", reason="App registration could not be verified")
                 except Exception:
@@ -214,6 +220,15 @@ class GitHubAppManifestFlow:
                         and (not isinstance(webhook_secret, str)
                              or len(webhook_secret) > 4096))):
                 raise ValueError("Invalid App conversion")
+            app_owner = data.get("owner")
+            expected_type = "Organization" if self.account_kind == "organization" else "User"
+            if (not isinstance(app_owner, dict)
+                    or not isinstance(app_owner.get("login"), str)
+                    or app_owner["login"].casefold() != self.owner.casefold()
+                    or app_owner.get("type") != expected_type):
+                raise AppOwnerMismatch("Converted App owner differs from requested account")
+        except AppOwnerMismatch:
+            raise
         except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
             raise ValueError("Invalid App conversion") from exc
         secret = json.dumps({"id": app_id, "slug": slug, "pem": pem,
