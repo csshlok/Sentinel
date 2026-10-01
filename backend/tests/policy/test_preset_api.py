@@ -9,6 +9,7 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.main import create_app
+from backend.app.policy.presets import PRESET_VERSION
 from backend.tests.passport.test_builder import _seed_change
 
 
@@ -36,7 +37,7 @@ def test_policy_route_denies_when_no_preset_or_evidence_exists(tmp_path) -> None
         selected = client.get(endpoint)
         assert selected.status_code == 200
         body = selected.json()
-        assert body["preset_name"] == "strict" and body["preset_version"] == "1.0.0"
+        assert body["preset_name"] == "strict" and body["preset_version"] == PRESET_VERSION
         assert body["decision"] == "DENY"
         assert any("checks" in reason for reason in body["denials"])
         assert any("AppContainer" in reason for reason in body["denials"])
