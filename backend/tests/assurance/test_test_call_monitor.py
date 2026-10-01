@@ -45,6 +45,10 @@ def test_monitor_records_production_call_into_changed_test(tmp_path: Path,
         [sys.executable, "-X", f"pycache_prefix={scratch / 'pycache'}",
          "-m", "coverage", "run", "-m", "pytest", "-q", "tests/test_price.py",
          "-o", "addopts=", f"--junitxml={scratch / 'junit.xml'}"])
+    (scratch / record_name).write_text(json.dumps({
+        "schema": 1, "backend": "sys.monitoring",
+        "changed_tests": ["tests/test_helpers.py"], "violations": [],
+    }), encoding="utf-8")
     run = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stdout + run.stderr
     record = (scratch / record_name).read_bytes()

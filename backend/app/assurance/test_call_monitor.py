@@ -102,7 +102,10 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
     def write_record() -> None:
         record = {"schema": 1, "backend": backend, "changed_tests": sorted(targets.values()),
                   "violations": violations}
-        with open(output, "x", encoding="utf-8") as stream:
+        # Agent code runs in this process and can pre-create the known scratch
+        # name. Our atexit handler runs after handlers registered by tests, so
+        # overwrite that file with the observed record.
+        with open(output, "w", encoding="utf-8") as stream:
             json.dump(record, stream, sort_keys=True, separators=(",", ":"))
 
     atexit.register(write_record)
