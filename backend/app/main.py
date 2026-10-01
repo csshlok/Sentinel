@@ -60,6 +60,7 @@ from backend.app.core.runtime_service import (
 )
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.windows_store import WindowsCredentialStore
+from backend.app.execution.check_box import CheckBoxes
 from backend.app.execution.launcher import AgentLauncher
 from backend.app.execution.signature import check_signature
 from backend.app.git.adapter import GitRepositoryInspector
@@ -173,6 +174,8 @@ def create_app(
         database, baseline_head=baseline_head,
         credential_purger=broker.purge_staged_credentials, journal=journal,
     )
+    # Phase 5: per-run confined check boxes (no caller is switched to them yet).
+    check_boxes = CheckBoxes(database, journal=journal)
     # claude resolves to the AppContainer profile: it launches only inside
     # this manager's workspace, with the broker's staged credential.
     agent_launcher = AgentLauncher(
@@ -228,6 +231,18 @@ def create_app(
             LOGGER.info(
                 "Startup workspace sweep: %d cleaned, %d preserved, %d failed",
                 len(report.cleaned), len(report.preserved), len(report.failed),
+            )
+        # Same trigger for confined check boxes: finish every row not CLEANED.
+        app_.state.check_sweep_report = None
+        try:
+            check_report = check_boxes.sweep()
+        except Exception:
+            LOGGER.exception("Startup check box sweep failed")
+        else:
+            app_.state.check_sweep_report = check_report
+            LOGGER.info(
+                "Startup check box sweep: %d cleaned, %d failed",
+                len(check_report.cleaned), len(check_report.failed),
             )
         yield
 
@@ -305,6 +320,7 @@ def create_app(
     app.state.change_service = service
     app.state.runtime_services = runtime
     app.state.workspace_manager = workspace_manager
+    app.state.check_boxes = check_boxes
     app.state.agent_launcher = agent_launcher
     app.state.credential_broker = broker
     app.state.api_token = api_token

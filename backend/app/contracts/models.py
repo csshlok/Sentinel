@@ -814,6 +814,8 @@ class JournalEventType(StrEnum):
     WORKSPACE_APPLIED = "workspace.applied"
     WORKSPACE_APPLY_REFUSED = "workspace.apply_refused"
     WORKSPACE_CLEANED = "workspace.cleaned"
+    # Phase 5 (05-02): one confined check run inside a per-run AppContainer box.
+    CHECK_CONFINED_RUN = "check.confined_run"
 
 
 class JournalEvent(ContractModel):

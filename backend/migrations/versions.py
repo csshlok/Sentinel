@@ -638,6 +638,38 @@ def migration_012_change_workspaces(connection: sqlite3.Connection) -> None:
     )
 
 
+def migration_013_check_runs(connection: sqlite3.Connection) -> None:
+    """Disposable confined check boxes (Phase 5): one row per per-run AppContainer profile.
+
+    The row is written before the profile exists and is the only durable record
+    of the profile, its tree and its runtime ACEs, so it deliberately has no
+    foreign key to ``changes`` (the startup sweep must still find it).
+    """
+
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS check_runs ("
+        "id TEXT PRIMARY KEY, "
+        "change_id TEXT NOT NULL, "
+        "profile_name TEXT NOT NULL UNIQUE, "
+        "package_sid TEXT NOT NULL, "
+        "state TEXT NOT NULL, "
+        "network INTEGER NOT NULL CHECK (network IN (0, 1)), "
+        "tree_digest TEXT NULL, "
+        "runtime_digests_json TEXT NOT NULL, "
+        "facts_json TEXT NULL, "
+        "exit_code INTEGER NULL, "
+        "timed_out INTEGER NULL CHECK (timed_out IN (0, 1)), "
+        "created_at TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_check_runs_state ON check_runs(state)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_check_runs_change ON check_runs(change_id, created_at)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "legacy_change_store", migration_001_legacy_change_store),
     Migration(2, "change_runtime_core", migration_002_change_runtime_core),
@@ -651,6 +683,7 @@ MIGRATIONS = (
     Migration(10, "descendant_processes", migration_010_descendant_processes),
     Migration(11, "diff_coverage_results", migration_011_diff_coverage_results),
     Migration(12, "change_workspaces", migration_012_change_workspaces),
+    Migration(13, "check_runs", migration_013_check_runs),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
