@@ -134,6 +134,26 @@ def test_verified_box_run_is_pass(seeded) -> None:
     assert not any(line.startswith("Confined checks") for line in payload.limitations)
 
 
+@pytest.mark.parametrize("with_coverage", [True, False])
+def test_any_unconfined_run_of_the_change_is_fail(seeded, with_coverage) -> None:
+    """A delegated unconfined verify run makes the Change's confined_checks FAIL (05-05).
+
+    Even when it is not the run behind the coverage evidence (and even when no
+    coverage exists), a check of this Change ran at user authority.
+    """
+
+    database, change = seeded
+    run_id = uuid4()
+    if with_coverage:
+        _row(database, change.id, run_id, facts=_facts())
+        _confined_event(database, change.id, run_id)
+        _coverage(database, change, run_id=run_id, boundary="APPCONTAINER")
+    _unconfined_event(database, change.id, uuid4())  # e.g. a separate `cargo test` verify
+    payload = _claim(database, change)
+    assert payload.confined_checks == "FAIL"
+    assert any("UNCONFINED" in line for line in payload.limitations)
+
+
 def test_unconfined_run_is_fail(seeded) -> None:
     database, change = seeded
     run_id = uuid4()

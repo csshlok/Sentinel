@@ -281,8 +281,15 @@ def confined_checks_fact(
     bound: Sequence[tuple[UUID | None, str | None]], *,
     records: Mapping[UUID, CheckRunRecord], events: Sequence[CheckRunEvent],
 ) -> tuple[Fact, str | None]:
-    """PASS only when every bound run is a verified box run; any FAIL wins; none ran -> UNKNOWN."""
+    """PASS only when every bound run is a verified box run; any FAIL wins; none ran -> UNKNOWN.
 
+    ``events`` are the Change's own journal events. Any ``check.unconfined_run``
+    among them is FAIL even when it does not feed the bound evidence: a check of
+    this Change ran at user authority, so "its checks were confined" is false.
+    """
+
+    if any(event.event_type == UNCONFINED_RUN_EVENT for event in events):
+        return "FAIL", "a check of this Change ran UNCONFINED (delegated checks.unconfined opt-in)"
     if not bound:
         return "UNKNOWN", "no check run feeds the evaluated evidence"
     results = [check_run_fact(run_id, claimed, records=records, events=events)
