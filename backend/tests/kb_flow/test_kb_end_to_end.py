@@ -29,6 +29,14 @@ from backend.app.execution.launcher import AgentLauncher
 from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.app.git.state import GitStateTracker
 from backend.tests.support_kb import git, make_repo, write
+from backend.tests.support_checks import host_check_boxes
+
+
+def _engine(tmp_path) -> AssuranceEngine:
+    """Checks run through the host check-box harness (no containment; see support_checks)."""
+
+    boxes, _ = host_check_boxes(tmp_path / "check-boxes")
+    return AssuranceEngine(checks=boxes)
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 CANARY = "kb-e2e-canary-TOKEN-value-424242"
@@ -80,7 +88,7 @@ def test_python_change_flow_from_baseline_to_fresh_assurance(tmp_path, monkeypat
                          forbidden_paths=["secrets/**"], expected_outcomes=["upgrade flask"])
     git_state, environment = GitStateTracker(), EnvironmentTracker(
         tools={"git": ["--version"], "python": ["--version"]}, sensitive_keys=("KB_E2E_CANARY_TOKEN",))
-    launcher, dependencies, engine = AgentLauncher(), DependencyTracker(), AssuranceEngine()
+    launcher, dependencies, engine = AgentLauncher(), DependencyTracker(), _engine(tmp_path)
 
     # 1-2. Baseline evidence before the agent runs.
     baseline_cp = git_state.capture(change.id, "baseline", str(repo), 1, 100_000)
@@ -143,7 +151,7 @@ def test_python_change_flow_from_baseline_to_fresh_assurance(tmp_path, monkeypat
 def test_failing_required_check_blocks_and_recovery_is_visible(tmp_path):
     repo = make_repo(tmp_path / "repo", PY_FILES)
     change = change_view(repo, required_checks=["pytest"])
-    git_state, engine = GitStateTracker(), AssuranceEngine()
+    git_state, engine = GitStateTracker(), _engine(tmp_path)
     write(repo, "app.py", "def add(a, b):\n    return a - b\n")           # breaks the test
     cp = git_state.capture(change.id, "cp", str(repo), 1, 100_000)
     plan = engine.discover(change, cp, None, None)
@@ -169,7 +177,7 @@ def test_failing_required_check_blocks_and_recovery_is_visible(tmp_path):
 def test_contract_violation_by_agent_is_a_blocking_deviation(tmp_path):
     repo = make_repo(tmp_path / "repo", {**PY_FILES, "secrets/key.pem": "old\n"})
     change = change_view(repo, allowed_paths=["*.py", "tests/**"], forbidden_paths=["secrets/**"])
-    git_state, engine = GitStateTracker(), AssuranceEngine()
+    git_state, engine = GitStateTracker(), _engine(tmp_path)
     script = ("import pathlib\npathlib.Path('secrets/key.pem').write_text('rotated')\n"
               "pathlib.Path('docs/readme.md').write_text('edited')\n")
     run = AgentLauncher().launch(change.id, str(repo), AgentLaunchRequest(
@@ -200,7 +208,7 @@ def test_node_change_flow_with_real_node_test_runner(tmp_path):
     }
     repo = make_repo(tmp_path / "node repo", files)
     change = change_view(repo, required_checks=["npm test"])
-    git_state, engine = GitStateTracker(), AssuranceEngine()
+    git_state, engine = GitStateTracker(), _engine(tmp_path)
 
     write(repo, "src/sum.js", "exports.sum = (a, b) => b + a;\n")
     write(repo, "package.json", json.dumps({"name": "demo", "version": "1.0.0",

@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from backend.app.assurance.engine import AssuranceEngine
+from backend.tests.support_checks import host_assurance_engine
 from backend.app.assurance.models import DeviationCategory
 from backend.app.assurance.service import EvidenceService
 from backend.app.assurance.store import EvidenceStore
@@ -57,7 +58,8 @@ class Harness:
 
         return EvidenceService(
             EvidenceStore(self.db),
-            environment=EnvironmentTracker(tools={"python": ["--version"]}))
+            environment=EnvironmentTracker(tools={"python": ["--version"]}),
+            assurance=host_assurance_engine(self.db.path.parent / "boxes", self.db))
 
 
 def test_full_persisted_flow_survives_a_restart(tmp_path):

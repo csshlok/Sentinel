@@ -526,8 +526,12 @@ class EvidenceService:
         if change.contract.diff_coverage_rule is not None:
             request = request.model_copy(update={"rule": merge_diff_coverage_rule(
                 change.contract.diff_coverage_rule, request.rule)})
+        boxed: list[tuple[UUID, str]] = []  # Phase 5: the confined check run behind it
         result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
-                                       request=request, patch_limit=self._patch_limit)
+                                       request=request, patch_limit=self._patch_limit,
+                                       checks=getattr(self._assurance, "checks", None),
+                                       on_check_run=lambda run_id, boundary:
+                                       boxed.append((run_id, boundary)))
         try:
             same_contract = contract_digest(current_change()) == result.contract_digest
         except AppError:
@@ -550,6 +554,8 @@ class EvidenceService:
                     "artifact_digest": result.artifact_digest,
                     "diff_exercised": result.diff_exercised,
                     "checks_passed": result.checks_passed,
+                    "check_run_id": str(boxed[0][0]) if boxed else None,
+                    "check_boundary": boxed[0][1] if boxed else None,
                 },
                 connection=connection,
             )

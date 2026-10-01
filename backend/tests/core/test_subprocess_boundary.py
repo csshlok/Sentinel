@@ -399,3 +399,18 @@ def test_unconfined_primitive_is_reached_only_through_the_opt_in() -> None:
         and node.func.id == "run_verification_command"
     }
     assert callers == {"run_unconfined_check"}
+
+
+def test_no_module_outside_commands_names_the_unconfined_primitive() -> None:
+    """The diff-coverage collector and both runners run checks through a box only."""
+
+    commands = (EXECUTION_DIR / "commands.py").resolve()
+    offenders = [
+        path.relative_to(APP_ROOT.parents[1]).as_posix()
+        for path in APP_ROOT.rglob("*.py")
+        if path.resolve() != commands
+        and "run_verification_command" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+    collector = (APP_ROOT / "assurance" / "diff_coverage.py").read_text(encoding="utf-8")
+    assert "box.run(" in collector and "tempfile" not in collector

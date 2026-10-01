@@ -147,3 +147,17 @@ def host_check_boxes(directory: Path, database: Database | None = None, *,
                        profile_prefix="sentinel.test.", runtime_root=directory / "cache",
                        platform=windows.platform(), resolver=host_resolver)
     return boxes, windows
+
+
+def host_assurance_engine(directory: Path, database: Database, **kwargs):
+    """An ``AssuranceEngine`` whose checks (and diff coverage) use the host harness.
+
+    Mirrors ``EvidenceService``'s own default engine (default patch limit).
+    """
+
+    from backend.app.assurance.engine import AssuranceEngine
+    from backend.app.assurance.service import DEFAULT_PATCH_LIMIT
+
+    boxes, _ = host_check_boxes(directory, database)
+    kwargs.setdefault("patch_limit_bytes", DEFAULT_PATCH_LIMIT)
+    return AssuranceEngine(checks=boxes, **kwargs)

@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from backend.app.assurance.diff_coverage import (
-    _trusted_interpreter_path, collect_diff_coverage, evaluate_report,
+    _trusted_interpreter_path, collect_diff_coverage as _collect_diff_coverage, evaluate_report,
 )
 from backend.app.assurance.diff_map import map_diff
 from backend.app.contracts.models import (
@@ -17,7 +17,26 @@ from backend.app.contracts.models import (
 )
 from backend.app.git.state import GitStateTracker
 from backend.app.execution._process import CapturedProcess
+from backend.tests.support_checks import host_check_boxes
 from backend.tests.support_kb import git, make_repo, write
+
+# Phase 5: the collector runs in a check box. These are report/verdict tests, so
+# they use the HOST harness (real CheckBoxes code, host child, no containment);
+# test_diff_coverage_confined.py proves the real box.
+_BOXES: list = []
+
+
+@pytest.fixture(autouse=True)
+def _host_boxes(tmp_path_factory):
+    boxes, _ = host_check_boxes(tmp_path_factory.mktemp("diff-boxes"))
+    _BOXES[:] = [boxes]
+    yield
+    _BOXES.clear()
+
+
+def collect_diff_coverage(**kwargs):
+    kwargs.setdefault("checks", _BOXES[0])
+    return _collect_diff_coverage(**kwargs)
 
 
 def _case(tmp_path: Path, *, unrelated_tests: int = 1) -> tuple[Path, ChangeView, object, object]:
@@ -465,12 +484,32 @@ def test_repository_venv_executable_is_not_trusted(tmp_path: Path) -> None:
     assert not _trusted_interpreter_path(str(binary), root)
 
 
-def test_test_run_mutation_is_stale(tmp_path: Path) -> None:
+def test_test_run_mutation_lands_in_the_box_copy_not_the_repository(tmp_path: Path) -> None:
+    # Phase 5: the test's cwd is the box's tree copy, so a mutating test cannot
+    # reach the user repository; the measurement is still never a PASS.
     root, change, baseline, tested = _case(tmp_path)
     write(root, "tests/test_old.py", "from pathlib import Path\n\ndef test_mutate():\n    Path('module.py').write_text('x = 3\\n')\n")
     tested = GitStateTracker().capture(change.id, "tested", str(root), 1, 1_048_576)
+    before = (root / "module.py").read_bytes()
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True))
+    assert (root / "module.py").read_bytes() == before
+    assert result.diff_exercised != "PASS"
+    assert result.gate_satisfied is False
+
+
+def test_repository_change_during_the_run_is_stale(tmp_path: Path) -> None:
+    root, change, baseline, tested = _case(tmp_path)
+    boxed = []
+
+    def mutate_repository(run_id, boundary) -> None:  # runs after the box run, before recapture
+        boxed.append((run_id, boundary))
+        write(root, "module.py", "x = 4\n")
+
+    result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
+                                   request=_request(baseline, tested, required=True),
+                                   on_check_run=mutate_repository)
+    assert len(boxed) == 1 and boxed[0][1] == "APPCONTAINER"
     assert result.diff_exercised == "STALE"
     assert result.freshness == "STALE"
     assert result.gate_satisfied is False
@@ -622,17 +661,30 @@ def test_oversized_line_model_returns_unknown_instead_of_500(
     assert "ValueError" in result.reasons[0]
 
 
+def _facts(box, *, exit_code, stderr=b""):
+    from datetime import UTC, datetime
+
+    from backend.app.execution.appcontainer import AppContainerFacts
+    from backend.app.execution.check_box import CheckRunFacts
+
+    return CheckRunFacts(
+        check_run_id=box.id, exit_code=exit_code, timed_out=False, stdout=b"", stderr=stderr,
+        truncated=False, stdout_digest="0" * 64,
+        appcontainer=AppContainerFacts(box.profile_name, box.package_sid, False, 0x2000, (),
+                                       False, datetime.now(UTC)),
+        capabilities=(), network=False, argv_sha256="0" * 64, tree_digest=box.tree_digest,
+        duration_ms=1)
+
+
 def test_missing_coverage_tool_keeps_checks_passed_unknown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, change, baseline, tested = _case(tmp_path)
 
-    def no_coverage(*args: object, **kwargs: object) -> CapturedProcess:
-        return CapturedProcess(returncode=1, stdout=b"", stderr=b"No module named coverage",
-                               truncated=False, timed_out=False, incomplete=False,
-                               stdout_digest="0" * 64)
+    def no_coverage(self, argv, **kwargs):
+        return _facts(self, exit_code=1, stderr=b"No module named coverage")
 
-    monkeypatch.setattr("backend.app.assurance.diff_coverage.run_verification_command", no_coverage)
+    monkeypatch.setattr("backend.app.execution.check_box.CheckBox.run", no_coverage)
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True))
     assert result.checks_passed is None
@@ -643,18 +695,18 @@ def test_missing_coverage_tool_keeps_checks_passed_unknown(
 def test_malformed_exported_artifact_is_unknown_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from backend.app.execution.commands import run_verification_command as real_command
+    from backend.app.execution.check_box import CheckBox
 
+    real_run = CheckBox.run
     root, change, baseline, tested = _case(tmp_path)
 
-    def malformed_export(argv: list[str], **kwargs: object) -> CapturedProcess:
+    def malformed_export(self, argv, **kwargs):
         if "json" in argv:
             Path(argv[argv.index("-o") + 1]).write_text("{malformed", encoding="utf-8")
-            return CapturedProcess(returncode=0, stdout=b"", stderr=b"", truncated=False,
-                                   timed_out=False, incomplete=False, stdout_digest="0" * 64)
-        return real_command(argv, **kwargs)
+            return _facts(self, exit_code=0)
+        return real_run(self, argv, **kwargs)
 
-    monkeypatch.setattr("backend.app.assurance.diff_coverage.run_verification_command", malformed_export)
+    monkeypatch.setattr("backend.app.execution.check_box.CheckBox.run", malformed_export)
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True))
     assert result.checks_passed is True

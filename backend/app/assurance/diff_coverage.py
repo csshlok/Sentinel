@@ -7,17 +7,21 @@ import ast
 import json
 import os
 import re
+import stat
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
+from uuid import UUID
 
 from backend.app.assurance.diff_map import _classification, map_diff
 from backend.app.contracts.models import (
     ChangeView, DiffCoverageFile, DiffCoverageRequest, DiffCoverageResult, GitCheckpoint, utc_now,
 )
 from backend.app.assurance.engine import contract_digest
-from backend.app.execution.commands import run_verification_command
+from backend.app.core.errors import AppError
+from backend.app.execution.check_box import CheckBox, CheckBoxes
+from backend.app.execution.commands import check_boxes_unavailable
 from backend.app.git.state import GitStateTracker
 
 ARTIFACT_LIMIT = 8_388_608
@@ -289,12 +293,40 @@ def evaluate_report(
     }})
 
 
+def _scratch_file(box: CheckBox, name: str) -> bool:
+    """True when ``scratch/<name>`` is a plain regular file (never follows a link)."""
+
+    try:
+        info = os.lstat(box.scratch / name)
+    except OSError:
+        return False
+    reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    return stat.S_ISREG(info.st_mode) and not reparse
+
+
+def _scratch_bytes(box: CheckBox, name: str) -> bytes | None:
+    """``scratch/<name>`` up to ARTIFACT_LIMIT; None when missing, oversized or a link."""
+
+    try:
+        return box.read_output(name, ARTIFACT_LIMIT)
+    except AppError:
+        return None
+
+
 def collect_diff_coverage(
     *, change: ChangeView, baseline: GitCheckpoint, tested: GitCheckpoint,
     request: DiffCoverageRequest, git_state: GitStateTracker | None = None,
-    patch_limit: int = 1_048_576,
+    patch_limit: int = 1_048_576, checks: CheckBoxes | None = None,
+    on_check_run: Callable[[UUID, str], None] | None = None,
 ) -> DiffCoverageResult:
-    """Run coverage in a disposable evidence directory and recapture state afterward."""
+    """Run coverage in a disposable confined check box and recapture state afterward.
+
+    Phase 5: tests and coverage run in a ``sentinel.check.<run-id>`` box over a
+    copy of the repository's tracked and untracked files, with the snapshot of
+    the (trusted) requested interpreter; evidence files live in the box's
+    scratch directory. Without ``checks`` nothing runs (UNKNOWN). The box's
+    check run id and boundary go to ``on_check_run``.
+    """
 
     started = utc_now()
     root = Path(tested.repository_root)
@@ -310,9 +342,10 @@ def collect_diff_coverage(
         threshold=request.rule.minimum_percent or 100.0,
         policy_version=request.rule.policy_version,
         collection_caveat=(
-            "Tests and coverage share a process at user authority; agent-authored code can "
-            "influence coverage data. The external Python interpreter is trusted by path, "
-            "not by a verified publisher or binary digest."
+            "Tests and coverage share one process inside a disposable Sentinel check box "
+            "(AppContainer, no network, a copy of the tracked and untracked files); "
+            "agent-authored code can still influence coverage data. The external Python "
+            "interpreter is trusted by path, not by a verified publisher or binary digest."
         ),
         gate_satisfied=False if request.rule.required else None,
         reasons=["Measurement did not complete."],
@@ -347,14 +380,20 @@ def collect_diff_coverage(
     collector_status = "ERROR"
     reasons: list[str] = []
     try:
-        with tempfile.TemporaryDirectory(prefix="sentinel-diff-") as temporary:
-            evidence = Path(temporary)
+        if checks is None:
+            raise check_boxes_unavailable()
+        # The trusted requested interpreter's snapshot runs in the box (cwd = its tree).
+        resolved = checks.resolve_runtime("python", interpreter=interpreter, source_root=root)
+        with checks.open(change.id, root, resolved.runtime) as box:
+            check_root = box.tree
+            evidence = box.scratch
+            box_python = resolved.argv_prefix[0]
             config = evidence / "coveragerc"
             data = evidence / "coverage.data"
             artifact = evidence / "coverage.json"
             junit = evidence / "pytest-results.xml"
             pytest_config = evidence / "sentinel-pytest.ini"
-            config.write_text(f"[run]\nsource = {root.as_posix()}\n", encoding="utf-8")
+            config.write_text(f"[run]\nsource = {check_root.as_posix()}\n", encoding="utf-8")
             pytest_config.write_text(
                 "[pytest]\naddopts =\npython_files = test_*.py *_test.py\n"
                 "python_classes = Test*\npython_functions = test_*\n"
@@ -362,22 +401,25 @@ def collect_diff_coverage(
                 ".tox .nox __pycache__\n",
                 encoding="utf-8",
             )
-            argv = [interpreter, "-X", f"pycache_prefix={evidence / 'pycache'}",
+            argv = [box_python, "-X", f"pycache_prefix={evidence / 'pycache'}",
                     "-m", "coverage", "run", "--rcfile", str(config),
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
-                    *test_args, "-c", str(pytest_config), f"--rootdir={root}",
+                    *test_args, "-c", str(pytest_config), f"--rootdir={check_root}",
                     "-o", "addopts=", f"--junitxml={junit}"]
             result = result.model_copy(update={"command": argv})
-            run = run_verification_command(argv, cwd=root, timeout=300, limit=262_144)
+            run = box.run(argv, timeout=300, limit=262_144)
+            if on_check_run is not None:
+                on_check_run(run.check_run_id, run.boundary)
             if run.timed_out or run.incomplete:
                 reasons.append("Test command timed out or output capture was incomplete.")
-            elif not data.is_file():
+            elif not _scratch_file(box, data.name):
                 reasons.append("Coverage data is missing; test execution could not be confirmed.")
             else:
-                if not junit.is_file() or junit.stat().st_size > ARTIFACT_LIMIT:
+                junit_bytes = _scratch_bytes(box, junit.name)
+                if junit_bytes is None:
                     reasons.append("Pytest execution report is missing or oversized.")
                 else:
-                    suite = ET.fromstring(junit.read_bytes())
+                    suite = ET.fromstring(junit_bytes)
                     if suite.tag == "testsuites":
                         suites = list(suite.findall("testsuite"))
                     elif suite.tag == "testsuite":
@@ -389,7 +431,7 @@ def collect_diff_coverage(
                     for case in suite.iter("testcase"):
                         file_attr = case.attrib.get("file")
                         if file_attr:
-                            normalized = _report_path(root, file_attr)
+                            normalized = _report_path(check_root, file_attr)
                             if normalized:
                                 collected_test_paths.add(normalized)
                         classname = case.attrib.get("classname", "")
@@ -398,21 +440,26 @@ def collect_diff_coverage(
                     if executed_tests <= 0:
                         reasons.append("Pytest did not execute any tests.")
                     else:
-                        checks_passed = run.returncode == 0
-                exported = run_verification_command(
-                    [interpreter, "-m", "coverage", "json", "--rcfile", str(config),
+                        checks_passed = run.exit_code == 0
+                exported = box.run(
+                    [box_python, "-m", "coverage", "json", "--rcfile", str(config),
                      "--data-file", str(data), "-o", str(artifact)],
-                    cwd=root, timeout=60, limit=32_768,
+                    timeout=60, limit=32_768,
                 )
-                if exported.returncode != 0 or exported.timed_out or exported.incomplete:
+                content = _scratch_bytes(box, artifact.name)
+                if exported.exit_code != 0 or exported.timed_out or exported.incomplete:
                     reasons.append("coverage.py JSON export failed or coverage.py is unavailable.")
-                elif not artifact.is_file() or artifact.stat().st_size > ARTIFACT_LIMIT:
+                elif content is None:
                     reasons.append("Coverage report is missing or oversized.")
                 else:
-                    content = artifact.read_bytes()
                     artifact_digest = hashlib.sha256(content).hexdigest()
                     parsed = json.loads(content)
                     if isinstance(parsed, dict):
+                        # Report paths are relative to the check tree; key them by repository path.
+                        files = parsed.get("files")
+                        if isinstance(files, dict) and all(isinstance(key, str) for key in files):
+                            parsed["files"] = {(_report_path(check_root, key) or key): value
+                                               for key, value in files.items()}
                         report = parsed
                         collector_status = "COLLECTED"
                         meta = parsed.get("meta")
@@ -425,6 +472,8 @@ def collect_diff_coverage(
                             reasons.append("Coverage collector version is missing or malformed.")
                     else:
                         reasons.append("Coverage report is malformed.")
+    except AppError as exc:
+        reasons.append(f"Coverage collection failed: {exc.code}.")
     except Exception as exc:
         reasons.append(f"Coverage collection failed: {type(exc).__name__}.")
     try:
