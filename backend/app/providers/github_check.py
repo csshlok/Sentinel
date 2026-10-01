@@ -30,6 +30,7 @@ _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _API = "https://api.github.com"
 _MAX_RESPONSE = 1_048_576
+_DENIAL_CONTEXTS = 8
 
 
 def _b64url(data: bytes) -> str:
@@ -329,8 +330,11 @@ class GitHubCheckPublisher:
                            f"v{claims.policy_preset_version or 'none'}; {policy_decision}"),
             }
             denial_text = "Policy denials: " + ("; ".join(claims.policy_denials) or "none")
-            for index in range(0, len(denial_text), 120):
-                descriptions[f"policy-denials-{index // 120 + 1}"] = denial_text[index:index + 120]
+            if len(denial_text) > 120 * _DENIAL_CONTEXTS:
+                raise ValueError("Signed policy denials exceed GitHub commit status capacity")
+            for slot in range(_DENIAL_CONTEXTS):
+                descriptions[f"policy-denials-{slot + 1}"] = (
+                    denial_text[slot * 120:(slot + 1) * 120] or "Policy denials: [end]")
             if any(len(value) > 140 for value in descriptions.values()):
                 raise ValueError("Signed claims exceed GitHub commit status limit")
             for context, description in descriptions.items():

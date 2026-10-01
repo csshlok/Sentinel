@@ -269,16 +269,21 @@ def test_declined_app_uses_lesser_statuses_with_all_claims(tmp_path) -> None:
     now = datetime(2026, 9, 28, tzinfo=UTC)
     queue = [json_response(200, {"head": {"sha": "a" * 40}}),
              json_response(200, {"head": {"sha": "a" * 40}})]
-    queue.extend(json_response(201, {"id": index}) for index in range(1, 8))
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 15))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
     result = publisher.publish(change.id, decline_app=True,
                                fallback_token="PAT-CANARY")
     assert result.state == "PUBLISHED"
     assert result.presentation == "COMMIT_STATUS_LESSER"
-    assert len(transport.calls) == 9
+    assert len(transport.calls) == 16
     statuses = transport.calls[2:]
     assert all(call["url"].endswith("/statuses/" + "a" * 40) for call in statuses)
     bodies = [json.loads(call["body"]) for call in statuses]
+    assert {body["context"] for body in bodies if "policy-denials" in body["context"]} == {
+        f"sentinel/passport/policy-denials-{slot}" for slot in range(1, 9)}
+    assert all(body["description"] == "Policy denials: [end]"
+               for body in bodies if body["context"].endswith(tuple(
+                   f"policy-denials-{slot}" for slot in range(2, 9))))
     assert all(body["state"] == "error" for body in bodies)  # UNKNOWN boundary.
     joined = " ".join(body["description"] for body in bodies)
     for expected in ("checks PASS", "diff PASS", "freshness CURRENT", "boundary UNKNOWN",
@@ -293,13 +298,47 @@ def test_declined_app_stale_status_never_succeeds(tmp_path) -> None:
     now = datetime(2026, 9, 28, tzinfo=UTC)
     queue = [json_response(200, {"head": {"sha": "c" * 40}}),
              json_response(200, {"head": {"sha": "c" * 40}})]
-    queue.extend(json_response(201, {"id": index}) for index in range(1, 8))
+    queue.extend(json_response(201, {"id": index}) for index in range(1, 15))
     publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
     result = publisher.publish(change.id, decline_app=True,
                                fallback_token="PAT-CANARY")
     assert result.head_sha == "c" * 40 and result.freshness == "STALE"
     assert all(json.loads(call["body"])["state"] == "error"
                for call in transport.calls[2:])
+
+
+def test_lesser_status_clears_old_denial_contexts(tmp_path, monkeypatch) -> None:
+    now = datetime(2026, 9, 28, tzinfo=UTC)
+    queue = []
+    for start in (1, 15):
+        queue.extend([json_response(200, {"head": {"sha": "a" * 40}}),
+                      json_response(200, {"head": {"sha": "a" * 40}})])
+        queue.extend(json_response(201, {"id": index})
+                     for index in range(start, start + 14))
+    publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
+    validate = github_check_module.PassportV2Payload.model_validate
+    denials = ["first denial " * 14, "second denial " * 14]
+
+    def with_denials(cls, value):
+        return validate(value).model_copy(update={
+            "policy_preset_name": "strict", "policy_preset_version": "1.3.2",
+            "policy_decision": "DENY", "policy_denials": denials.copy(),
+        })
+
+    monkeypatch.setattr(github_check_module.PassportV2Payload, "model_validate",
+                        classmethod(with_denials))
+    publisher.publish(change.id, decline_app=True, fallback_token="PAT-CANARY")
+    denials.clear()
+    publisher.publish(change.id, decline_app=True, fallback_token="PAT-CANARY")
+    first = {body["context"]: body["description"] for body in
+             (json.loads(call["body"]) for call in transport.calls[2:16])}
+    second = {body["context"]: body["description"] for body in
+              (json.loads(call["body"]) for call in transport.calls[18:])}
+    assert first.keys() == second.keys()
+    assert first["sentinel/passport/policy-denials-2"] != "Policy denials: [end]"
+    assert second["sentinel/passport/policy-denials-1"] == "Policy denials: none"
+    assert all(second[f"sentinel/passport/policy-denials-{slot}"] == "Policy denials: [end]"
+               for slot in range(2, 9))
 
 
 def test_declined_app_requires_previously_authorized_fallback_token(tmp_path) -> None:
