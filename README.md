@@ -41,7 +41,7 @@ For the `docs` change type, documentation means `.md` and `.rst` files, `.txt` f
 
 ## Development
 
-Python 3.12 or newer and Windows are required for the real execution paths. Install the package and pinned test dependencies, then run the suite:
+Python 3.12 or newer and Windows are required for the real execution paths. Direct dependencies are pinned in `pyproject.toml`; the transitive dependency tree is not locked. Install the package and test dependencies, then run the suite:
 
 ```text
 python -m pip install -e ".[test,tui]"
