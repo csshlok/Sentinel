@@ -98,6 +98,9 @@ def test_preview_is_read_only_and_describes_the_change(workspace_manager, user_r
     write(ws, ".github/workflows/ci.yml", "on: push\n")
     # A symbolic link and a gitlink, staged the way an agent's own Git would.
     write(ws, "link", "../outside")
+    # The agent's Git has symlinks disabled (host default varies: hosted runners
+    # enable them), so the seal keeps the staged 120000 entry on any host.
+    git(ws, "config", "--local", "core.symlinks", "false")
     blob = git(ws, "hash-object", "-w", "link").strip()
     git(ws, "-c", "core.symlinks=false", "update-index", "--add", "--cacheinfo",
         f"120000,{blob},link")
