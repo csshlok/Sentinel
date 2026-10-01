@@ -1,81 +1,122 @@
 """One-shot verification command execution with bounded duration and output.
 
-Only the direct child process is supervised. Descendant-process
-attribution and orphan cleanup are out of scope for this runner, per the
-project's documented recovery/environment non-goals.
+Phase 5: a verification command runs in a disposable confined check box
+(``execution.commands.run_confined_check``): a per-run AppContainer profile over
+a copy of the repository's tracked and untracked files, a cached runtime
+snapshot, no network, and the box's own environment (no host variable is
+copied). The run belongs to a Change and is journaled as ``check.confined_run``.
+A toolchain with no confined runtime is refused with
+``CHECK_TOOLCHAIN_UNCONFINED`` unless the caller passes ``allow_unconfined``
+after authorizing the actor's ``checks.unconfined`` delegation; that run uses
+the restricted unconfined path and is journaled as ``check.unconfined_run``
+with boundary ``UNCONFINED``.
 
-Process start lives in ``backend.app.execution.commands``
-(``run_verification_command``), which uses the same bounded-subprocess
-primitive as ``execution.runner.BoundedVerificationRunner``
-(``execution._process.capture``) rather than
-``subprocess.run(capture_output=True)``: the prior implementation inherited this process's *entire* environment into the child (any secret or
-token present in the daemon's own environment was reachable by an arbitrary
-allowlisted command run through the legacy ``/verify`` route) and buffered
-stdout/stderr fully in memory before truncating to the configured limit, so
-the limit bounded the stored result but not actual memory use. ``capture``
-drains both pipes with a shared byte budget enforced *during* the read loop
-and takes an explicit, minimal environment.
+Output is bounded during the read (``execution._process.capture``), never only
+in the stored result.
 """
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
+from uuid import UUID
 
 from backend.app.contracts.models import (
     VerificationRequest,
     VerificationResult,
     VerificationStatus,
 )
-from backend.app.execution.commands import run_verification_command
-from backend.app.verification.validation import resolve_executable
+from backend.app.execution.check_box import CheckBoxes
+from backend.app.execution.check_toolchains import (
+    check_toolchain_unconfined,
+    is_unconfined_toolchain,
+)
+from backend.app.execution.commands import (
+    CheckCommandResult,
+    CheckedVerification,
+    Resolver,
+    run_confined_check,
+    run_unconfined_check,
+)
+from backend.app.verification.validation import resolve_executable, validate_executable
 
 
 class SubprocessVerificationRunner:
-    """Concrete ``VerificationPort`` backed by a supervised subprocess."""
+    """Concrete ``VerificationPort``: every command runs in a confined check box."""
+
+    def __init__(
+        self, checks: CheckBoxes | None = None, *, resolve: Resolver | None = None,
+    ) -> None:
+        self._checks = checks
+        self._resolve = resolve
 
     def run(
         self,
         repository_path: str,
         request: VerificationRequest,
         output_limit_bytes: int,
+        *,
+        change_id: UUID | None = None,
+        allow_unconfined: bool = False,
     ) -> VerificationResult:
-        resolved_executable = resolve_executable(request)
-        argv = [resolved_executable, *request.args]
+        return self.run_checked(
+            repository_path, request, output_limit_bytes,
+            change_id=change_id, allow_unconfined=allow_unconfined,
+        ).result
 
+    def run_checked(
+        self,
+        repository_path: str,
+        request: VerificationRequest,
+        output_limit_bytes: int,
+        *,
+        change_id: UUID | None = None,
+        allow_unconfined: bool = False,
+    ) -> CheckedVerification:
+        validate_executable(request)
+        limit = max(0, output_limit_bytes)
         started_at = datetime.now(UTC)
-        clock_start = time.monotonic()
         try:
-            result = run_verification_command(
-                argv, cwd=repository_path,
-                timeout=request.timeout_seconds, limit=max(0, output_limit_bytes),
-            )
+            if is_unconfined_toolchain(request.executable):
+                if not allow_unconfined:
+                    raise check_toolchain_unconfined(request.executable)
+                argv = [resolve_executable(request), *request.args]
+                outcome = run_unconfined_check(
+                    self._checks, change_id=change_id, cwd=repository_path, argv=argv,
+                    executable=request.executable, timeout=request.timeout_seconds,
+                    limit=limit,
+                )
+            else:
+                outcome = run_confined_check(
+                    self._checks, change_id=change_id, source_root=repository_path,
+                    executable=request.executable, args=request.args,
+                    timeout=request.timeout_seconds, limit=limit, resolve=self._resolve,
+                )
         except OSError:
-            return self._build_result(
-                request=request, started_at=started_at,
-                duration_ms=self._elapsed_ms(clock_start),
+            result = self._build_result(
+                request=request, started_at=started_at, duration_ms=0,
                 status=VerificationStatus.ERROR, exit_code=None,
                 stdout=b"", stderr=b"The verification command could not be started.",
                 truncated=False,
             )
+            return CheckedVerification(result, None, None)
+        return CheckedVerification(self._from_outcome(request, started_at, outcome),
+                                   outcome.boundary, outcome.check_run_id)
 
+    def _from_outcome(
+        self, request: VerificationRequest, started_at: datetime, outcome: CheckCommandResult,
+    ) -> VerificationResult:
         status = (
-            VerificationStatus.TIMED_OUT if result.timed_out else
-            VerificationStatus.ERROR if result.incomplete else
-            VerificationStatus.PASSED if result.returncode == 0 else
+            VerificationStatus.TIMED_OUT if outcome.timed_out else
+            VerificationStatus.ERROR if outcome.incomplete else
+            VerificationStatus.PASSED if outcome.returncode == 0 else
             VerificationStatus.FAILED
         )
         return self._build_result(
-            request=request, started_at=started_at,
-            duration_ms=self._elapsed_ms(clock_start),
+            request=request, started_at=started_at, duration_ms=outcome.duration_ms,
             status=status,
-            exit_code=None if result.incomplete else result.returncode,
-            stdout=result.stdout, stderr=result.stderr, truncated=result.truncated,
+            exit_code=None if outcome.incomplete or outcome.timed_out else outcome.returncode,
+            stdout=outcome.stdout, stderr=outcome.stderr, truncated=outcome.truncated,
         )
-
-    @staticmethod
-    def _elapsed_ms(clock_start: float) -> int:
-        return int((time.monotonic() - clock_start) * 1000)
 
     @staticmethod
     def _build_result(

@@ -16,13 +16,10 @@ from backend.app.execution.check_toolchains import ALLOWED_EXECUTABLES
 from backend.app.verification.errors import executable_not_allowed, executable_not_found
 
 
+def validate_executable(request: VerificationRequest) -> str:
+    """The allowlisted executable name; ``VERIFICATION_EXECUTABLE_NOT_ALLOWED`` otherwise.
 
-def resolve_executable(request: VerificationRequest) -> str:
-    """Validate the requested executable and return its resolved path.
-
-    Raises ``VERIFICATION_EXECUTABLE_NOT_ALLOWED`` for a disallowed or
-    path-qualified executable, and ``VERIFICATION_EXECUTABLE_NOT_FOUND``
-    for an allowlisted executable that is not on PATH.
+    A path-qualified or unlisted name is refused. Nothing is looked up.
     """
 
     executable = request.executable
@@ -30,6 +27,20 @@ def resolve_executable(request: VerificationRequest) -> str:
         raise executable_not_allowed(executable)
     if executable not in ALLOWED_EXECUTABLES:
         raise executable_not_allowed(executable)
+    return executable
+
+
+def resolve_executable(request: VerificationRequest) -> str:
+    """Validate the requested executable and return its resolved host path.
+
+    Used only by the delegated unconfined path; confined checks resolve to a
+    runtime snapshot instead. Raises ``VERIFICATION_EXECUTABLE_NOT_ALLOWED``
+    for a disallowed or path-qualified executable, and
+    ``VERIFICATION_EXECUTABLE_NOT_FOUND`` for an allowlisted executable that
+    is not on PATH.
+    """
+
+    executable = validate_executable(request)
 
     # Same reasoning as execution/resolve.py::find_executable: a plain PATH
     # lookup for "python"/"python3" can resolve to the Windows Store's

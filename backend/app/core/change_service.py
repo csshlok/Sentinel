@@ -35,6 +35,11 @@ from backend.app.core.config import Settings
 from backend.app.core.errors import AppError, change_not_found, policy_denied
 from backend.app.core.lifecycle import allowed_targets, validate_transition
 from backend.app.core.review_service import determine_review_state
+from backend.app.execution.check_toolchains import (
+    CHECKS_UNCONFINED_SCOPE,
+    check_toolchain_unconfined,
+    is_unconfined_toolchain,
+)
 
 
 Clock = Callable[[], datetime]
@@ -301,10 +306,25 @@ class ChangeService:
         decision = self.policy.evaluate(actor_id, change_view, "change.legacy_verify", {})
         if not decision.allowed:
             raise policy_denied(decision.reason_code, decision.explanation)
+        # Phase 5: a toolchain with no confined runtime runs only with the
+        # actor's delegated checks.unconfined authority for this Change.
+        allow_unconfined = False
+        if is_unconfined_toolchain(request.executable):
+            unconfined = self.policy.evaluate(
+                actor_id, change_view, CHECKS_UNCONFINED_SCOPE,
+                {"executable": request.executable},
+            )
+            if not unconfined.allowed:
+                error = check_toolchain_unconfined(request.executable)
+                error.details["policy_reason"] = unconfined.reason_code
+                raise error
+            allow_unconfined = True
         result = self.verification.run(
             stored.repository_path,
             request,
             self.settings.verification_output_limit_bytes,
+            change_id=change_id,
+            allow_unconfined=allow_unconfined,
         )
         updated = self.repository.update_verification(
             change_id,

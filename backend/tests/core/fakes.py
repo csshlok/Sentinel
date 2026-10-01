@@ -33,7 +33,12 @@ class FakeVerification:
         repository_path: str,
         request: VerificationRequest,
         output_limit_bytes: int,
+        *,
+        change_id=None,
+        allow_unconfined: bool = False,
     ) -> VerificationResult:
+        self.change_id = change_id
+        self.allow_unconfined = allow_unconfined
         if self.result is None:
             raise AssertionError("No verification result configured for fake")
         return self.result

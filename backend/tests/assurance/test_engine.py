@@ -28,11 +28,14 @@ PYTEST_FILES = {"pyproject.toml": "[tool.pytest.ini_options]\n", "app.py": "x = 
 class FakeRunner:
     def __init__(self, results=None, error=None):
         self.calls = []
+        self.change_ids = []
         self.results = results or {}
         self.error = error
 
-    def run(self, repository_path, request, output_limit_bytes):
+    def run(self, repository_path, request, output_limit_bytes, *, change_id=None,
+            allow_unconfined=False):
         self.calls.append((repository_path, request, output_limit_bytes))
+        self.change_ids.append(change_id)
         if self.error:
             raise self.error
         status, code, out = self.results.get(request.args[-1] if request.args else "",
@@ -282,6 +285,16 @@ def test_run_maps_every_status_and_binds_evidence(tmp_path):
     assert all(r.plan_id == plan.id and r.checkpoint_id == cp.id and r.change_id == change.id for r in runs)
     assert [r.check_id for r in runs] == ids(plan)
     assert all(call[2] == 5000 for call in runner.calls)
+    # Phase 5: every check run belongs to the Change (its box is journaled there).
+    assert runner.change_ids == [change.id] * len(runner.calls)
+
+
+def test_default_runner_is_confined_and_refuses_without_a_box_manager(tmp_path):
+    repo = make_repo(tmp_path / "r", PYTEST_FILES)
+    engine, change, _, plan = plan_for(repo, {"app.py": "2\n"}, engine=AssuranceEngine())
+    runs = engine.run(change, plan, str(repo), 1000)
+    assert runs and all(r.status is AssuranceStatus.ERROR for r in runs)
+    assert all("not configured" in r.stderr for r in runs)
 
 
 def test_runner_apperror_becomes_error_run(tmp_path):

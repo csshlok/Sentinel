@@ -4287,7 +4287,8 @@
           "workspace.applied",
           "workspace.apply_refused",
           "workspace.cleaned",
-          "check.confined_run"
+          "check.confined_run",
+          "check.unconfined_run"
         ],
         "title": "JournalEventType",
         "type": "string"

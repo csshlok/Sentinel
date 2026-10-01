@@ -149,9 +149,13 @@ class CheckBoxes:
         self, database: Database, *, journal: JournalWriter | None = None,
         profile_prefix: str = DEFAULT_PROFILE_PREFIX, runtime_root: str | Path | None = None,
         platform: BoxPlatform | None = None, clock: Callable[[], datetime] = utc_now,
+        resolver: Callable[..., Any] | None = None,
     ) -> None:
         appcontainer.validate_profile_name(profile_prefix + "0" * 32)
         self.repository = CheckRunRepository(database)
+        # Toolchain -> runtime resolution; snapshots are built under the same
+        # cache root this manager grants on (default: check_toolchains).
+        self._resolver = resolver
         self._journal = journal
         self._prefix = profile_prefix
         self._runtime_root = None if runtime_root is None else Path(runtime_root)
@@ -188,6 +192,50 @@ class CheckBoxes:
                     payload=dict(payload or {}), connection=connection,
                 )
         return updated
+
+    # ------------------------------------------------------------------ runtimes
+
+    def resolve_runtime(
+        self, executable: str, *, interpreter: str | Path | None = None,
+        source_root: str | Path | None = None,
+    ) -> Any:
+        """The confined runtime for ``executable`` (a ``ResolvedCheckRuntime``) or a refusal.
+
+        Snapshots are built in this manager's runtime cache root, the root its
+        grants are restricted to.
+        """
+
+        if self._resolver is not None:
+            return self._resolver(executable, interpreter=interpreter, source_root=source_root)
+        from backend.app.execution.check_toolchains import RuntimeBuilders, resolve_check_runtime
+
+        return resolve_check_runtime(
+            executable, interpreter=interpreter, source_root=source_root,
+            builders=RuntimeBuilders.for_root(self._runtime_root),
+        )
+
+    # ------------------------------------------------------------------ unconfined
+
+    @property
+    def journaled(self) -> bool:
+        """True when runs (including unconfined opt-in runs) can be journaled."""
+
+        return self._journal is not None
+
+    def record_unconfined_run(
+        self, change_id: UUID, run_id: UUID, payload: Mapping[str, Any],
+    ) -> None:
+        """Journal one check run that executed outside any box (``check.unconfined_run``).
+
+        Only the delegated ``checks.unconfined`` path calls this. No box, row or
+        profile exists for such a run; the event is its record.
+        """
+
+        if self._journal is None:
+            raise AppError("CHECK_JOURNAL_UNAVAILABLE",
+                           "An unconfined check cannot run without a journal.", status_code=503)
+        self._journal.append(change_id, JournalEventType.CHECK_UNCONFINED_RUN,
+                             subject_type="check_run", subject_id=run_id, payload=dict(payload))
 
     # ------------------------------------------------------------------ cleanup
 
@@ -578,6 +626,7 @@ class CheckRunFacts:
     tree_digest: str
     duration_ms: int
     boundary: str = BOUNDARY_APPCONTAINER
+    incomplete: bool = False
 
 
 def argv_digest(argv: Sequence[str]) -> str:
@@ -717,6 +766,7 @@ class CheckBox:
             stdout_digest=result.stdout_digest, appcontainer=facts,
             capabilities=capabilities, network=record.network, argv_sha256=digest,
             tree_digest=str(record.tree_digest), duration_ms=duration_ms,
+            incomplete=result.incomplete,
         )
 
     # ------------------------------------------------------------------ outputs

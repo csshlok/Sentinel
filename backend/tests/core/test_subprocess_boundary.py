@@ -337,3 +337,65 @@ def test_allowlist_entries_exist() -> None:
     assert (EXECUTION_DIR / "_process.py").is_file()
     assert SAFE_EXEC.is_file()
     assert (EXECUTION_DIR / "appcontainer.py").is_file()
+
+
+# ---------------------------------------------------------------------- Phase 5: checks
+#
+# Every agent-influenced check (verification, assurance checks, diff coverage)
+# runs in a confined check box. Inside ``execution/`` the set of modules that
+# start processes is pinned, each for a stated reason, so a new spawn site
+# cannot appear without review. The restricted unconfined primitive
+# ``run_verification_command`` is reachable only through the delegated
+# ``checks.unconfined`` opt-in (``commands.run_unconfined_check``).
+
+PROCESS_STARTING_EXECUTION_MODULES = {
+    "_process.py": "the bounded capture primitive itself",
+    "acl.py": "icacls by absolute System32 path (ACL management, no repository code)",
+    "appcontainer.py": "native AppContainer launch (CreateProcess) for boxes and agents",
+    "process_supervisor.py": "native supervised launch (CreateProcess) for agents",
+    "launcher.py": "the supervised agent launcher (agent runs, not checks)",
+    "check_box.py": "confined check runs (spawn_appcontainer_supervised via the box)",
+    "check_runtime.py": "interpreter facts probe (-I -S, temp cwd, no project code)",
+    "commands.py": "the delegated checks.unconfined opt-in path only",
+    "tool_probe.py": "tool --version probes (PATH tools, not repository code)",
+    "signature.py": "Authenticode check of a registered tool",
+}
+_SPAWN_MARKERS = ("capture(", "Popen(", "subprocess.run(", "CreateProcess")
+CHECK_RUNNER_MODULES = (
+    APP_ROOT / "verification" / "runner.py",
+    EXECUTION_DIR / "runner.py",
+)
+
+
+def _starts_processes(source: str) -> bool:
+    return any(marker in source for marker in _SPAWN_MARKERS)
+
+
+def test_process_starting_execution_modules_are_pinned() -> None:
+    found = {path.name for path in EXECUTION_DIR.glob("*.py")
+             if _starts_processes(path.read_text(encoding="utf-8"))}
+    assert found == set(PROCESS_STARTING_EXECUTION_MODULES), (
+        "A module under execution/ started (or stopped) starting processes; review it and "
+        f"update the pinned list: unexpected={sorted(found - set(PROCESS_STARTING_EXECUTION_MODULES))} "
+        f"missing={sorted(set(PROCESS_STARTING_EXECUTION_MODULES) - found)}")
+
+
+def test_check_runners_never_start_a_process_themselves() -> None:
+    for path in CHECK_RUNNER_MODULES:
+        source = path.read_text(encoding="utf-8")
+        assert not _starts_processes(source), path
+        assert "run_verification_command" not in source, path
+        assert "run_confined_check(" in source and "run_unconfined_check(" in source, path
+
+
+def test_unconfined_primitive_is_reached_only_through_the_opt_in() -> None:
+    commands = EXECUTION_DIR / "commands.py"
+    tree = ast.parse(commands.read_text(encoding="utf-8"))
+    callers = {
+        function.name
+        for function in ast.walk(tree) if isinstance(function, ast.FunctionDef)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "run_verification_command"
+    }
+    assert callers == {"run_unconfined_check"}

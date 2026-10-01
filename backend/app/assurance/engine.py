@@ -29,7 +29,8 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.errors import AppError
 from backend.app.execution._process import minimal_environment
-from backend.app.execution.resolve import find_executable, native_command
+from backend.app.execution.check_box import CheckBoxes
+from backend.app.execution.resolve import find_executable
 from backend.app.execution.runner import BoundedVerificationRunner
 from backend.app.git import reader
 from backend.app.git.state import GitStateTracker
@@ -77,10 +78,13 @@ class AssuranceEngine:
         *,
         patch_limit_bytes: int | None = None,
         check_timeout_seconds: int = DEFAULT_CHECK_TIMEOUT,
+        checks: CheckBoxes | None = None,
     ) -> None:
         if type(check_timeout_seconds) is not int or not 1 <= check_timeout_seconds <= 300:
             raise ValueError("The check timeout must be between 1 and 300 seconds.")
-        self._runner = runner or BoundedVerificationRunner()
+        # Phase 5: checks (and the diff-coverage collector) run in confined boxes.
+        self.checks = checks
+        self._runner = runner or BoundedVerificationRunner(checks)
         self._git_state = git_state or GitStateTracker()
         self._patch_limit = patch_limit_bytes
         self._timeout = check_timeout_seconds
@@ -221,12 +225,13 @@ class AssuranceEngine:
         return runs
 
     def _execute(self, change, plan, check, root, limit) -> AssuranceRun:
-        executable, args = native_command(
-            check.executable, list(check.args), minimal_environment(), Path(root))
+        # Phase 5: the logical name goes to the runner, which maps npm & co. to
+        # the confined node snapshot (a host npm-cli.js path is unreadable in a box).
+        executable, args = check.executable, list(check.args)
         try:
             request = VerificationRequest(executable=executable, args=args,
                                           timeout_seconds=self._timeout)
-            result = self._runner.run(root, request, limit)
+            result = self._runner.run(root, request, limit, change_id=change.id)
         except AppError as exc:
             now = utc_now()
             return AssuranceRun(

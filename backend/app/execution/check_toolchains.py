@@ -127,6 +127,19 @@ class RuntimeBuilders:
     node_modules: Callable[[Path], RuntimeSnapshot | None] = node_modules_snapshot
     find_node: Callable[[Path | None], Path | None] = _find_host_node
 
+    @classmethod
+    def for_root(cls, root: str | Path | None) -> RuntimeBuilders:
+        """Builders that write snapshots under ``root`` (None: the default cache)."""
+
+        if root is None:
+            return cls()
+        cache = Path(root)
+        return cls(
+            python=lambda interpreter: python_runtime(interpreter, root=cache),
+            node=lambda node: node_runtime(node, root=cache),
+            node_modules=lambda repo: node_modules_snapshot(repo, root=cache),
+        )
+
 
 def _node_entry(base: Path, parts: tuple[str, ...]) -> Path | None:
     candidate = base.joinpath(*parts)

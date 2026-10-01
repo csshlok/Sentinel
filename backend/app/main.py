@@ -12,7 +12,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.app.assurance.service import BASELINE, EvidenceService
+from backend.app.assurance.engine import AssuranceEngine
+from backend.app.assurance.service import BASELINE, DEFAULT_PATCH_LIMIT, EvidenceService
 from backend.app.assurance.store import EvidenceStore, IdempotencyStore
 from backend.app.contracts.models import (
     BackendIdentity, ErrorDetail, ErrorEnvelope, HealthResponse, utc_now,
@@ -174,17 +175,24 @@ def create_app(
         database, baseline_head=baseline_head,
         credential_purger=broker.purge_staged_credentials, journal=journal,
     )
-    # Phase 5: per-run confined check boxes (no caller is switched to them yet).
+    # Phase 5: per-run confined check boxes. Verification, assurance checks and
+    # diff-coverage collection all run in them (05-03).
     check_boxes = CheckBoxes(database, journal=journal)
     # claude resolves to the AppContainer profile: it launches only inside
     # this manager's workspace, with the broker's staged credential.
     agent_launcher = AgentLauncher(
         tool_registry=tool_registry, workspaces=workspace_manager, credentials=broker,
     )
-    evidence_service = evidence or EvidenceService(
-        evidence_store, journal=journal, launcher=agent_launcher,
-        git_state=WorkspaceGuardedGitState(workspace_manager),
-    )
+    if evidence is None:
+        guarded_git_state = WorkspaceGuardedGitState(workspace_manager)
+        evidence_service = EvidenceService(
+            evidence_store, journal=journal, launcher=agent_launcher,
+            git_state=guarded_git_state,
+            assurance=AssuranceEngine(checks=check_boxes, git_state=guarded_git_state,
+                                      patch_limit_bytes=DEFAULT_PATCH_LIMIT),
+        )
+    else:
+        evidence_service = evidence
     change_delegations = DelegationRepository(database)
     resolved_lifecycle_facts = lifecycle_facts or RuntimeLifecycleFacts(
         change_delegations,
@@ -196,7 +204,7 @@ def create_app(
     service = ChangeService(
         repository=repository,
         git_inspection=git_inspection or GitRepositoryInspector(),
-        verification=verification or SubprocessVerificationRunner(),
+        verification=verification or SubprocessVerificationRunner(check_boxes),
         lifecycle_facts=resolved_lifecycle_facts,
         settings=resolved_settings,
         policy=DelegationPolicyEngine(change_delegations),

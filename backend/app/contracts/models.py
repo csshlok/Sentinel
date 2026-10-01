@@ -816,6 +816,8 @@ class JournalEventType(StrEnum):
     WORKSPACE_CLEANED = "workspace.cleaned"
     # Phase 5 (05-02): one confined check run inside a per-run AppContainer box.
     CHECK_CONFINED_RUN = "check.confined_run"
+    # Phase 5 (05-03): a check run outside any box under a delegated checks.unconfined opt-in.
+    CHECK_UNCONFINED_RUN = "check.unconfined_run"
 
 
 class JournalEvent(ContractModel):

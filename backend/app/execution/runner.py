@@ -1,8 +1,13 @@
-"""Bounded VerificationPort implementation for Person 2 assurance integration.
+"""Bounded VerificationPort implementation used by the assurance engine.
 
-Commands execute with the current user's OS privileges. An executable allowlist
-and reduced environment are not a sandbox; callers must authorize each command.
-The legacy port cannot represent launch/attach/cancel authority or idempotency.
+Phase 5: every command runs in a disposable confined check box
+(``execution.commands.run_confined_check``) and belongs to a Change. A
+toolchain with no confined runtime is refused (``CHECK_TOOLCHAIN_UNCONFINED``)
+unless the caller passes ``allow_unconfined`` after authorizing the actor's
+``checks.unconfined`` delegation; that run executes on the restricted
+unconfined path (allowlist, reduced environment, repository-free PATH; not a
+sandbox) and is journaled with boundary ``UNCONFINED``. The legacy port cannot
+represent launch/attach/cancel authority or idempotency.
 """
 
 from __future__ import annotations
@@ -10,15 +15,28 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-import time
 from pathlib import Path
+from uuid import UUID
 
 from backend.app.contracts.models import (
     VerificationRequest, VerificationResult, VerificationStatus, utc_now,
 )
 from backend.app.core.errors import AppError
-from backend.app.execution._process import capture, minimal_environment
-from backend.app.execution.check_toolchains import ALLOWED_EXECUTABLES
+from backend.app.execution._process import minimal_environment
+from backend.app.execution.check_box import CheckBoxes
+from backend.app.execution.check_toolchains import (
+    ALLOWED_EXECUTABLES,
+    check_toolchain_unconfined,
+    is_unconfined_toolchain,
+)
+from backend.app.execution.commands import (
+    CheckCommandResult,
+    CheckedVerification,
+    Resolver,
+    run_confined_check,
+    run_unconfined_check,
+    unconfined_environment,
+)
 
 
 MAX_OUTPUT_BYTES = 1_048_576
@@ -52,10 +70,24 @@ def _resolve(name: str, root: Path, environment: dict[str, str]) -> str:
 
 
 class BoundedVerificationRunner:
-    """Satisfies the existing VerificationPort without changing shared wiring."""
+    """Satisfies ``VerificationPort``; every allowlisted command runs in a check box."""
+
+    def __init__(
+        self, checks: CheckBoxes | None = None, *, resolve: Resolver | None = None,
+    ) -> None:
+        self._checks = checks
+        self._resolve = resolve
 
     def run(self, repository_path: str, request: VerificationRequest,
-            output_limit_bytes: int) -> VerificationResult:
+            output_limit_bytes: int, *, change_id: UUID | None = None,
+            allow_unconfined: bool = False) -> VerificationResult:
+        return self.run_checked(repository_path, request, output_limit_bytes,
+                                change_id=change_id,
+                                allow_unconfined=allow_unconfined).result
+
+    def run_checked(self, repository_path: str, request: VerificationRequest,
+                    output_limit_bytes: int, *, change_id: UUID | None = None,
+                    allow_unconfined: bool = False) -> CheckedVerification:
         # Revalidate in case a caller used model_construct or mutated a model.
         request = VerificationRequest.model_validate(request.model_dump())
         if any("\0" in item for item in (request.executable, *request.args)):
@@ -68,51 +100,53 @@ class BoundedVerificationRunner:
             root = Path(repository_path).expanduser().resolve()
         except (OSError, ValueError, RuntimeError) as exc:
             raise AppError("INVALID_EXECUTION_DIRECTORY", "The execution directory is invalid.") from exc
-        env = minimal_environment()
-        # Preserve per-user site-packages resolution on Windows. Without APPDATA,
-        # Python cannot find packages installed with `pip install --user` (no
-        # venv), so an allowlisted executable like pytest silently reports
-        # "No module named X" even though it is genuinely installed. Neither
-        # variable is a credential.
-        for key in ("APPDATA", "USERPROFILE"):
-            if key in os.environ:
-                env[key] = os.environ[key]
-        # Do not expose relative or repository-owned PATH entries to children.
-        paths = []
-        for value in env.get("PATH", "").split(os.pathsep):
-            path = Path(value)
-            if value and path.is_absolute():
-                path = path.resolve()
-                if path != root and root not in path.parents:
-                    paths.append(str(path))
-        env["PATH"] = os.pathsep.join(paths)
-        executable = _resolve(request.executable, root, env)
+        if request.executable not in ALLOWED_EXECUTABLES:
+            raise AppError("VERIFICATION_EXECUTABLE_NOT_ALLOWED", "The executable is not permitted.")
         started_at = utc_now()
-        clock = time.monotonic()
         try:
-            result = capture(
-                [executable, *request.args], cwd=root, env=env,
-                timeout=request.timeout_seconds, limit=output_limit_bytes,
-            )
+            if is_unconfined_toolchain(request.executable):
+                if not allow_unconfined:
+                    raise check_toolchain_unconfined(request.executable)
+                executable = _resolve(request.executable, root, unconfined_environment(root))
+                outcome = run_unconfined_check(
+                    self._checks, change_id=change_id, cwd=root,
+                    argv=[executable, *request.args], executable=request.executable,
+                    timeout=request.timeout_seconds, limit=output_limit_bytes,
+                )
+            else:
+                outcome = run_confined_check(
+                    self._checks, change_id=change_id, source_root=root,
+                    executable=request.executable, args=request.args,
+                    timeout=request.timeout_seconds, limit=output_limit_bytes,
+                    resolve=self._resolve,
+                )
         except OSError:
-            status = VerificationStatus.ERROR
-            exit_code = None
-            stdout, stderr, truncated = "", "", False
-        else:
-            status = (
-                VerificationStatus.TIMED_OUT if result.timed_out else
-                VerificationStatus.ERROR if result.incomplete else
-                VerificationStatus.PASSED if result.returncode == 0 else
-                VerificationStatus.FAILED
+            result = VerificationResult(
+                executable=request.executable, args=request.args,
+                status=VerificationStatus.ERROR, exit_code=None, duration_ms=0,
+                stdout="", stderr="", output_truncated=False,
+                started_at=started_at, completed_at=utc_now(),
             )
-            exit_code = None if result.incomplete else result.returncode
-            stdout = result.stdout.decode("utf-8", errors="ignore")
-            stderr = result.stderr.decode("utf-8", errors="ignore")
-            truncated = (result.truncated or stdout.encode("utf-8") != result.stdout
-                         or stderr.encode("utf-8") != result.stderr)
-        return VerificationResult(
-            executable=request.executable, args=request.args, status=status,
-            exit_code=exit_code, duration_ms=int((time.monotonic() - clock) * 1000),
-            stdout=stdout, stderr=stderr, output_truncated=truncated,
-            started_at=started_at, completed_at=utc_now(),
-        )
+            return CheckedVerification(result, None, None)
+        return CheckedVerification(_from_outcome(request, started_at, outcome),
+                                   outcome.boundary, outcome.check_run_id)
+
+
+def _from_outcome(request: VerificationRequest, started_at, outcome: CheckCommandResult,
+                  ) -> VerificationResult:
+    status = (
+        VerificationStatus.TIMED_OUT if outcome.timed_out else
+        VerificationStatus.ERROR if outcome.incomplete else
+        VerificationStatus.PASSED if outcome.returncode == 0 else
+        VerificationStatus.FAILED
+    )
+    stdout = outcome.stdout.decode("utf-8", errors="ignore")
+    stderr = outcome.stderr.decode("utf-8", errors="ignore")
+    truncated = (outcome.truncated or stdout.encode("utf-8") != outcome.stdout
+                 or stderr.encode("utf-8") != outcome.stderr)
+    return VerificationResult(
+        executable=request.executable, args=request.args, status=status,
+        exit_code=None if outcome.incomplete or outcome.timed_out else outcome.returncode,
+        duration_ms=outcome.duration_ms, stdout=stdout, stderr=stderr,
+        output_truncated=truncated, started_at=started_at, completed_at=utc_now(),
+    )

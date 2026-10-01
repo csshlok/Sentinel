@@ -23,3 +23,43 @@ os.environ["CHANGE_ASSURANCE_DB_PATH"] = str(_SESSION_STORE / "change_assurance.
 
 def pytest_unconfigure(config) -> None:  # noqa: ARG001 - pytest hook signature
     shutil.rmtree(_SESSION_STORE, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------- check boxes
+#
+# Phase 5: `create_app` runs every verification, assurance and diff-coverage
+# check in a real AppContainer check box with a runtime snapshot (seconds per
+# check, plus a snapshot build in the user's cache). Tests that merely exercise
+# routes and lifecycle get the HOST harness from `support_checks` instead: the
+# real CheckBoxes code (rows, tree copy, journal, cleanup) with a fake Windows
+# layer whose "box" is a plain host child. It proves nothing about containment;
+# the real-boundary tests construct real CheckBoxes directly, and a test that
+# needs a real box through `create_app` opts out with
+# `@pytest.mark.real_check_boxes`.
+
+
+def pytest_configure(config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "real_check_boxes: create_app builds real AppContainer check boxes (no host harness)",
+    )
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _host_check_boxes_in_create_app(request, monkeypatch, tmp_path_factory):
+    if request.node.get_closest_marker("real_check_boxes") is not None:
+        yield
+        return
+    import backend.app.main as main
+    from backend.tests.support_checks import host_check_boxes
+
+    def factory(database, *, journal=None, **_kwargs):
+        boxes, _ = host_check_boxes(tmp_path_factory.mktemp("host-check-boxes"), database,
+                                    journal=journal)
+        return boxes
+
+    monkeypatch.setattr(main, "CheckBoxes", factory)
+    yield

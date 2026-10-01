@@ -58,8 +58,16 @@ class VerificationPort(Protocol):
         repository_path: str,
         request: VerificationRequest,
         output_limit_bytes: int,
+        *,
+        change_id: UUID | None = None,
+        allow_unconfined: bool = False,
     ) -> VerificationResult:
-        """Run one bounded verification command in the repository root."""
+        """Run one bounded verification command over the repository.
+
+        Phase 5 (additive, keyword-only): a confined run needs ``change_id``
+        (it is journaled to that Change). ``allow_unconfined`` is passed only
+        after the actor's ``checks.unconfined`` delegation was authorized.
+        """
 
 
 @runtime_checkable
