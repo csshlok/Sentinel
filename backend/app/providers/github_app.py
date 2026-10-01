@@ -54,7 +54,7 @@ class GitHubAppManifestFlow:
         account_kind: Literal["user", "organization"],
         broker: CredentialBroker,
         transport: HttpTransport,
-        timeout_seconds: float = 120,
+        timeout_seconds: float = 300,
     ) -> None:
         app_provider_name(owner)
         if account_kind not in {"user", "organization"}:
@@ -96,16 +96,18 @@ class GitHubAppManifestFlow:
                     self.end_headers()
                     self.wfile.write(page)
                     return
+                parsed = urlsplit(self.path)
+                if parsed.path != "/callback":
+                    self.send_error(404)
+                    return
                 status = 400
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                if (len(self.path) > _MAX_CALLBACK_PATH or set(query) != {"code", "state"}
+                        or any(len(v) != 1 for v in query.values())
+                        or not secrets.compare_digest(query["state"][0], flow._state)):
+                    self.send_error(400)
+                    return
                 try:
-                    parsed = urlsplit(self.path)
-                    if len(self.path) > _MAX_CALLBACK_PATH or parsed.path != "/callback":
-                        raise ValueError("Invalid callback")
-                    query = parse_qs(parsed.query, keep_blank_values=True)
-                    if set(query) != {"code", "state"} or any(len(v) != 1 for v in query.values()):
-                        raise ValueError("Invalid callback")
-                    if not secrets.compare_digest(query["state"][0], flow._state):
-                        raise ValueError("Invalid callback state")
                     code = query["code"][0]
                     if not code or len(code) > 512:
                         raise ValueError("Invalid callback code")

@@ -36,7 +36,7 @@ def _flow(*, owner: str = "example", response: object | None = None) -> tuple[
     return flow, broker, transport
 
 
-def _callback(flow: GitHubAppManifestFlow, *, state: str) -> tuple[int, bytes]:
+def _callback(flow: GitHubAppManifestFlow, *, state: str, consume: bool = True) -> tuple[int, bytes]:
     assert flow._server is not None
     connection = http.client.HTTPConnection("127.0.0.1", flow._server.server_address[1],
                                             timeout=2)
@@ -45,7 +45,8 @@ def _callback(flow: GitHubAppManifestFlow, *, state: str) -> tuple[int, bytes]:
     result = response.status, response.read()
     connection.close()
     assert flow._thread is not None
-    flow._thread.join(2)
+    if consume:
+        flow._thread.join(2)
     return result
 
 
@@ -89,13 +90,22 @@ def test_manifest_callback_stores_only_broker_secret_once() -> None:
         _callback(flow, state=flow._state)
 
 
-def test_wrong_state_consumes_callback_without_storing_or_converting() -> None:
+def test_favicon_and_wrong_state_leave_flow_pending_until_valid_callback() -> None:
     flow, broker, transport = _flow()
     flow.start()
-    assert _callback(flow, state="wrong-state")[0] == 400
-    assert flow.view().status == "FAILED"
+    assert flow._server is not None
+    connection = http.client.HTTPConnection("127.0.0.1", flow._server.server_address[1], timeout=2)
+    connection.request("GET", "/favicon.ico")
+    response = connection.getresponse()
+    assert response.status == 404
+    response.read()
+    connection.close()
+    assert _callback(flow, state="wrong-state", consume=False)[0] == 400
+    assert flow.view().status == "PENDING"
     assert not transport.calls
     assert broker.store.get(f"provider:{app_provider_name('example')}") is None
+    assert _callback(flow, state=flow._state)[0] == 200
+    assert flow.view().status == "COMPLETE"
 
 
 def test_malformed_conversion_fails_closed_and_hides_response() -> None:
