@@ -39,7 +39,7 @@ The lesser commit statuses are unauthenticated: anyone with repository write acc
 
 Versioned `strict`, `standard`, and `docs-only` policy presets evaluate persisted Change evidence and name each unmet requirement. Unknown evidence denies. Preset selections and decisions are included in new Passport v2 payloads. The preset decision is available through the API, but its hook into the lifecycle transition gate is still pending; do not treat the preset result as an enforced release gate yet. Confined-check and observed AppContainer claims remain `UNKNOWN` until their structured evidence is wired in. Until confined checks land in Phase 5, every `strict` preset and `standard`/`release` cannot ALLOW.
 
-For the `docs` change type, documentation means `.md` and `.rst` files, `.txt` files within `docs/` or `doc/`, and README, CHANGELOG, CONTRIBUTING, AUTHORS, NOTICE, or LICENSE named files. Dependency and build manifests are excluded. Agent instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, and `.github/copilot-instructions.md`) are excluded.
+For the `docs` change type, documentation means `.md` and `.rst` files, `.txt` files within `docs/` or `doc/`, and README, CHANGELOG, CONTRIBUTING, AUTHORS, NOTICE, or LICENSE named files. Dependency and build manifests are excluded. Agent instruction files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/**`, `.cursor/**`, `.windsurf/**`, `.windsurfrules`, and `.github/copilot-instructions.md`) are excluded.
 
 The docs inventory excludes untracked files ignored by Git. Local `.git/info/exclude` and `core.excludesFile` rules can therefore hide untracked files from a docs-only decision; those rules are outside the bound checkpoints. Review those local rules before relying on a docs-only ALLOW.
 

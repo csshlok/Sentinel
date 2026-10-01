@@ -9,7 +9,7 @@ from typing import Literal
 
 PresetName = Literal["strict", "standard", "docs-only"]
 ChangeType = Literal["code", "docs", "release"]
-PRESET_VERSION = "1.3.1"
+PRESET_VERSION = "1.3.2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,8 +66,9 @@ def _docs_path(path: str) -> bool:
         return False
     parts = tuple(part.casefold() for part in parsed.parts)
     name = parts[-1]
-    if (name in {"claude.md", "agents.md", "copilot-instructions.md"}
-            or ".claude" in parts):
+    if (name in {"claude.md", "agents.md", "gemini.md", "copilot-instructions.md",
+                 ".windsurfrules"}
+            or any(part in {".claude", ".cursor", ".windsurf"} for part in parts)):
         return False
     if (name.startswith(("requirements", "constraints", "pipfile"))
             or name in {"cmakelists.txt", "pyproject.toml", "poetry.lock", "uv.lock",

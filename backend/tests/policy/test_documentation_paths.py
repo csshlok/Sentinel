@@ -98,7 +98,8 @@ def test_passport_docs_decision_uses_bound_git_paths(tmp_path, change: str) -> N
 
 
 def test_docs_allowlist_excludes_agent_instructions_and_build_files() -> None:
-    for path in ("CLAUDE.md", "AGENTS.md", ".claude/skills/guide.md",
+    for path in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".claude/skills/guide.md",
+                 ".cursor/rules/core.md", ".windsurf/rules.md", ".windsurfrules",
                  ".github/copilot-instructions.md", "requirements.txt", "CMakeLists.txt",
                  "README.py"):
         result = evaluate_preset(preset_name="docs-only", change_type="docs",
