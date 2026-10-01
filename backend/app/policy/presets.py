@@ -9,7 +9,7 @@ from typing import Literal
 
 PresetName = Literal["strict", "standard", "docs-only"]
 ChangeType = Literal["code", "docs", "release"]
-PRESET_VERSION = "1.1.0"
+PRESET_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +25,8 @@ class PresetRule:
 _RULES: dict[tuple[str, str], PresetRule] = {
     ("strict", "code"): PresetRule(100, confined_checks=True, appcontainer_boundary=True),
     ("strict", "release"): PresetRule(100, confined_checks=True, appcontainer_boundary=True),
-    ("strict", "docs"): PresetRule(None, docs_paths_only=True),
+    ("strict", "docs"): PresetRule(None, confined_checks=True,
+                                   appcontainer_boundary=True, docs_paths_only=True),
     ("standard", "code"): PresetRule(80),
     ("standard", "release"): PresetRule(90, confined_checks=True),
     ("standard", "docs"): PresetRule(None, docs_paths_only=True),

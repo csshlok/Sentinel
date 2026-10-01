@@ -76,6 +76,16 @@ def test_docs_only_accepts_only_observed_documentation_changes() -> None:
     assert mislabelled.status == "DENY"
 
 
+def test_strict_docs_waits_for_confined_checks() -> None:
+    result = evaluate_preset(preset_name="strict", change_type="docs",
+                             evidence=PresetEvidence(checks_passed=True,
+                                                     freshness="CURRENT",
+                                                     changed_paths=("README.md",)))
+    assert result.status == "DENY"
+    assert "confined checks must be PASS" in result.reasons
+    assert "observed AppContainer boundary is required" in result.reasons
+
+
 def test_stale_freshness_and_unknown_preset_deny_by_name() -> None:
     stale = evaluate_preset(preset_name="standard", change_type="docs",
                             evidence=PresetEvidence(checks_passed=True, freshness="STALE",
