@@ -164,6 +164,32 @@ def test_unconfined_opt_in_runs_are_listed_as_unconfined(api, tmp_path) -> None:
                     "exit_code": 3, "timed_out": False, "token": None}
 
 
+def test_an_unconfined_intent_and_its_outcome_list_as_one_run(api, tmp_path) -> None:
+    """WR-01: the intent event alone (a run that may have executed) is listed as STARTED."""
+
+    app, client = api
+    change_id = _change(client, _repo(tmp_path))
+    journal = JournalWriter(app.state.database)
+    crashed, finished = uuid4(), uuid4()
+    for run_id, phases in ((crashed, ["started"]), (finished, ["started", "finished"])):
+        for phase in phases:
+            journal.append(
+                UUID(change_id), JournalEventType.CHECK_UNCONFINED_RUN, subject_type="check_run",
+                subject_id=run_id, payload={
+                    "check_run_id": str(run_id), "executable": "cargo", "argv_sha256": "d" * 64,
+                    "phase": phase, "exit_code": 0 if phase == "finished" else None,
+                    "timed_out": False if phase == "finished" else None,
+                    "boundary": "UNCONFINED"})
+    items = {item["id"]: item
+             for item in client.get(f"/api/v1/changes/{change_id}/checks").json()["items"]}
+    assert set(items) == {str(crashed), str(finished)}
+    assert items[str(crashed)]["state"] == "STARTED"
+    assert items[str(crashed)]["exit_code"] is None
+    assert items[str(finished)]["state"] == "FINISHED"
+    assert items[str(finished)]["exit_code"] == 0
+    assert {item["boundary"] for item in items.values()} == {"UNCONFINED"}
+
+
 def test_unknown_change_is_404_and_the_route_requires_the_token(api) -> None:
     app, client = api
     missing = client.get("/api/v1/changes/00000000-0000-0000-0000-000000000000/checks")

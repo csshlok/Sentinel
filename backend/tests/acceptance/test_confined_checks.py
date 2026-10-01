@@ -612,8 +612,11 @@ def test_unsupported_toolchain_needs_the_opt_in_and_is_reported_unconfined(
     assert [run["boundary"] for run in runs] == ["UNCONFINED"]
     assert runs[0]["id"] == verification["check_run_id"]
     assert _journal(api, change_id, "check.confined_run") == []
-    assert [event["boundary"] for event in _journal(api, change_id, "check.unconfined_run")] == [
-        "UNCONFINED"]
+    # The intent is journaled before the run, the outcome after it (WR-01).
+    assert [(event["boundary"], event["phase"])
+            for event in _journal(api, change_id, "check.unconfined_run")] == [
+        ("UNCONFINED", "started"), ("UNCONFINED", "finished")]
+    assert runs[0]["state"] == "FINISHED"
 
     claims = PassportV2Issuer(Database(api.database)).snapshot(UUID(change_id))
     assert claims.confined_checks == "FAIL"

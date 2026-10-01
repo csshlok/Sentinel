@@ -14,8 +14,8 @@ the application).
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
@@ -759,6 +759,9 @@ class CheckRunService:
                 exit_code=record.exit_code, timed_out=record.timed_out, token=token,
                 created_at=record.created_at, updated_at=record.updated_at,
             ))
+        # One item per unconfined run: its intent event (journaled before it ran)
+        # and its outcome event share a check_run_id; the latest one describes it.
+        unconfined: dict[UUID, Mapping[str, Any]] = {}
         for event in events:
             payload = event.payload
             if event.event_type != UNCONFINED_RUN_EVENT or payload is None:
@@ -767,10 +770,16 @@ class CheckRunService:
                 run_id = UUID(str(payload.get("check_run_id")))
             except ValueError:
                 continue
+            unconfined.pop(run_id, None)
+            unconfined[run_id] = payload
+        for run_id, payload in unconfined.items():
             exit_code = payload.get("exit_code")
             timed_out = payload.get("timed_out")
+            phase = payload.get("phase")
             items.append(CheckRunView(
-                id=run_id, change_id=change_id, state="FINISHED",
+                id=run_id, change_id=change_id,
+                state=("STARTED" if phase == "started"
+                       else "NOT_STARTED" if phase == "not_started" else "FINISHED"),
                 boundary=BOUNDARY_UNCONFINED,
                 exit_code=exit_code if type(exit_code) is int else None,
                 timed_out=timed_out if isinstance(timed_out, bool) else None,

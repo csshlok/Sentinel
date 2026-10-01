@@ -85,6 +85,12 @@ class CheckedVerification:
 
 Resolver = Callable[..., ResolvedCheckRuntime]
 
+# ``check.unconfined_run`` phases: the intent (journaled before the command runs)
+# and its outcome. An intent with no outcome is a run that may have executed.
+UNCONFINED_PHASE_STARTED = "started"
+UNCONFINED_PHASE_FINISHED = "finished"
+UNCONFINED_PHASE_NOT_STARTED = "not_started"
+
 
 def run_confined_check(
     boxes: CheckBoxes | None, *, change_id: UUID | None, source_root: str | Path,
@@ -123,9 +129,14 @@ def run_unconfined_check(
     """The delegated ``checks.unconfined`` path: restricted, NOT confined, journaled.
 
     The caller must already hold the actor's ``checks.unconfined`` authority
-    for ``change_id``. The run is journaled as ``check.unconfined_run`` with
-    boundary ``UNCONFINED`` (ids and digests only). ``OSError`` propagates and
-    nothing is journaled for a command that never started.
+    for ``change_id``. The intent is journaled and committed as
+    ``check.unconfined_run`` (``phase=started``) BEFORE anything runs, so a
+    crash, kill or failed append afterwards never leaves an unrecorded
+    user-authority run; when that append fails nothing runs (WR-01). A second
+    event records the outcome (``phase=finished``, or ``phase=not_started``
+    when the command could not start, after which ``OSError`` propagates).
+    Both carry boundary ``UNCONFINED`` and ids and digests only; either one
+    makes the Change's ``confined_checks`` FAIL.
     """
 
     if change_id is None:
@@ -133,17 +144,29 @@ def run_unconfined_check(
     if boxes is None or not boxes.journaled:
         raise check_boxes_unavailable()
     run_id = uuid4()
-    started = time.monotonic()
-    result = run_verification_command(argv, cwd=cwd, timeout=timeout, limit=limit,
-                                      exclude_root=Path(cwd).resolve())
-    duration_ms = int((time.monotonic() - started) * 1000)
-    boxes.record_unconfined_run(change_id, run_id, {
+    base = {
         "check_run_id": str(run_id),
         "executable": executable,
         "argv_sha256": hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(),
+        "boundary": BOUNDARY_UNCONFINED,
+    }
+    # WR-01: the opt-in is on record (committed) before the command can do anything.
+    boxes.record_unconfined_run(change_id, run_id, {
+        **base, "phase": UNCONFINED_PHASE_STARTED, "exit_code": None, "timed_out": None})
+    started = time.monotonic()
+    try:
+        result = run_verification_command(argv, cwd=cwd, timeout=timeout, limit=limit,
+                                          exclude_root=Path(cwd).resolve())
+    except OSError:
+        boxes.record_unconfined_run(change_id, run_id, {
+            **base, "phase": UNCONFINED_PHASE_NOT_STARTED, "exit_code": None,
+            "timed_out": None})
+        raise
+    duration_ms = int((time.monotonic() - started) * 1000)
+    boxes.record_unconfined_run(change_id, run_id, {
+        **base, "phase": UNCONFINED_PHASE_FINISHED,
         "exit_code": None if result.incomplete else result.returncode,
         "timed_out": result.timed_out,
-        "boundary": BOUNDARY_UNCONFINED,
     })
     return CheckCommandResult(
         returncode=result.returncode, stdout=result.stdout, stderr=result.stderr,

@@ -156,12 +156,67 @@ def test_opted_in_unconfined_run_is_journaled_as_unconfined(setup, runner_type,
     assert windows.spawned == []  # no box was used
     assert boxes.repository.for_change(change_id) == []
     events = [e for e in _events(database, change_id) if e["type"].startswith("check.")]
-    assert [e["type"] for e in events] == ["check.unconfined_run"]
-    payload = events[0]["payload"]
-    assert payload["boundary"] == "UNCONFINED"
-    assert payload["executable"] == "cargo"
-    assert payload["check_run_id"] == str(checked.check_run_id)
-    assert "print" not in json.dumps(payload)  # digests only, never argv text
+    assert [e["type"] for e in events] == ["check.unconfined_run", "check.unconfined_run"]
+    assert [e["payload"]["phase"] for e in events] == ["started", "finished"]
+    for event in events:
+        payload = event["payload"]
+        assert payload["boundary"] == "UNCONFINED"
+        assert payload["executable"] == "cargo"
+        assert payload["check_run_id"] == str(checked.check_run_id)
+        assert "print" not in json.dumps(payload)  # digests only, never argv text
+    assert events[1]["payload"]["exit_code"] == 0
+
+
+@pytest.mark.parametrize("runner_type", RUNNERS)
+def test_unconfined_intent_is_journaled_before_the_command_runs(setup, runner_type,
+                                                                 monkeypatch) -> None:
+    """WR-01: a crash after an unconfined run starts still leaves it on record."""
+
+    from backend.app.execution.check_repository import (
+        CheckRunRepository,
+        confined_checks_fact,
+    )
+
+    repo, database, boxes, _ = setup
+    change_id = _make_change(database, repo)
+    _host_python_as(monkeypatch, runner_type)
+    seen_at_start: list[list[dict]] = []
+
+    def crashing_run(argv, **_kwargs):
+        seen_at_start.append(_events(database, change_id))
+        raise RuntimeError("the server died while the check ran")
+
+    monkeypatch.setattr("backend.app.execution.commands.run_verification_command", crashing_run)
+    with pytest.raises(RuntimeError):
+        runner_type(boxes).run_checked(
+            str(repo), VerificationRequest(executable="cargo", args=["test"]),
+            4096, change_id=change_id, allow_unconfined=True)
+    assert [[(e["type"], e["payload"]["phase"]) for e in events]
+            for events in seen_at_start] == [[("check.unconfined_run", "started")]]
+    # The intent alone makes the Change's confined_checks FAIL.
+    events = CheckRunRepository(database).events_for_change(change_id)
+    assert confined_checks_fact([], records={}, events=events)[0] == "FAIL"
+
+
+@pytest.mark.parametrize("runner_type", RUNNERS)
+def test_a_failed_intent_append_runs_nothing(setup, runner_type, monkeypatch) -> None:
+    repo, database, boxes, _ = setup
+    change_id = _make_change(database, repo)
+    _host_python_as(monkeypatch, runner_type)
+    ran: list[object] = []
+    monkeypatch.setattr("backend.app.execution.commands.run_verification_command",
+                        lambda argv, **_kwargs: ran.append(argv))
+
+    def refuse(*_args, **_kwargs):
+        raise AppError("JOURNAL_APPEND_FAILED", "the journal is locked", status_code=503)
+
+    monkeypatch.setattr(boxes, "record_unconfined_run", refuse)
+    with pytest.raises(AppError) as error:
+        runner_type(boxes).run_checked(
+            str(repo), VerificationRequest(executable="cargo", args=["test"]),
+            4096, change_id=change_id, allow_unconfined=True)
+    assert error.value.code == "JOURNAL_APPEND_FAILED"
+    assert ran == []
 
 
 # ---------------------------------------------------------------------- API opt-in
