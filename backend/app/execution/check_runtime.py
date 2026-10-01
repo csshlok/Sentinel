@@ -52,7 +52,7 @@ _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 PYTHON_BASE_IGNORE = frozenset({
     "site-packages", "__pycache__", "test", "tests", "idlelib", "tkinter",
-    "turtledemo", "doc", "tools", "include", "libs",
+    "turtledemo", "doc", "tools", "include", "libs", "tcl",
 })
 PYTHON_DEPS_IGNORE = frozenset({"__pycache__"})
 
@@ -174,6 +174,22 @@ def _real_directory(path: Path, kind: str, what: str) -> None:
 # ---------------------------------------------------------------------- manifest
 
 
+_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def _long(path: Path) -> Path:
+    """The extended-length form on Windows, so deep trees beyond MAX_PATH still copy."""
+
+    if os.name != "nt":
+        return path
+    text = os.path.abspath(path)
+    if text.startswith(_EXTENDED_PREFIX):
+        return Path(text)
+    if text.startswith("\\\\"):
+        return Path(_EXTENDED_PREFIX + "UNC\\" + text[2:])
+    return Path(_EXTENDED_PREFIX + text)
+
+
 def _hash_file(path: Path) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
@@ -218,6 +234,7 @@ def _source_files(
 ) -> list[tuple[str, Path]]:
     files: list[tuple[str, Path]] = []
     for prefix, source in sources:
+        source = _long(Path(source))
         if not os.path.lexists(source):
             raise check_runtime_failed(kind, f"the source {prefix or '.'} does not exist")
         if _is_reparse(source):
@@ -338,6 +355,7 @@ def _copy_into(
     destination: Path, files: list[tuple[str, Path]], entries: list[ManifestEntry], *,
     kind: str,
 ) -> None:
+    destination = _long(destination)
     for (relpath, source), expected in zip(files, entries, strict=True):
         target = destination.joinpath(*relpath.split("/"))
         target.parent.mkdir(parents=True, exist_ok=True)
