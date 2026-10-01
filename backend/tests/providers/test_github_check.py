@@ -309,13 +309,17 @@ def test_declined_app_stale_status_never_succeeds(tmp_path) -> None:
 
 def test_lesser_status_clears_old_denial_contexts(tmp_path, monkeypatch) -> None:
     now = datetime(2026, 9, 28, tzinfo=UTC)
-    queue = []
-    for start in (1, 15):
-        queue.extend([json_response(200, {"head": {"sha": "a" * 40}}),
-                      json_response(200, {"head": {"sha": "a" * 40}})])
-        queue.extend(json_response(201, {"id": index})
-                     for index in range(start, start + 14))
-    publisher, change, transport = _publisher_fixture(tmp_path, queue, now=now)
+    publisher, change, _ = _publisher_fixture(tmp_path, [], now=now)
+    statuses: list[dict[str, object]] = []
+
+    def request(method, path, token, *, body=None):
+        if method == "GET":
+            return 200, {"head": {"sha": "a" * 40}}
+        assert method == "POST" and path.endswith("/statuses/" + "a" * 40)
+        statuses.append(body)
+        return 201, {"id": len(statuses)}
+
+    monkeypatch.setattr(publisher._client, "_request", request)
     validate = github_check_module.PassportV2Payload.model_validate
     denials = ["first denial " * 14, "second denial " * 14]
 
@@ -328,12 +332,11 @@ def test_lesser_status_clears_old_denial_contexts(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(github_check_module.PassportV2Payload, "model_validate",
                         classmethod(with_denials))
     publisher.publish(change.id, decline_app=True, fallback_token="PAT-CANARY")
+    first = {body["context"]: body["description"] for body in statuses}
+    statuses.clear()
     denials.clear()
     publisher.publish(change.id, decline_app=True, fallback_token="PAT-CANARY")
-    first = {body["context"]: body["description"] for body in
-             (json.loads(call["body"]) for call in transport.calls[2:16])}
-    second = {body["context"]: body["description"] for body in
-              (json.loads(call["body"]) for call in transport.calls[18:])}
+    second = {body["context"]: body["description"] for body in statuses}
     assert first.keys() == second.keys()
     assert first["sentinel/passport/policy-denials-2"] != "Policy denials: [end]"
     assert second["sentinel/passport/policy-denials-1"] == "Policy denials: none"
