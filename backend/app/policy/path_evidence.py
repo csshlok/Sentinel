@@ -22,7 +22,7 @@ def documentation_paths(baseline: GitCheckpoint, tested: GitCheckpoint) -> tuple
         raw = run_git(root, ["diff", "--raw", "-z", "--no-renames",
                              "--no-ext-diff", "--no-textconv",
                              baseline.head_sha, "--"])
-        other = run_git(root, ["ls-files", "--others", "-z", "--"])
+        other = run_git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"])
         index = run_git(root, ["ls-files", "-v", "-z", "--"])
         for result in (status, raw, other, index):
             if (result.returncode != 0 or result.truncated or result.incomplete or

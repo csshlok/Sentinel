@@ -41,6 +41,8 @@ Versioned `strict`, `standard`, and `docs-only` policy presets evaluate persiste
 
 For the `docs` change type, documentation means `.md` and `.rst` files, `.txt` files within `docs/` or `doc/`, and README, CHANGELOG, CONTRIBUTING, AUTHORS, NOTICE, or LICENSE named files. Dependency and build manifests are excluded. Agent instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/**`, and `.github/copilot-instructions.md`) are excluded.
 
+The docs inventory excludes untracked files ignored by Git. Local `.git/info/exclude` and `core.excludesFile` rules can therefore hide untracked files from a docs-only decision; those rules are outside the bound checkpoints. Review those local rules before relying on a docs-only ALLOW.
+
 ## Development
 
 Python 3.12 or newer and Windows are required for the real execution paths. Direct dependencies are pinned in `pyproject.toml`; the transitive dependency tree is not locked. Install the package and test dependencies, then run the suite:

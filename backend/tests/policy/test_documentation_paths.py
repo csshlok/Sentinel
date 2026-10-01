@@ -126,3 +126,24 @@ def test_docs_inventory_denies_hidden_index_entries(tmp_path, flag: str) -> None
                                                        path_evidence_error=error))
     assert error == "hidden index entry (assume-unchanged or skip-worktree)"
     assert decision.status == "DENY"
+
+
+def test_docs_inventory_ignores_build_output(tmp_path) -> None:
+    from backend.app.policy.path_evidence import documentation_paths
+    root = make_repo(tmp_path / "repo", {
+        ".gitignore": "build/\n", "README.md": "hello\n",
+    })
+    tracker = GitStateTracker()
+    identifier = uuid4()
+    baseline = tracker.capture(identifier, "BASELINE", str(root), 1, 1_048_576)
+    write(root, "build/out.bin", "artifact\n")
+    write(root, "README.md", "updated\n")
+    tested = tracker.capture(identifier, "TESTED", str(root), 1, 1_048_576)
+    paths, modes, error = documentation_paths(baseline, tested)
+    assert error is None
+    assert paths == ("README.md",)
+    decision = evaluate_preset(preset_name="docs-only", change_type="docs",
+                               evidence=PresetEvidence(checks_passed=True, freshness="CURRENT",
+                                                       changed_paths=paths, mode_changed_paths=modes,
+                                                       path_evidence_error=error))
+    assert decision.status == "ALLOW"
