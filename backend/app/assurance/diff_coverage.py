@@ -352,7 +352,7 @@ def collect_diff_coverage(
     *, change: ChangeView, baseline: GitCheckpoint, tested: GitCheckpoint,
     request: DiffCoverageRequest, git_state: GitStateTracker | None = None,
     patch_limit: int = 1_048_576, checks: CheckBoxes | None = None,
-    on_check_run: Callable[[UUID, str], None] | None = None,
+    on_check_run: Callable[[UUID, str | None], None] | None = None,
 ) -> DiffCoverageResult:
     """Run coverage in a disposable confined check box and recapture state afterward.
 
@@ -451,7 +451,7 @@ def collect_diff_coverage(
                                         if boundary == "APPCONTAINER"
                                         else "UNCONFINED_IN_PROCESS")})
             if on_check_run is not None:
-                on_check_run(run.check_run_id, run.boundary)
+                on_check_run(run.check_run_id, boundary)  # verified, never the default
             if run.timed_out or run.incomplete:
                 reasons.append("Test command timed out or output capture was incomplete.")
             elif not _scratch_file(box, data.name):

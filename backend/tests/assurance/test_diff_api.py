@@ -59,3 +59,8 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
                            if item["subject_type"] == "diff_coverage"]
         assert len(coverage_events) == 1
         assert coverage_events[0]["payload"]["artifact_digest"] == body["artifact_digest"]
+        # WR-02: the host test harness's token facts do not verify, so neither the
+        # result nor the signed journal may claim the box boundary.
+        assert body["boundary"] is None
+        assert coverage_events[0]["payload"]["check_run_id"] == body["check_run_id"]
+        assert coverage_events[0]["payload"]["check_boundary"] is None
