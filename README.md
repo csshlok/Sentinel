@@ -43,7 +43,7 @@ did doesn't depend on trusting the agent's account of itself.
 | Without Sentinel | With Sentinel |
 | --- | --- |
 | The agent runs with your full account privileges, directly in your repository | The agent runs inside a verified Windows AppContainer, editing a Sentinel-owned workspace clone; its changes reach your branch only through a previewed, fast-forward-only apply |
-| Tests the agent wrote run with your full authority | Every check, test, and coverage run executes in its own disposable AppContainer over a copy of the repository, with no access to your credentials, signing key, or local API |
+| Tests the agent wrote run with your full authority | Every Python and Node check, test, and coverage run executes in its own disposable AppContainer over a copy of the repository, with no access to your credentials, signing key, local API, or network |
 | Trust the agent's own transcript for what it ran | Independently observed process-tree evidence: every spawned process, its PID, image path, command line, and lifetime |
 | No record of the environment or dependencies before/after | Environment and dependency passports captured automatically and diffed for drift |
 | "All tests passed" stands in for "the change was tested" | Separate claims for checks passed, whether tests actually executed the changed lines, and whether that result is still fresh |
@@ -68,11 +68,11 @@ did doesn't depend on trusting the agent's account of itself.
 - **Work in an isolated workspace and apply changes back deliberately.** The agent edits a
   Sentinel-owned clone of your repository. Sentinel commits the result, shows you a preview, and
   applies it to your branch with a hardened fetch and a fast-forward-only merge — or discards it.
-- **Run checks in a confined check box.** Verification commands, assurance checks, and coverage
-  collection run in a per-run AppContainer over a copy of the repository's tracked and untracked
-  files, using a verified, content-addressed Python/Node runtime snapshot. Network access is off
-  unless the check declares it, outputs land in a scratch directory, and every run is journaled
-  with the boundary it actually ran under.
+- **Run checks in a confined check box.** Python and Node verification commands, assurance
+  checks, and coverage collection run in a per-run AppContainer over a copy of the repository's
+  tracked and untracked files (never git-ignored ones such as `.env`), using a verified,
+  content-addressed Python/Node runtime snapshot. Checks have no network access, outputs land in a
+  scratch directory, and every run is journaled with the boundary it actually ran under.
 - **Pause, resume, or stop a running agent.** Pause and resume act on the run's entire supervised
   process tree (not just the top-level PID), and stop terminates the whole tree as a unit.
 - **Capture evidence before and after an agent runs**: a Git checkpoint (branch, head SHA, status
@@ -192,9 +192,9 @@ A few of the load-bearing decisions:
   path, inside a Job Object before it ever runs, and Sentinel confirms the boundary on the live
   token. If the boundary can't be established, the launch fails closed — there is no unconfined
   retry.
-- **Agent-influenced code runs confined.** Tests, `conftest.py`, coverage, and package scripts run
-  in a disposable check box, never at your full authority, and each run records the boundary it
-  actually ran under.
+- **Agent-influenced code runs confined.** Python and Node tests, `conftest.py`, coverage, and
+  package scripts run in a disposable check box, never at your full authority, and each run records
+  the boundary it actually ran under.
 - **Changes come back on your terms.** Workspace results are applied with a hardened fetch and a
   fast-forward-only merge after a preview; Sentinel never force-updates your branch.
 - **No unrestricted authority by default.** Minting a credential grant requires a delegation that
