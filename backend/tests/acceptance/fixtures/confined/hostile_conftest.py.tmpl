@@ -1,0 +1,117 @@
+# Agent-authored conftest.py (hostile fixture for test_confined_checks.py).
+# pytest imports this file before collecting any test, so everything below runs
+# as soon as a check invokes pytest. Each attempt reports "allowed" or
+# "denied:<exception>:<code>"; nothing secret is ever printed.
+import ctypes
+import json
+import os
+import socket
+from ctypes import wintypes
+
+CONFIG = json.loads(r'''__CONFIG__''')
+RESULTS = {"cwd": os.getcwd(), "tree_has_ignored_env": os.path.exists(".env")}
+
+
+def _attempt(name, action):
+    try:
+        action()
+        RESULTS[name] = "allowed"
+    except Exception as exc:  # the box's denial is the expected outcome
+        code = getattr(exc, "winerror", None) or getattr(exc, "errno", None) or ""
+        RESULTS[name] = f"denied:{type(exc).__name__}:{code}"
+
+
+def _write(path):
+    def action():
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("escaped from a check")
+    return action
+
+
+def _read(path):
+    def action():
+        with open(path, "rb") as handle:
+            handle.read(64)
+    return action
+
+
+def _list(path):
+    return lambda: os.listdir(path)
+
+
+def _connect(port):
+    def action():
+        # The attempt is the connection itself; what the peer does afterwards is irrelevant.
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            try:
+                sock.sendall(b"GET /api/v1/capabilities HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+                sock.recv(16)
+            except OSError:
+                pass
+    return action
+
+
+def _internet():
+    with socket.create_connection((CONFIG["internet_host"], CONFIG["internet_port"]), timeout=8):
+        pass
+
+
+def _credential():
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                   ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.CredReadW.restype = wintypes.BOOL
+    advapi32.CredFree.argtypes = [ctypes.c_void_p]
+    pointer = ctypes.c_void_p()
+    if not advapi32.CredReadW(CONFIG["credential_target"], 1, 0, ctypes.byref(pointer)):
+        raise OSError(0, "CredReadW failed", None, ctypes.get_last_error())
+    advapi32.CredFree(pointer)
+
+
+def _signing_key():
+    ncrypt = ctypes.WinDLL("ncrypt")
+    handle = ctypes.c_size_t
+    ncrypt.NCryptOpenStorageProvider.argtypes = [ctypes.POINTER(handle), wintypes.LPCWSTR,
+                                                 wintypes.DWORD]
+    ncrypt.NCryptOpenStorageProvider.restype = wintypes.LONG
+    ncrypt.NCryptOpenKey.argtypes = [handle, ctypes.POINTER(handle), wintypes.LPCWSTR,
+                                     wintypes.DWORD, wintypes.DWORD]
+    ncrypt.NCryptOpenKey.restype = wintypes.LONG
+    ncrypt.NCryptFreeObject.argtypes = [handle]
+    statuses = []
+    for provider in ("Microsoft Platform Crypto Provider", "Microsoft Software Key Storage Provider"):
+        storage = handle()
+        status = ncrypt.NCryptOpenStorageProvider(ctypes.byref(storage), provider, 0)
+        if status != 0:
+            statuses.append(status & 0xFFFFFFFF)
+            continue
+        key = handle()
+        status = ncrypt.NCryptOpenKey(storage, ctypes.byref(key), CONFIG["signing_key_name"], 0, 0)
+        if status == 0:
+            ncrypt.NCryptFreeObject(key)
+            ncrypt.NCryptFreeObject(storage)
+            return
+        statuses.append(status & 0xFFFFFFFF)
+        ncrypt.NCryptFreeObject(storage)
+    # NCrypt statuses are HRESULT-style (>= 0x80000000), too large for OSError.winerror.
+    error = OSError("NCryptOpenStorageProvider/NCryptOpenKey failed")
+    error.errno = ",".join(f"0x{status:08x}" for status in statuses)
+    raise error
+
+
+for label, target in CONFIG["writes"].items():
+    _attempt("write_" + label, _write(target))
+for label, target in CONFIG["reads"].items():
+    _attempt("read_" + label, _read(target))
+for label, target in CONFIG["lists"].items():
+    _attempt("list_" + label, _list(target))
+for label, port in CONFIG["ports"].items():
+    _attempt("connect_" + label, _connect(port))
+if CONFIG.get("internet_host"):
+    _attempt("internet", _internet)
+if CONFIG.get("credential_target"):
+    _attempt("credential", _credential)
+if CONFIG.get("signing_key_name"):
+    _attempt("signing_key", _signing_key)
+
+print("SENTINEL_PROBE " + json.dumps(RESULTS, sort_keys=True), flush=True)

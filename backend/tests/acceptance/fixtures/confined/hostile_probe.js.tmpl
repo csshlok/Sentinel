@@ -1,0 +1,50 @@
+// Agent-authored package.json `test` script (hostile fixture for test_confined_checks.py).
+// `npm test` runs this file; each attempt reports "allowed" or "denied:<code>".
+"use strict";
+const fs = require("fs");
+const net = require("net");
+
+const CONFIG = JSON.parse(String.raw`__CONFIG__`);
+const results = { cwd: process.cwd(), tree_has_ignored_env: fs.existsSync(".env") };
+
+function attempt(name, action) {
+  try {
+    action();
+    results[name] = "allowed";
+  } catch (error) {
+    results[name] = "denied:" + (error.code || error.name);
+  }
+}
+
+function connect(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    const done = (outcome) => { socket.destroy(); resolve(outcome); };
+    socket.setTimeout(5000, () => done("denied:TIMEOUT"));
+    socket.on("connect", () => {
+      socket.write("GET /api/v1/capabilities HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n");
+      done("allowed");
+    });
+    socket.on("error", (error) => done("denied:" + (error.code || error.name)));
+  });
+}
+
+for (const [label, target] of Object.entries(CONFIG.writes)) {
+  attempt("write_" + label, () => fs.writeFileSync(target, "escaped from a check"));
+}
+for (const [label, target] of Object.entries(CONFIG.reads)) {
+  attempt("read_" + label, () => fs.readFileSync(target));
+}
+for (const [label, target] of Object.entries(CONFIG.lists)) {
+  attempt("list_" + label, () => fs.readdirSync(target));
+}
+
+(async () => {
+  for (const [label, port] of Object.entries(CONFIG.ports)) {
+    results["connect_" + label] = await connect(port);
+  }
+  const keys = Object.keys(results).sort();
+  const ordered = {};
+  for (const key of keys) ordered[key] = results[key];
+  console.log("SENTINEL_PROBE " + JSON.stringify(ordered));
+})();
