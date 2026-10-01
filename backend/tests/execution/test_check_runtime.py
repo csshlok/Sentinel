@@ -334,7 +334,8 @@ def fake_python(tmp_path: Path, monkeypatch):
     def fake_capture(argv, *, cwd, env, timeout, limit, **kwargs):
         calls.append({"argv": list(argv), "cwd": Path(cwd), "env": dict(env),
                       "cwd_existed": Path(cwd).is_dir()})
-        payload = json.dumps({"base_prefix": str(base), "purelib": str(purelib)}).encode()
+        payload = json.dumps({"base_prefix": str(base), "prefix": str(tmp_path / "venv"),
+                              "purelib": str(purelib)}).encode()
         return CapturedProcess(0, payload, b"", False, False, False, "")
 
     monkeypatch.setattr(check_runtime, "capture", fake_capture)
@@ -388,6 +389,61 @@ def test_interpreter_facts_probe_runs_isolated_outside_the_repository(
     assert call["cwd"].resolve() != repository
     assert not call["cwd"].exists()  # the fresh probe directory is removed afterwards
     assert not any(key.startswith("PYTHON") for key in call["env"])
+
+
+def _lying_probe(monkeypatch, **facts) -> None:
+    payload = json.dumps(facts).encode()
+    monkeypatch.setattr(check_runtime, "capture", lambda *a, **k: CapturedProcess(
+        0, payload, b"", False, False, False, ""))
+
+
+def test_a_lying_interpreter_cannot_point_the_snapshot_at_the_user_profile(
+    fake_python, cache: Path, monkeypatch, tmp_path: Path,
+) -> None:
+    """WR-09: probe output is validated before it decides what is copied and granted."""
+
+    interpreter, base, purelib, _ = fake_python
+    home = _tree(tmp_path / "Users" / "me", {".ssh/id_ed25519": "PRIVATE", ".aws/credentials": "x"})
+    venv = tmp_path / "venv"
+    cases = [
+        # purelib is the home directory (not a site-packages under a prefix)
+        {"base_prefix": str(base), "prefix": str(venv), "purelib": str(home)},
+        # a site-packages-named folder outside both prefixes
+        {"base_prefix": str(base), "prefix": str(venv),
+         "purelib": str(_tree(home / "site-packages", {"x.py": "1"}))},
+        # an edited pyvenv.cfg home: base_prefix is not a Python install
+        {"base_prefix": str(home), "prefix": str(venv), "purelib": str(purelib)},
+        # the interpreter is not inside the prefix it reports
+        {"base_prefix": str(base), "prefix": str(base), "purelib": str(base / "Lib" / "site-packages")},
+    ]
+    for facts in cases:
+        _lying_probe(monkeypatch, **facts)
+        with pytest.raises(AppError) as raised:
+            python_runtime(interpreter, root=cache)
+        assert raised.value.code == "CHECK_RUNTIME_FAILED", facts
+    assert not any("id_ed25519" in path.name for path in cache.rglob("*")) if cache.exists() else True
+
+
+def test_interpreters_in_sentinel_owned_agent_writable_places_are_refused_unrun(
+    cache: Path, monkeypatch, tmp_path: Path,
+) -> None:
+    """WR-09: workspace clones, box trees (Packages) and the Sentinel store are refused."""
+
+    local = tmp_path / "LocalAppData"
+    monkeypatch.setattr(check_runtime, "local_appdata_known_folder", lambda: local)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    ran: list[object] = []
+    monkeypatch.setattr(check_runtime, "capture", lambda *a, **k: ran.append(a))
+    for relative in ("Packages/sentinel.ws.1/AC/clone/.venv/Scripts/python.exe",
+                     "Packages/sentinel.check.2/AC/tree/python.exe",
+                     "Sentinel/check-runtimes/python/" + "a" * 64 + "/python.exe"):
+        planted = local / relative
+        planted.parent.mkdir(parents=True, exist_ok=True)
+        planted.write_text("not python", encoding="utf-8")
+        with pytest.raises(AppError) as raised:
+            python_runtime(planted, root=cache)
+        assert raised.value.code == "CHECK_RUNTIME_FAILED"
+    assert ran == []
 
 
 def test_failed_probe_fails_closed(fake_python, cache: Path, monkeypatch) -> None:

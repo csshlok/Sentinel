@@ -38,7 +38,7 @@ from backend.app.core.errors import AppError
 from backend.app.execution._process import capture, minimal_environment
 from backend.app.execution.acl import restrict_to_current_user
 from backend.app.execution.agent_staging import _is_reparse
-from backend.app.execution.appcontainer import remove_tree_no_follow
+from backend.app.execution.appcontainer import local_appdata_known_folder, remove_tree_no_follow
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ SITECUSTOMIZE_SOURCE = (
 
 _PROBE_SOURCE = (
     "import json, sys, sysconfig; "
-    "print(json.dumps({'base_prefix': sys.base_prefix, "
+    "print(json.dumps({'base_prefix': sys.base_prefix, 'prefix': sys.prefix, "
     "'purelib': sysconfig.get_paths()['purelib']}))"
 )
 
@@ -523,13 +523,67 @@ def _interpreter_facts(interpreter: Path) -> tuple[Path, Path]:
     try:
         facts = json.loads(result.stdout.decode("utf-8"))
         base_prefix = Path(facts["base_prefix"])
+        prefix = Path(facts["prefix"])
         purelib = Path(facts["purelib"])
     except (UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
         raise check_runtime_failed("python", "the interpreter facts were unreadable") from exc
-    for path in (base_prefix, purelib):
+    for path in (base_prefix, prefix, purelib):
         if not path.is_absolute():
             raise check_runtime_failed("python", "the interpreter reported a relative path")
+    _validate_interpreter_facts(interpreter, base_prefix, prefix, purelib)
     return base_prefix, purelib
+
+
+def _regular_file(path: Path) -> bool:
+    try:
+        return not _is_reparse(path) and stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _validate_interpreter_facts(
+    interpreter: Path, base_prefix: Path, prefix: Path, purelib: Path,
+) -> None:
+    """WR-09: the probe is the interpreter's own word, so its answer is checked, not trusted.
+
+    Its output decides what gets copied into the cache and granted to the box.
+    ``base_prefix`` must be a real Python install (``python.exe`` and
+    ``Lib/os.py``), ``purelib`` a ``site-packages`` folder under ``sys.prefix``
+    or ``base_prefix``, and the interpreter must live under ``sys.prefix``. A
+    lying interpreter (or an edited ``pyvenv.cfg``) cannot point the snapshot
+    at, say, the user profile.
+    """
+
+    if not (_regular_file(base_prefix / "python.exe")
+            and _regular_file(base_prefix / "Lib" / "os.py")):
+        raise check_runtime_failed("python", "the reported base prefix is not a Python install")
+    if purelib.name.casefold() != "site-packages" or not (
+            _inside(purelib, prefix) or _inside(purelib, base_prefix)):
+        raise check_runtime_failed(
+            "python", "the reported site-packages is not under the interpreter's prefix")
+    if not _inside(interpreter, prefix):
+        raise check_runtime_failed("python", "the interpreter is not inside its reported prefix")
+
+
+def _refused_interpreter_location(interpreter: Path) -> str | None:
+    """Sentinel-owned, agent-writable places a requested interpreter may never come from.
+
+    Every AppContainer profile folder (agent workspace clones, check-box trees and
+    scratch) lives under ``<LocalAppData>/Packages``; the Sentinel store (with
+    this cache) under ``%LOCALAPPDATA%/Sentinel``. The interpreter facts probe runs
+    the interpreter at user authority, so it is refused there before it runs.
+    """
+
+    resolved = Path(os.path.abspath(interpreter))
+    try:
+        packages = local_appdata_known_folder() / "Packages"
+    except (OSError, AppError):
+        packages = None
+    if packages is not None and _inside(resolved, packages):
+        return "the interpreter is inside an AppContainer profile folder"
+    if _inside(resolved, check_runtime_root(create=False).parent):
+        return "the interpreter is inside the Sentinel store"
+    return None
 
 
 def _inside(path: Path, directory: Path) -> bool:
@@ -595,6 +649,9 @@ def python_runtime(
     interpreter_path = Path(interpreter)
     if not interpreter_path.is_absolute() or not interpreter_path.is_file():
         raise check_runtime_failed("python", "the interpreter must be an absolute file path")
+    refused = _refused_interpreter_location(interpreter_path)
+    if refused is not None:
+        raise check_runtime_failed("python", refused)
     base_prefix, purelib = _interpreter_facts(interpreter_path)
     cache = None if root is None else Path(root)
     site_hook = not os.path.lexists(base_prefix / Path(SITECUSTOMIZE_RELPATH))
