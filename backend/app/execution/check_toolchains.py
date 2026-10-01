@@ -64,6 +64,7 @@ ALLOWED_EXECUTABLES = frozenset(CONFINED_TOOLCHAINS) | UNCONFINED_TOOLCHAINS
 
 # JS entry points, relative to the snapshot that holds them.
 _NPM_ENTRY = ("node_modules", "npm", "bin", "npm-cli.js")
+NODE_BOX_OPTIONS = "--preserve-symlinks --preserve-symlinks-main"
 _PACKAGE_MANAGER_ENTRIES: dict[str, tuple[tuple[str, ...], ...]] = {
     "pnpm": (("pnpm", "bin", "pnpm.cjs"), ("pnpm", "bin", "pnpm.js")),
     "yarn": (("yarn", "bin", "yarn.js"),),
@@ -177,7 +178,14 @@ def resolve_check_runtime(
     node_exe = node.path / Path(host_node).name
     snapshots = (node,) if modules is None else (node, modules)
     path_entries = (node.path,) if modules is None else (node.path, modules.path / ".bin")
-    env = {} if modules is None else {"NODE_PATH": str(modules.path)}
+    # Node's JS realpath walks every path component from the drive root, and an
+    # AppContainer is denied lstat('C:\\') (EPERM before any user code runs). The
+    # check tree and both snapshots refuse links and reparse points, so a path is
+    # already its real path; preserving symlinks skips that walk without changing
+    # module identity. NODE_OPTIONS reaches the node children npm spawns too.
+    env = {"NODE_OPTIONS": NODE_BOX_OPTIONS}
+    if modules is not None:
+        env["NODE_PATH"] = str(modules.path)
     limitations = (() if modules is None else (
         "node_modules is a snapshot outside the check tree; it is reachable through "
         "NODE_PATH (CommonJS) only, not ES module resolution",))

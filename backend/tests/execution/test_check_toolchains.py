@@ -132,10 +132,25 @@ def test_node_runs_the_node_snapshot_with_the_project_modules(tmp_path) -> None:
     node_exe = tmp_path / "cache" / "node" / "c" / "node.exe"
     modules = tmp_path / "cache" / "node-modules" / "d"
     assert resolved.argv_prefix == (str(node_exe),)
-    assert resolved.runtime.env == {"NODE_PATH": str(modules)}
+    assert resolved.runtime.env == {"NODE_PATH": str(modules),
+                                    "NODE_OPTIONS": "--preserve-symlinks --preserve-symlinks-main"}
     assert [s.path for s in resolved.runtime.snapshots] == [node_exe.parent, modules]
     assert resolved.runtime.path_entries == (node_exe.parent, modules / ".bin")
     assert ("node_modules", repo) in fake.calls
+
+
+@pytest.mark.parametrize("modules", [True, False])
+def test_node_skips_the_realpath_walk_from_the_drive_root(tmp_path, modules) -> None:
+    """An AppContainer is denied lstat('C:\'); Node's JS realpath walks from there (05-05).
+
+    The tree and snapshots hold no links, so preserving symlinks keeps module
+    identity unchanged; NODE_OPTIONS also reaches the node children npm spawns.
+    """
+
+    resolved = resolve_check_runtime("npm", source_root=tmp_path / "repo",
+                                     builders=Builders(tmp_path, modules=modules).builders())
+    assert resolved.runtime.env["NODE_OPTIONS"] == "--preserve-symlinks --preserve-symlinks-main"
+    assert ("NODE_PATH" in resolved.runtime.env) is modules
 
 
 @pytest.mark.parametrize("name", ["npm", "npm.cmd"])
