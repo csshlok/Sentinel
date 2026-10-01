@@ -15,7 +15,7 @@ from pathlib import Path
 from uuid import UUID
 
 from backend.app.assurance.diff_map import _classification, map_diff
-from backend.app.assurance.test_call_monitor import assess_record
+from backend.app.assurance.test_call_monitor import assess_record, prepare_monitor
 from backend.app.contracts.models import (
     ChangeView, DiffCoverageFile, DiffCoverageRequest, DiffCoverageResult, GitCheckpoint, utc_now,
 )
@@ -414,6 +414,7 @@ def collect_diff_coverage(
     collected_test_paths: set[str] = set()
     collector_status = "ERROR"
     reasons: list[str] = []
+    monitor_record: bytes | None = None
     try:
         if checks is None:
             raise check_boxes_unavailable()
@@ -441,6 +442,12 @@ def collect_diff_coverage(
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
                     *test_args, "-c", str(pytest_config), f"--rootdir={check_root}",
                     "-o", "addopts=", f"--junitxml={junit}"]
+            # 06 N6-01: run coverage through the runtime caller monitor (same process).
+            argv, monitor_name = prepare_monitor(
+                evidence, check_root,
+                sorted(path for path, reason in mapped.excluded.items()
+                       if reason == "test code" and path.lower().endswith(".py")),
+                argv)
             # IN-05: the persisted command names box paths by placeholder, never host paths.
             result = result.model_copy(update={"command": [
                 "<box-python>" if part == box_python
@@ -454,8 +461,16 @@ def collect_diff_coverage(
                 "collection_boundary": ("APPCONTAINER_IN_PROCESS"
                                         if boundary == "APPCONTAINER"
                                         else "UNCONFINED_IN_PROCESS")})
+            if boundary != "APPCONTAINER":
+                # Never sign an AppContainer caveat the token facts did not verify.
+                result = result.model_copy(update={"collection_caveat": (
+                    "Tests and coverage share one process in a Sentinel check box whose "
+                    "AppContainer boundary was not verified; agent-authored code can still "
+                    "influence coverage data. The external Python interpreter is trusted by "
+                    "path, not by a verified publisher or binary digest.")})
             if on_check_run is not None:
                 on_check_run(run.check_run_id, boundary)  # verified, never the default
+            monitor_record = _scratch_bytes(box, monitor_name)
             if run.timed_out or run.incomplete:
                 reasons.append("Test command timed out or output capture was incomplete.")
             elif not _scratch_file(box, data.name):
@@ -550,7 +565,8 @@ def collect_diff_coverage(
         return evaluate_report(result=result, changed=mapped.lines, excluded=mapped.excluded,
                                report=report, root=root, rule=request,
                                collected_test_paths=collected_test_paths,
-                               excluded_changed_lines=mapped.excluded_lines)
+                               excluded_changed_lines=mapped.excluded_lines,
+                               monitor_record=monitor_record, monitor_requested=True)
     except Exception as exc:
         return result.model_copy(update={
             "collector_status": "ERROR", "diff_exercised": "UNKNOWN",

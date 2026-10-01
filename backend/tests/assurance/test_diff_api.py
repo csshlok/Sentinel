@@ -53,6 +53,9 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
         assert body["command"][0] == "<box-python>"
         assert not any("AppData" in part or str(root) in part for part in body["command"])
         assert "--rootdir=<tree>" in body["command"]
+        # The caveat never claims an AppContainer the harness's facts did not verify.
+        assert "(AppContainer, no network" not in body["collection_caveat"]
+        assert "was not verified" in body["collection_caveat"]
         assert body["diff_exercised"] == "FAIL"
         assert body["gate_satisfied"] is False
         stored = EvidenceStore(Database(database)).latest_diff_coverage(change_id)
