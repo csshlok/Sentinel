@@ -588,3 +588,82 @@ def test_unsupported_toolchain_needs_the_opt_in_and_is_reported_unconfined(
     assert claims.policy_preset_name == "strict"
     assert claims.policy_decision == "DENY"
     assert any("confined checks" in reason.casefold() for reason in claims.policy_denials)
+
+
+# ------------------------------------------------------------------ SC2 (legit checks pass)
+
+PY_BEFORE = {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
+    "module.py": "def old():\n    return 1\n\n\ndef new():\n    return 1\n",
+    "tests/test_module.py": "from module import new, old\n\n\ndef test_old():\n    assert old() == 1\n",
+}
+PY_AFTER = {
+    "module.py": "def old():\n    return 1\n\n\ndef new():\n    return 2\n",
+    "tests/test_module.py": ("from module import new, old\n\n\ndef test_old():\n    assert old() == 1\n"
+                             "\n\ndef test_new():\n    assert new() == 2\n"),
+}
+
+
+def test_real_python_fixture_reaches_diff_exercised_pass_confined(
+    live_api: LiveApi, tmp_path: Path,
+) -> None:
+    from backend.app.core.database import Database
+    from backend.app.passport.v2 import PassportV2Issuer
+
+    api = live_api
+    repo = make_repo(tmp_path / "repo", PY_BEFORE)
+    change_id = _create_change(api, repo, schema_version=2, diff_coverage_rule={
+        "required": True, "minimum_percent": 80, "policy_version": "required-v1"})
+    base = f"/changes/{change_id}"
+    baseline = api.call("POST", f"{base}/evidence/baseline")
+    assert baseline.status_code == 201, baseline.text
+    for name, text in PY_AFTER.items():
+        write(repo, name, text)
+    tested = api.call("POST", f"{base}/evidence/current")
+    assert tested.status_code == 201, tested.text
+    measured = api.call("POST", f"{base}/assurance/diff-coverage", json={
+        "baseline_checkpoint_id": baseline.json()["checkpoint"]["id"],
+        "tested_checkpoint_id": tested.json()["checkpoint"]["id"],
+        "interpreter_path": sys.executable,
+    })
+    assert measured.status_code == 200, measured.text
+    body = measured.json()
+    assert body["checks_passed"] is True, body
+    assert body["diff_exercised"] == "PASS", body
+    assert body["gate_satisfied"] is True, body
+    assert body["boundary"] == "APPCONTAINER"
+    assert body["collection_boundary"] == "APPCONTAINER_IN_PROCESS"
+    runs = {run["id"]: run for run in _check_runs(api, change_id)}
+    assert runs[body["check_run_id"]]["boundary"] == "APPCONTAINER"
+    claims = PassportV2Issuer(Database(api.database)).snapshot(UUID(change_id))
+    assert claims.confined_checks == "PASS"
+    _no_test_profiles_left()
+
+
+def test_real_node_fixture_npm_test_passes_with_the_node_modules_snapshot(
+    live_api: LiveApi, tmp_path: Path,
+) -> None:
+    _node()
+    api = live_api
+    repo = tmp_path / "repo"
+    shutil.copytree(FIXTURES / "node_project", repo, ignore=shutil.ignore_patterns("vendor"))
+    write(repo, ".gitignore", "node_modules/\n")
+    make_repo(repo, {})  # commit the fixture sources (node_modules stays ignored)
+    shutil.copytree(FIXTURES / "node_project" / "vendor" / "tiny-add",
+                    repo / "node_modules" / "tiny-add")
+    assert "node_modules" not in git(repo, "ls-files")
+
+    change_id = _create_change(api, repo)
+    actor = _actor(api, change_id, ["change.legacy_verify"])
+    response = _verify(api, change_id, actor, "npm", ["test"])
+    assert response.status_code == 200, response.text
+    verification = response.json()["verification"]
+    assert verification["status"] == "PASSED", verification["stdout"] + verification["stderr"]
+    lines = [line for line in verification["stdout"].splitlines()
+             if line.startswith("SENTINEL_NODE_FIXTURE ok ")]
+    assert len(lines) == 1, verification["stdout"]
+    # The dependency resolved from the read-only node_modules snapshot, not the tree.
+    resolved = lines[0].split(" ", 2)[2]
+    assert "check-runtimes" in resolved and "\\tree\\" not in resolved, resolved
+    _assert_confined_run(api, change_id, verification)
+    _no_test_profiles_left()
