@@ -689,6 +689,8 @@ def test_python_box_runtime_points_at_the_snapshots(runtime) -> None:
     assert dict(runtime.env) == {
         "PYTHONHOME": str(interpreter.path), "PYTHONPATH": str(deps.path),
         "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+        # WR-05: the snapshot's sitecustomize processes this site directory's .pth files.
+        "SENTINEL_CHECK_SITE_PACKAGES": str(deps.path),
     }
     assert runtime.executable == interpreter.path / "python.exe"
 
