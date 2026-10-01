@@ -92,8 +92,20 @@ async def _select_first_row(pilot) -> None:
     from textual.widgets import DataTable
 
     table = pilot.app.query_one(DataTable)
+    # The dashboard loads its rows from the API in a worker; on a slow host a
+    # fixed pause can select an empty table, and the next key does nothing.
+    await _wait_until(pilot, lambda: table.row_count >= 1)
     table.cursor_coordinate = (0, 0)
     await pilot.pause()
+
+
+async def _wait_until(pilot, predicate, *, timeout: float = 10.0) -> bool:
+    """Poll a UI condition with real wall-clock waits; returns its final value."""
+
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        await pilot.pause(0.05)
+    return bool(predicate())
 
 
 async def _wait_for_rows(pilot, selector: str, *, at_least: int = 1, timeout: float = 5.0) -> None:
@@ -138,7 +150,7 @@ async def test_evidence_screen_real_load_and_refresh(live_change) -> None:
         await pilot.pause()
         await _select_first_row(pilot)
         await pilot.press("g")
-        await pilot.pause()
+        await _wait_until(pilot, lambda: isinstance(app.screen, EvidenceScreen))
         assert isinstance(app.screen, EvidenceScreen)
         await pilot.press("r")
         await pilot.pause()
@@ -287,7 +299,9 @@ async def test_tools_screen_real_approve_decision_reaches_the_api(live_change) -
         tools = client.list_tools_for_change(change_id)["items"]
         assert tools[0]["trust_state"] == "APPROVED"
 
-        result_text = str(pilot.app.query_one("#result").renderable)
+        result = pilot.app.query_one("#result")
+        await _wait_until(pilot, lambda: "APPROVE" in str(result.renderable))
+        result_text = str(result.renderable)
         assert "APPROVE" in result_text
 
         await pilot.press("escape")
@@ -333,7 +347,7 @@ async def test_evidence_screen_real_pause_and_resume_a_running_agent(live_change
         await pilot.pause()
         await _select_first_row(pilot)
         await pilot.press("g")
-        await pilot.pause()
+        await _wait_until(pilot, lambda: isinstance(app.screen, EvidenceScreen))
         assert isinstance(app.screen, EvidenceScreen)
 
         # Wait (real wall-clock) for the run to appear and be RUNNING.
