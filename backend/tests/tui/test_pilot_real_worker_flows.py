@@ -384,6 +384,14 @@ async def test_evidence_screen_real_pause_and_resume_a_running_agent(live_change
             await pilot.pause(0.1)
         assert not resume_button.disabled
         resume_button.press()
+        # Let the resume worker reach the API before anything blocks: the
+        # thread join below is synchronous and stalls the event loop.
+        deadline = time.monotonic() + 10.0
+        status = client.list_agent_runs(change_id)["items"][0]["status"]
+        while status == "PAUSED" and time.monotonic() < deadline:
+            await pilot.pause(0.1)
+            status = client.list_agent_runs(change_id)["items"][0]["status"]
+        assert status != "PAUSED", "Resume never reached the backend"
 
         # The launch call blocks server-side until the process is terminal;
         # the paused interval doesn't count against its 12s of real sleep,
