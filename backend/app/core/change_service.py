@@ -32,7 +32,7 @@ from backend.app.contracts.ports import (
 from backend.app.core.capabilities import build_capabilities
 from backend.app.core.change_repository import ChangeRepository, StoredChange
 from backend.app.core.config import Settings
-from backend.app.core.errors import change_not_found, policy_denied
+from backend.app.core.errors import AppError, change_not_found, policy_denied
 from backend.app.core.lifecycle import allowed_targets, validate_transition
 from backend.app.core.review_service import determine_review_state
 
@@ -52,6 +52,7 @@ class ChangeService:
         policy: PolicyPort | None = None,
         configured_capabilities: set[str] | None = None,
         clock: Clock = utc_now,
+        workspace_guard: Callable[[UUID], bool] | None = None,
     ) -> None:
         self.repository = repository
         self.git_inspection = git_inspection
@@ -65,6 +66,8 @@ class ChangeService:
             "legacy_verification",
         }
         self.clock = clock
+        # D-08: True while the Change still owns a live (not CLEANED) workspace.
+        self.workspace_guard = workspace_guard
 
     def capabilities(self) -> CapabilitiesResponse:
         return build_capabilities(self.configured_capabilities)
@@ -317,6 +320,13 @@ class ChangeService:
     def delete(
         self, change_id: UUID, *, idempotency_key: str | None = None
     ) -> None:
+        if self.workspace_guard is not None and self.workspace_guard(change_id):
+            raise AppError(
+                "CHANGE_HAS_LIVE_WORKSPACE",
+                "Discard or apply this Change's workspace before deleting the Change.",
+                status_code=409,
+                details={"change_id": str(change_id)},
+            )
         request_hash = self._request_hash({"change_id": str(change_id)})
         if not self.repository.delete(
             change_id,

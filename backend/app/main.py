@@ -199,6 +199,7 @@ def create_app(
         policy=DelegationPolicyEngine(change_delegations),
         configured_capabilities=configured_capabilities
         or set(_DEFAULT_CONFIGURED_CAPABILITIES),
+        workspace_guard=workspace_manager.has_live_workspace,
     )
     runtime = _build_runtime_services(
         database,
@@ -213,8 +214,21 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app_: FastAPI) -> AsyncIterator[None]:
         database.initialize()
+        # D-05 startup trigger: reconcile crashed/interrupted workspaces recorded in
+        # THIS database. A failing sweep is logged and never blocks startup.
+        app_.state.workspace_sweep_report = None
+        try:
+            report = workspace_manager.sweep()
+        except Exception:
+            LOGGER.exception("Startup workspace sweep failed")
+        else:
+            app_.state.workspace_sweep_report = report
+            LOGGER.info(
+                "Startup workspace sweep: %d cleaned, %d preserved, %d failed",
+                len(report.cleaned), len(report.preserved), len(report.failed),
+            )
         yield
 
     app = FastAPI(
