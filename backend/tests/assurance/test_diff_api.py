@@ -49,6 +49,10 @@ def test_http_measurement_uses_contract_rule_and_persists_result(tmp_path) -> No
         body = measured.json()
         assert body["threshold"] == 100
         assert "--collect-only" not in body["command"]
+        # IN-05: no host path (box python, scratch, tree) is persisted in the command.
+        assert body["command"][0] == "<box-python>"
+        assert not any("AppData" in part or str(root) in part for part in body["command"])
+        assert "--rootdir=<tree>" in body["command"]
         assert body["diff_exercised"] == "FAIL"
         assert body["gate_satisfied"] is False
         stored = EvidenceStore(Database(database)).latest_diff_coverage(change_id)

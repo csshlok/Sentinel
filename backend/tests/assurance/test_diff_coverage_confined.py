@@ -123,9 +123,11 @@ def test_legit_change_passes_inside_a_real_box(tmp_path, boxes) -> None:
     assert result.diff_exercised == "PASS", result.reasons
     assert result.freshness == "CURRENT"
     assert result.gate_satisfied is True
-    # The command ran the snapshot python with evidence in the box scratch folder.
-    assert "check-runtimes" in result.command[0]
-    assert any("\\AC\\scratch\\" in part for part in result.command)
+    # The command ran the box python with evidence in the box scratch folder; the
+    # persisted form names those by placeholder, never by host path (IN-05).
+    assert result.command[0] == "<box-python>"
+    assert "--data-file" in result.command and "<scratch>\\coverage.data" in result.command
+    assert not any("AppData" in part or "check-runtimes" in part for part in result.command)
     assert len(seen) == 1 and seen[0][1] == "APPCONTAINER"
     events = _confined_events(boxes, change.id)
     assert len(events) == 2  # coverage run + coverage json, in the same box

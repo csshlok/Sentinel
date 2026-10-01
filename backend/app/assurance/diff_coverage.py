@@ -441,7 +441,11 @@ def collect_diff_coverage(
                     "--data-file", str(data), "-m", "pytest", "-p", "no:cacheprovider",
                     *test_args, "-c", str(pytest_config), f"--rootdir={check_root}",
                     "-o", "addopts=", f"--junitxml={junit}"]
-            result = result.model_copy(update={"command": argv})
+            # IN-05: the persisted command names box paths by placeholder, never host paths.
+            result = result.model_copy(update={"command": [
+                "<box-python>" if part == box_python
+                else part.replace(str(evidence), "<scratch>").replace(str(check_root), "<tree>")
+                for part in argv]})
             run = box.run(argv, timeout=300, limit=262_144)
             # Phase 5 (05-04): box.run returns only for a token verified before resume.
             boundary = verified_boundary(run)
