@@ -128,6 +128,9 @@ def test_planted_workspace_config_never_runs_during_preview_or_apply(
     fired = _canaries(canaries)
     assert {"filter-process", "fsmonitor"} <= set(fired), (fired, first.stderr)
     assert _plain(control, "config", "--unset", "filter.evil.process").returncode == 0
+    # Some Git versions still stage the file after the failed process filter; new
+    # content forces the clean filter to run on this add either way.
+    write(control, "control.txt", "control, second add\n")
     added = _plain(control, "add", "-A")
     committed = _plain(control, "commit", "-q", "-m", "control")
     fired = _canaries(canaries)
