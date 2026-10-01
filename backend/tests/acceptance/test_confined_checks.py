@@ -444,6 +444,15 @@ def test_python_conftest_escapes_are_denied_through_the_api(
     assert len(api.listener.accepted) == accepted_before  # no connection reached the port
     assert not (repo / "conftest-result.txt").exists()
     _assert_confined_run(api, change_id, response.json()["verification"])
+    # D2: a Change whose only check was this confined verify run signs PASS, and the
+    # Passport lists that run with the boundary it was observed to run under.
+    from backend.app.core.database import Database
+    from backend.app.passport.v2 import PassportV2Issuer
+
+    claims = PassportV2Issuer(Database(api.database)).snapshot(UUID(change_id))
+    assert claims.confined_checks == "PASS", claims.limitations
+    assert [(str(item.check_run_id), item.boundary) for item in claims.check_runs] == [
+        (verification["check_run_id"], "APPCONTAINER")]
     _no_test_profiles_left()
 
 

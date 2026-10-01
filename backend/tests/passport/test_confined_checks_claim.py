@@ -1,11 +1,13 @@
-"""Phase 5 (05-04): Passport v2 signs ``confined_checks`` from persisted check-run records.
+"""Phase 5 (05-04, D2): Passport v2 signs ``confined_checks`` from persisted check-run records.
 
-PASS only when the check run behind the evaluated diff-coverage evidence has a
-row AND hash-verified ``check.confined_run`` journal events with verified token
-facts. An UNCONFINED run (claimed, or journaled ``check.unconfined_run``) or a
-failed verification is FAIL; no run, a legacy row, or a missing record is
-UNKNOWN. The preset evaluator receives the same value. Older bundles (no
-``confined_checks`` key) still verify.
+Every check run of the Change counts (verification runs and diff-coverage runs).
+PASS only when at least one run exists and every run has a row AND
+hash-verified ``check.confined_run`` journal events with verified token facts.
+An UNCONFINED run (journaled ``check.unconfined_run``) or a failed verification
+is FAIL; no run, or a run whose facts are missing, is UNKNOWN. Each run and its
+boundary is listed in the signed ``check_runs``. The preset evaluator receives
+the same value. Older bundles (no ``confined_checks``/``check_runs`` keys) still
+verify.
 """
 
 from __future__ import annotations
@@ -219,6 +221,98 @@ def test_a_run_of_another_change_does_not_count(seeded, tmp_path) -> None:
     assert _claim(database, change).confined_checks == "UNKNOWN"
 
 
+# ----------------------------------------------------------------- D2: every check run
+
+def _verified_run(database, change_id: UUID) -> UUID:
+    run_id = uuid4()
+    _row(database, change_id, run_id, facts=_facts())
+    _confined_event(database, change_id, run_id)
+    return run_id
+
+
+def _bound(payload: PassportV2Payload) -> list[tuple[UUID, str | None]]:
+    return [(item.check_run_id, item.boundary) for item in payload.check_runs]
+
+
+def test_only_confined_verify_runs_are_pass_and_each_is_listed(seeded) -> None:
+    """D2: verification runs count too; no diff-coverage measurement is needed for PASS."""
+
+    database, change = seeded
+    first, second = _verified_run(database, change.id), _verified_run(database, change.id)
+    payload = _claim(database, change)
+    assert payload.confined_checks == "PASS"
+    assert sorted(_bound(payload)) == sorted([(first, "APPCONTAINER"),
+                                              (second, "APPCONTAINER")])
+
+
+@pytest.mark.parametrize("other,expected,boundary", [
+    ("unverified", "FAIL", None),     # a verify run whose token facts did not verify
+    ("unconfined", "FAIL", "UNCONFINED"),
+    ("never_ran", "UNKNOWN", None),   # a box row with no recorded launch facts
+])
+def test_mixed_runs_are_never_pass(seeded, other, expected, boundary) -> None:
+    """D2: a verify run outside the bound coverage evidence still decides the fact."""
+
+    database, change = seeded
+    covered = _verified_run(database, change.id)
+    _coverage(database, change, run_id=covered, boundary="APPCONTAINER")
+    extra = uuid4()
+    if other == "unverified":
+        _row(database, change.id, extra, facts=_facts(is_appcontainer=False))
+        _confined_event(database, change.id, extra, is_appcontainer=False)
+    elif other == "unconfined":
+        _unconfined_event(database, change.id, extra)
+    else:
+        _row(database, change.id, extra, facts=None)
+    payload = _claim(database, change)
+    assert payload.confined_checks == expected
+    assert dict(_bound(payload)) == {covered: "APPCONTAINER", extra: boundary}
+
+
+@pytest.mark.parametrize("tamper", ["facts", "package_sid", "delete_row"])
+def test_a_tampered_check_run_row_is_not_pass(seeded, tamper) -> None:
+    database, change = seeded
+    run_id = _verified_run(database, change.id)
+    assert _claim(database, change).confined_checks == "PASS"
+    with database.connection(immediate=True) as connection:
+        if tamper == "facts":
+            connection.execute("UPDATE check_runs SET facts_json = ? WHERE id = ?",
+                               (json.dumps(_facts(job_verified=False)), str(run_id)))
+        elif tamper == "package_sid":
+            connection.execute("UPDATE check_runs SET package_sid = ? WHERE id = ?",
+                               ("S-1-15-2-1-1-1-1-1-1-1", str(run_id)))
+        else:
+            connection.execute("DELETE FROM check_runs WHERE id = ?", (str(run_id),))
+    payload = _claim(database, change)
+    assert payload.confined_checks != "PASS"
+    assert _bound(payload) == [(run_id, None)]
+
+
+def test_a_tampered_check_run_event_is_not_pass(seeded) -> None:
+    """An edited journal payload breaks the hash chain: no Passport claims PASS from it."""
+
+    from backend.app.core.errors import AppError
+
+    database, change = seeded
+    _verified_run(database, change.id)
+    bad = uuid4()
+    _row(database, change.id, bad, facts=_facts())
+    _confined_event(database, change.id, bad, is_appcontainer=False)
+    assert _claim(database, change).confined_checks == "FAIL"
+    with database.connection(immediate=True) as connection:
+        row = connection.execute(
+            "SELECT seq, payload_json FROM journal_events WHERE change_id = ? AND subject_id = ?",
+            (str(change.id), str(bad))).fetchone()
+        forged = {**json.loads(row["payload_json"]), "is_appcontainer": True}
+        # A process with authority over the database can drop the append-only trigger.
+        connection.execute("DROP TRIGGER journal_events_immutable_update")
+        connection.execute("UPDATE journal_events SET payload_json = ? WHERE change_id = ? "
+                           "AND seq = ?", (json.dumps(forged), str(change.id), row["seq"]))
+    with pytest.raises(AppError) as raised:
+        _claim(database, change)
+    assert raised.value.code == "PASSPORT_JOURNAL_INVALID"
+
+
 def test_fact_function_any_fail_wins_and_empty_is_unknown() -> None:
     assert confined_checks_fact([], records={}, events=[])[0] == "UNKNOWN"
     assert confined_checks_fact([(uuid4(), "UNCONFINED"), (None, None)],
@@ -285,6 +379,7 @@ def test_older_claims_without_the_field_still_normalize(seeded) -> None:
     database, change = seeded
     claims = _claim(database, change).model_dump(mode="json")
     claims.pop("confined_checks")
+    claims.pop("check_runs")  # D2: pre-additive bundles carry neither key
     passport = {"schema_version": 2, "claims": claims, "signer": {}}
     manifest = {"change_id": str(change.id)}
     # Normalization passes (a mismatch would raise ValueError); the empty member map then
@@ -317,6 +412,13 @@ def test_issued_signature_covers_confined_checks(seeded) -> None:
                                 signature=signature)
         forged = issued.payload.model_copy(update={"confined_checks": "FAIL"})
         assert not verify_signature(spki=spki, message=canonical_payload(forged),
+                                    signature=signature)
+        # D2: the per-run boundary list is signed too.
+        assert [(item.check_run_id, item.boundary) for item in issued.payload.check_runs] == [
+            (run_id, "APPCONTAINER")]
+        relabeled = issued.payload.model_copy(update={"check_runs": [
+            issued.payload.check_runs[0].model_copy(update={"boundary": None})]})
+        assert not verify_signature(spki=spki, message=canonical_payload(relabeled),
                                     signature=signature)
     finally:
         with CngKey.open(name=key_name) as key:

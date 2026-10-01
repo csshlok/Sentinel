@@ -3062,6 +3062,23 @@ export interface components {
          */
         OutcomeStatus: "UNKNOWN" | "PENDING" | "PASSED" | "FAILED" | "CANCELLED" | "UNAVAILABLE";
         /**
+         * PassportV2CheckRun
+         * @description One check run bound into a Passport v2 and its observed boundary (Phase 5, D2).
+         *
+         *     ``boundary`` is APPCONTAINER only for a box run whose row and hash-verified
+         *     journal facts verify, UNCONFINED for a delegated opt-in run, and None when
+         *     the records cannot establish a boundary.
+         */
+        PassportV2CheckRun: {
+            /** Boundary */
+            boundary?: ("APPCONTAINER" | "UNCONFINED") | null;
+            /**
+             * Check Run Id
+             * Format: uuid
+             */
+            check_run_id: string;
+        };
+        /**
          * PassportV2DiffClaim
          * @description Three independent Phase 6 claims, plus the measurement's known limit.
          */
@@ -3155,6 +3172,8 @@ export interface components {
             change_id: string;
             /** Change Revision */
             change_revision: number;
+            /** Check Runs */
+            check_runs?: components["schemas"]["PassportV2CheckRun"][];
             /**
              * Confined Checks
              * @default UNKNOWN

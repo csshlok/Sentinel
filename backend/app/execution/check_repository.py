@@ -277,6 +277,57 @@ def check_run_fact(
     return "PASS", None
 
 
+def change_check_runs_fact(
+    *, records: Mapping[UUID, CheckRunRecord], events: Sequence[CheckRunEvent],
+) -> tuple[Fact, str | None, list[tuple[UUID, str | None]]]:
+    """``confined_checks`` over EVERY check run of a Change, plus each run's boundary (D2).
+
+    The runs are every ``check_runs`` row (verification runs and diff-coverage
+    runs alike) and every run a ``check.confined_run`` / ``check.unconfined_run``
+    event names. PASS only when at least one run exists and every run is a box
+    run whose row and hash-verified journal events verify (``check_run_fact``);
+    FAIL on any unconfined run or any failed/unverified boundary fact; UNKNOWN
+    when no run exists or a run's facts are missing. Each run's boundary is
+    APPCONTAINER only for a verified box run, UNCONFINED for a delegated
+    opt-in run, and None otherwise.
+    """
+
+    ordered: dict[UUID, None] = {}
+    for record in sorted(records.values(), key=lambda item: (item.created_at, str(item.id))):
+        ordered[record.id] = None
+    unconfined: set[UUID] = set()
+    for event in events:
+        candidates = [event.subject_id]
+        if event.payload is not None:
+            candidates.append(event.payload.get("check_run_id"))
+        for candidate in candidates:
+            try:
+                run_id = UUID(str(candidate))
+            except ValueError:
+                continue
+            ordered.setdefault(run_id, None)
+            if event.event_type == UNCONFINED_RUN_EVENT:
+                unconfined.add(run_id)
+    runs: list[tuple[UUID, str | None]] = []
+    results: list[tuple[Fact, str | None]] = []
+    for run_id in ordered:
+        if run_id in unconfined:
+            runs.append((run_id, BOUNDARY_UNCONFINED))
+            results.append(("FAIL", "a check ran UNCONFINED (delegated checks.unconfined opt-in)"))
+            continue
+        state, reason = check_run_fact(run_id, BOUNDARY_APPCONTAINER, records=records,
+                                       events=events)
+        runs.append((run_id, BOUNDARY_APPCONTAINER if state == "PASS" else None))
+        results.append((state, reason))
+    if not runs:
+        return "UNKNOWN", "no check run of this Change is recorded", runs
+    for fact in ("FAIL", "UNKNOWN"):
+        for state, reason in results:
+            if state == fact:
+                return state, reason, runs
+    return "PASS", None, runs
+
+
 def confined_checks_fact(
     bound: Sequence[tuple[UUID | None, str | None]], *,
     records: Mapping[UUID, CheckRunRecord], events: Sequence[CheckRunEvent],

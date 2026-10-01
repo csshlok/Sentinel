@@ -12,6 +12,7 @@ from backend.app.contracts.models import (
     ChangeContract,
     DiffCoverageResult,
     GitCheckpoint,
+    PassportV2CheckRun,
     PassportV2DiffClaim,
     PassportV2Issued,
     PassportV2LaunchBinding,
@@ -22,7 +23,7 @@ from backend.app.core.database import Database
 from backend.app.core.errors import AppError, change_not_found
 from backend.app.core.journal import compute_event_hash
 from backend.app.execution.check_repository import (
-    CheckRunRepository, check_run_events, confined_checks_fact,
+    CheckRunRepository, change_check_runs_fact, check_run_events,
 )
 from backend.app.git.state import GitStateTracker
 from backend.app.policy.path_evidence import documentation_paths
@@ -34,6 +35,7 @@ from backend.app.policy.version import product_version
 
 _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
+_MAX_CHECK_RUNS = 1024
 _MAX_RECORD_BYTES = 1_048_576
 
 
@@ -169,7 +171,8 @@ class PassportV2Issuer:
             limitations.append("No launch records exist for this Change.")
         if diff_limit:
             limitations.append(diff_limit)
-        confined_checks, confined_limit = self._confined_checks(coverage, journal, check_runs)
+        confined_checks, confined_limit, bound_check_runs = self._confined_checks(
+            journal, check_runs)
         if confined_limit:
             limitations.append(confined_limit)
         contract_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
@@ -183,7 +186,7 @@ class PassportV2Issuer:
             launch_records=bindings, execution_boundary="UNKNOWN",
             diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
             issued_at=utc_now(), product_version=product_version(),
-            confined_checks=confined_checks,
+            confined_checks=confined_checks, check_runs=bound_check_runs,
         )
         payload = self._checked_freshness(change_id, payload, change)
         if contract.policy_preset_name is None or contract.policy_change_type is None:
@@ -300,21 +303,24 @@ class PassportV2Issuer:
         return previous
 
     @staticmethod
-    def _confined_checks(coverage: object | None, journal: list[object],
-                         check_runs: list[object]) -> tuple[str, str | None]:
-        """Phase 5: the bound coverage run's observed check boundary (hash-verified journal)."""
-        bound: list[tuple[UUID | None, str | None]] = []
-        if coverage is not None:
-            try:
-                result = DiffCoverageResult.model_validate_json(coverage["payload_json"])
-            except (ValueError, TypeError, RecursionError):
-                return "UNKNOWN", "Confined checks UNKNOWN: the coverage record is malformed."
-            bound.append((result.check_run_id, result.boundary))
-        fact, reason = confined_checks_fact(
-            bound, records={record.id: record for record in check_runs},
+    def _confined_checks(journal: list[object], check_runs: list[object]) -> tuple[
+            str, str | None, list[PassportV2CheckRun]]:
+        """Phase 5 (D2): every check run of the Change and its boundary (hash-verified journal).
+
+        Verification runs and diff-coverage runs alike; PASS needs at least one
+        run and every run verified. More runs than the signed list holds are
+        never silently dropped: the fact is then UNKNOWN.
+        """
+        fact, reason, runs = change_check_runs_fact(
+            records={record.id: record for record in check_runs},
             events=check_run_events((row["event_type"], row["subject_id"], row["payload_json"])
                                     for row in journal))
-        return fact, (f"Confined checks {fact}: {reason}." if reason else None)
+        if len(runs) > _MAX_CHECK_RUNS:
+            return ("UNKNOWN", f"Confined checks UNKNOWN: more than {_MAX_CHECK_RUNS} check "
+                    "runs exist, too many to bind.", [])
+        bound = [PassportV2CheckRun(check_run_id=run_id, boundary=boundary)
+                 for run_id, boundary in runs]
+        return fact, (f"Confined checks {fact}: {reason}." if reason else None), bound
 
     @staticmethod
     def _coverage_claim(row: object | None,

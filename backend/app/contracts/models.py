@@ -1284,10 +1284,14 @@ class PassportV2Payload(ContractModel):
     policy_decision: Literal["ALLOW", "DENY"] = "DENY"
     policy_denials: list[ShortText] = Field(default_factory=list, max_length=16)
     product_version: ShortText | None = None
-    # Phase 5 (additive): PASS only when every check run behind the evaluated evidence
-    # ran in a verified AppContainer box; FAIL if any was UNCONFINED or failed
-    # verification; UNKNOWN when none ran or the records cannot establish it.
+    # Phase 5 (additive): PASS only when every check run of the Change (verification
+    # and diff-coverage runs) ran in a verified AppContainer box; FAIL if any was
+    # UNCONFINED or failed verification; UNKNOWN when none ran or the records
+    # cannot establish it.
     confined_checks: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
+    # Phase 5 (additive, D2): each check run of the Change and the boundary it was
+    # observed to run under (APPCONTAINER only when verified; None otherwise).
+    check_runs: list[PassportV2CheckRun] = Field(default_factory=list, max_length=1024)
 
 
 class PassportV2Issued(ContractModel):
@@ -1510,3 +1514,19 @@ class CheckRunView(ContractModel):
 class CheckRunListResponse(ContractModel):
     items: list[CheckRunView] = Field(default_factory=list, max_length=10000)
     count: int = Field(ge=0)
+
+
+class PassportV2CheckRun(ContractModel):
+    """One check run bound into a Passport v2 and its observed boundary (Phase 5, D2).
+
+    ``boundary`` is APPCONTAINER only for a box run whose row and hash-verified
+    journal facts verify, UNCONFINED for a delegated opt-in run, and None when
+    the records cannot establish a boundary.
+    """
+
+    check_run_id: UUID
+    boundary: Literal["APPCONTAINER", "UNCONFINED"] | None = None
+
+
+PassportV2Payload.model_rebuild()
+PassportV2Issued.model_rebuild()

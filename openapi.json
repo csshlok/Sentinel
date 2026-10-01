@@ -4614,6 +4614,37 @@
         "title": "OutcomeStatus",
         "type": "string"
       },
+      "PassportV2CheckRun": {
+        "additionalProperties": false,
+        "description": "One check run bound into a Passport v2 and its observed boundary (Phase 5, D2).\n\n``boundary`` is APPCONTAINER only for a box run whose row and hash-verified\njournal facts verify, UNCONFINED for a delegated opt-in run, and None when\nthe records cannot establish a boundary.",
+        "properties": {
+          "boundary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPCONTAINER",
+                  "UNCONFINED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
+          "check_run_id": {
+            "format": "uuid",
+            "title": "Check Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check_run_id"
+        ],
+        "title": "PassportV2CheckRun",
+        "type": "object"
+      },
       "PassportV2DiffClaim": {
         "additionalProperties": false,
         "description": "Three independent Phase 6 claims, plus the measurement's known limit.",
@@ -4842,6 +4873,14 @@
             "minimum": 1.0,
             "title": "Change Revision",
             "type": "integer"
+          },
+          "check_runs": {
+            "items": {
+              "$ref": "#/components/schemas/PassportV2CheckRun"
+            },
+            "maxItems": 1024,
+            "title": "Check Runs",
+            "type": "array"
           },
           "confined_checks": {
             "default": "UNKNOWN",
