@@ -56,9 +56,9 @@ def _host_check_boxes_in_create_app(request, monkeypatch, tmp_path_factory):
     import backend.app.main as main
     from backend.tests.support_checks import host_check_boxes
 
-    def factory(database, *, journal=None, **_kwargs):
+    def factory(database, *, journal=None, evidence_guard=None, **_kwargs):
         boxes, _ = host_check_boxes(tmp_path_factory.mktemp("host-check-boxes"), database,
-                                    journal=journal)
+                                    journal=journal, evidence_guard=evidence_guard)
         return boxes
 
     monkeypatch.setattr(main, "CheckBoxes", factory)

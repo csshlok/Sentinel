@@ -285,6 +285,50 @@ def test_api_unconfined_toolchain_requires_the_delegated_scope(tmp_path, monkeyp
         assert "check.confined_run" in types
 
 
+def test_api_verify_refuses_while_the_workspace_holds_unapplied_work(
+    tmp_path, monkeypatch,
+) -> None:
+    """WR-06: no check runs over the untouched base tree while agent work is unapplied."""
+
+    from backend.app.workspace.manager import WorkspaceManager
+
+    repo = make_repo(tmp_path / "repo", {"app.py": "VALUE = 1\n"})
+    unapplied: set[str] = set()
+    monkeypatch.setattr(WorkspaceManager, "unapplied_work",
+                        lambda self, change_id: str(change_id) in unapplied)
+    app = create_test_app(tmp_path)
+    assert app.state.check_boxes._evidence_guard is not None  # the production wiring
+    with TestClient(app, headers={"Authorization": f"Bearer {app.state.api_token}"}) as client:
+        change_id = _client_change(client, repo)
+        actor = _actor(client, change_id, ["change.legacy_verify"])
+        unapplied.add(change_id)
+        response = _verify(client, change_id, actor, "python", ["-c", "print('ran')"])
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "WORKSPACE_NOT_APPLIED"
+        assert client.get(f"/api/v1/changes/{change_id}/checks").json()["items"] == []
+        # Once the work is applied (or discarded), the same check runs.
+        unapplied.clear()
+        response = _verify(client, change_id, actor, "python", ["-c", "print('ran')"])
+        assert response.status_code == 200, response.text
+
+
+def test_a_box_is_never_opened_while_the_workspace_holds_unapplied_work(tmp_path) -> None:
+    """WR-06: the guard sits in CheckBoxes.open, so every caller of a box is covered."""
+
+    repo = make_repo(tmp_path / "repo", {"app.py": "VALUE = 1\n"})
+    database = Database(tmp_path / "db.sqlite3")
+    database.initialize()
+    boxes, windows = host_check_boxes(tmp_path / "boxes", database,
+                                      evidence_guard=lambda change_id: True)
+    change_id = _make_change(database, repo)
+    with pytest.raises(AppError) as error:
+        SubprocessVerificationRunner(boxes).run(
+            str(repo), VerificationRequest(executable="python", args=["-c", "print(1)"]),
+            4096, change_id=change_id)
+    assert error.value.code == "WORKSPACE_NOT_APPLIED"
+    assert windows.spawned == [] and boxes.repository.for_change(change_id) == []
+
+
 def create_test_app(tmp_path: Path):
     from backend.app.main import create_app
 

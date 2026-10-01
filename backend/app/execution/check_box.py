@@ -61,6 +61,7 @@ from backend.app.execution.check_runtime import (
     manifest_digest,
 )
 from backend.app.git.safe_exec import run_git
+from backend.app.workspace.errors import workspace_not_applied
 
 LOGGER = logging.getLogger(__name__)
 
@@ -161,8 +162,12 @@ class CheckBoxes:
         profile_prefix: str = DEFAULT_PROFILE_PREFIX, runtime_root: str | Path | None = None,
         platform: BoxPlatform | None = None, clock: Callable[[], datetime] = utc_now,
         resolver: Callable[..., Any] | None = None,
+        evidence_guard: Callable[[UUID], bool] | None = None,
     ) -> None:
         appcontainer.validate_profile_name(profile_prefix + "0" * 32)
+        # Evidence guard (01-06, WR-06): True while the Change's workspace may hold
+        # unapplied agent work; no box is opened over the untouched base tree then.
+        self._evidence_guard = evidence_guard
         self.repository = CheckRunRepository(database)
         # Toolchain -> runtime resolution; snapshots are built under the same
         # cache root this manager grants on (default: check_toolchains).
@@ -401,6 +406,8 @@ class CheckBoxes:
 
         if not isinstance(runtime, BoxRuntime):
             raise TypeError("runtime must be a BoxRuntime")
+        if self._evidence_guard is not None and self._evidence_guard(change_id):
+            raise workspace_not_applied()
         source = _resolve_source(source_root)
         files = list_check_tree(source, size_limit=size_limit,
                                 baseline=self.baseline_for(change_id))

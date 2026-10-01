@@ -133,7 +133,7 @@ def host_resolver(executable: str, *, interpreter=None, source_root=None) -> Res
 
 
 def host_check_boxes(directory: Path, database: Database | None = None, *,
-                     journal: JournalWriter | None = None,
+                     journal: JournalWriter | None = None, evidence_guard=None,
                      ) -> tuple[CheckBoxes, HostBoxWindows]:
     """A ``CheckBoxes`` over a fresh database (unless given) and a host 'box' layer."""
 
@@ -145,7 +145,8 @@ def host_check_boxes(directory: Path, database: Database | None = None, *,
     windows.root.mkdir(parents=True, exist_ok=True)
     boxes = CheckBoxes(database, journal=journal or JournalWriter(database),
                        profile_prefix="sentinel.test.", runtime_root=directory / "cache",
-                       platform=windows.platform(), resolver=host_resolver)
+                       platform=windows.platform(), resolver=host_resolver,
+                       evidence_guard=evidence_guard)
     return boxes, windows
 
 

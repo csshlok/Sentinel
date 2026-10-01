@@ -176,9 +176,9 @@ def live_api(tmp_path, runtime_cache, monkeypatch):
     (store / "trusted_keys.json").write_text('{"schema_version": 1, "keys": []}\n',
                                              encoding="utf-8")
 
-    def real_boxes(database, *, journal=None, **_kwargs):
+    def real_boxes(database, *, journal=None, evidence_guard=None, **_kwargs):
         return CheckBoxes(database, journal=journal, profile_prefix=TEST_PREFIX,
-                          runtime_root=runtime_cache)
+                          runtime_root=runtime_cache, evidence_guard=evidence_guard)
 
     monkeypatch.setattr(main, "CheckBoxes", real_boxes)
     database = store / "sentinel.sqlite3"

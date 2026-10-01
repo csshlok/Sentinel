@@ -179,7 +179,8 @@ def create_app(
     )
     # Phase 5: per-run confined check boxes. Verification, assurance checks and
     # diff-coverage collection all run in them (05-03).
-    check_boxes = CheckBoxes(database, journal=journal)
+    check_boxes = CheckBoxes(database, journal=journal,
+                             evidence_guard=workspace_manager.unapplied_work)
     # claude resolves to the AppContainer profile: it launches only inside
     # this manager's workspace, with the broker's staged credential.
     agent_launcher = AgentLauncher(
@@ -213,6 +214,7 @@ def create_app(
         configured_capabilities=configured_capabilities
         or set(_DEFAULT_CONFIGURED_CAPABILITIES),
         workspace_guard=workspace_manager.has_live_workspace,
+        unapplied_work_guard=workspace_manager.unapplied_work,
     )
     runtime = _build_runtime_services(
         database,

@@ -40,6 +40,7 @@ from backend.app.execution.check_toolchains import (
     check_toolchain_unconfined,
     is_unconfined_toolchain,
 )
+from backend.app.workspace.errors import workspace_not_applied
 
 
 Clock = Callable[[], datetime]
@@ -58,6 +59,7 @@ class ChangeService:
         configured_capabilities: set[str] | None = None,
         clock: Clock = utc_now,
         workspace_guard: Callable[[UUID], bool] | None = None,
+        unapplied_work_guard: Callable[[UUID], bool] | None = None,
     ) -> None:
         self.repository = repository
         self.git_inspection = git_inspection
@@ -73,6 +75,9 @@ class ChangeService:
         self.clock = clock
         # D-08: True while the Change still owns a live (not CLEANED) workspace.
         self.workspace_guard = workspace_guard
+        # Evidence guard (01-06, WR-06): True while the Change's workspace may still
+        # hold unapplied agent work; a check run then would test the base tree.
+        self.unapplied_work_guard = unapplied_work_guard
 
     def capabilities(self) -> CapabilitiesResponse:
         return build_capabilities(self.configured_capabilities)
@@ -319,6 +324,8 @@ class ChangeService:
                 error.details["policy_reason"] = unconfined.reason_code
                 raise error
             allow_unconfined = True
+        if self.unapplied_work_guard is not None and self.unapplied_work_guard(change_id):
+            raise workspace_not_applied()
         result = self.verification.run(
             stored.repository_path,
             request,
