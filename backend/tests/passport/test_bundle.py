@@ -20,6 +20,7 @@ from backend.app.contracts.models import (ChangeContract, DiffCoverageFile,
                                           DiffCoverageResult, JournalEventType)
 from backend.app.core.journal import JournalWriter
 from backend.app.passport.bundle import BundleExporter
+from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.passport.card import card_facts, render_html, render_svg
 from backend.app.passport.cng import CngKey
 from backend.app.passport.jcs import parse_canonical
@@ -27,8 +28,21 @@ from backend.app.git.state import GitStateTracker
 from backend.tests.passport.test_builder import _database, _seed_change
 from backend.tests.passport.test_v2 import _launch
 from backend.tests.support_kb import make_repo, write
-from backend.app.passport.verify import verify_bundle
+from backend.app.passport.verify import _claims_summary, verify_bundle
 from backend.app.passport.trust import TrustRegistry
+
+
+def test_additive_free_bundle_reports_unselected_policy(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    change = _seed_change(database)
+    claims = PassportV2Issuer(database).snapshot(change.id)
+    older = claims.model_dump(mode="json")
+    for field in ("policy_preset_name", "policy_preset_version", "policy_change_type",
+                  "policy_decision", "policy_denials", "product_version"):
+        older.pop(field)
+    from backend.app.contracts.models import PassportV2Payload
+    parsed = PassportV2Payload.model_validate(older)
+    assert _claims_summary(parsed)["policy_decision"] == "UNSELECTED"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CNG required")

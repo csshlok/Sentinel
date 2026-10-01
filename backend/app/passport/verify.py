@@ -257,7 +257,8 @@ def _claims_summary(claims: PassportV2Payload) -> dict[str, object]:
         "limitations": claims.limitations,
         "policy_preset_name": claims.policy_preset_name,
         "policy_preset_version": claims.policy_preset_version,
-        "policy_decision": claims.policy_decision,
+        "policy_decision": (claims.policy_decision if "policy_decision" in claims.model_fields_set
+                            else "UNSELECTED"),
         "policy_denials": claims.policy_denials,
         "product_version": claims.product_version,
     }
