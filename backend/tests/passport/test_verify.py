@@ -255,6 +255,16 @@ def test_untrusted_and_revoked_signers_are_indeterminate(signed_bundle) -> None:
                          expected_fingerprint=value).verdict == "INDETERMINATE"
 
 
+def test_explicit_key_cannot_override_local_key_mismatch(signed_bundle, monkeypatch) -> None:
+    path, spki, root = signed_bundle
+    trust = TrustRegistry(root / "mismatch_trust.json")
+    key = trust.add(spki=spki, label="Lab")
+    monkeypatch.setattr(trust, "decision", lambda **_kwargs: ("MISMATCH", None))
+    result = verify_bundle(path, trust=trust, expected_fingerprint=key)
+    assert result.verdict == "INDETERMINATE"
+    assert "locally pinned" in result.reason
+
+
 @pytest.mark.parametrize("member", [
     "manifest.json", "passport.json", "evidence/records.json",
     "journal/events.jsonl", "visuals/passport.svg", "visuals/passport.html", "signature.json",

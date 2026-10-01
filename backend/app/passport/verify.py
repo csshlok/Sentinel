@@ -334,6 +334,9 @@ def verify_bundle(path: Path, *, trust: TrustRegistry | None = None,
                                       **common)
         if decision == "REVOKED":
             return VerificationResult("INDETERMINATE", "Signer is revoked locally.", **common)
+        if decision == "MISMATCH":
+            return VerificationResult("INDETERMINATE", "Signer differs from the locally pinned key.",
+                                      **common)
         if expected_fingerprint is not None:
             if normalize_fingerprint(expected_fingerprint) != actual_fp:
                 return VerificationResult("INDETERMINATE", "Signer does not match the explicit key.",
