@@ -98,7 +98,9 @@ def _test_module_risk(
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
             allowed.add(node.lineno)
             for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                        child.name.startswith(("test_", "setup_", "teardown_"))
+                        or _fixture_definition(child)):
                     allowed.update(range(child.lineno, (child.end_lineno or child.lineno) + 1))
                     for decorator in child.decorator_list:
                         allowed.update(range(decorator.lineno, (decorator.end_lineno or decorator.lineno) + 1))
@@ -125,6 +127,19 @@ def _test_module_risk(
             return f"Production imports of changed test module cannot be checked: {other}."
         production = ast.parse(candidate.read_text(encoding="utf-8-sig"), filename=other)
         for node in ast.walk(production):
+            if (changed_production_lines is not None and hasattr(node, "lineno") and
+                    bool(set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+                         & changed_production_lines.get(other, set()))):
+                if ((isinstance(node, ast.Name) and node.id in {
+                        "importlib", "import_module", "__import__", "runpy", "exec", "eval",
+                        "spec_from_file_location"}) or
+                        (isinstance(node, ast.Attribute) and node.attr in {
+                            "modules", "import_module", "spec_from_file_location"} and
+                         isinstance(node.value, ast.Name) and node.value.id in {"sys", "importlib"}) or
+                        (isinstance(node, ast.ImportFrom) and node.module in {"importlib", "runpy"}) or
+                        (isinstance(node, ast.Import) and any(alias.name in {"importlib", "runpy"}
+                                                         for alias in node.names))):
+                    return f"Changed production source uses dynamic module access: {other}:{node.lineno}."
             if isinstance(node, ast.Import) and any(
                     alias.name == module or alias.name.startswith(module + ".")
                     for alias in node.names):
