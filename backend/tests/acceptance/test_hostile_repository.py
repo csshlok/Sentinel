@@ -34,6 +34,7 @@ argv level in ``test_safe_exec.py``.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from uuid import uuid4
@@ -66,8 +67,13 @@ HOOK_NAMES: tuple[str, ...] = (
 def plain_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Unhardened Git exactly as a user would run it (positive controls, fixtures)."""
 
+    # A user's Git has an identity; hosted runners have none, and an identity-less
+    # commit aborts before any hook or gpg.program can fire.
+    env = {**os.environ,
+           "GIT_AUTHOR_NAME": "Plain Git User", "GIT_AUTHOR_EMAIL": "plain@example.test",
+           "GIT_COMMITTER_NAME": "Plain Git User", "GIT_COMMITTER_EMAIL": "plain@example.test"}
     result = subprocess.run(
-        ["git", "-C", str(root), *args], capture_output=True, text=True, shell=False,
+        ["git", "-C", str(root), *args], capture_output=True, text=True, shell=False, env=env,
     )
     if check:
         assert result.returncode == 0, result.stderr
