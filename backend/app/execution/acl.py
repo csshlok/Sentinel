@@ -170,3 +170,104 @@ def restrict_to_current_user(path: Path, *, directory: bool = False) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return completed.returncode == 0
+
+
+# ---- per-run package-SID read grants (Phase 5, spike 006 B) -----------------------
+
+PACKAGE_GRANT_TIMEOUT_SECONDS = 300
+_PACKAGE_SID_PATTERN = re.compile(r"S-1-15-2(?:-\d{1,10}){7}")
+
+
+def _grant_refused(reason: str):
+    from backend.app.core.errors import AppError
+
+    return AppError(
+        "CHECK_RUNTIME_GRANT_REFUSED",
+        "Sentinel refused to change the access list of a check runtime directory.",
+        status_code=409,
+        details={"reason": reason},
+    )
+
+
+def _grant_failed(reason: str):
+    from backend.app.core.errors import AppError
+
+    return AppError(
+        "CHECK_RUNTIME_GRANT_FAILED",
+        "The access list of a check runtime directory could not be changed.",
+        status_code=500,
+        details={"reason": reason},
+    )
+
+
+def _is_link(path: Path) -> bool:
+    info = os.lstat(path)
+    attributes = getattr(info, "st_file_attributes", 0)
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) or stat.S_ISLNK(info.st_mode)
+
+
+def _package_grant_target(path: str | Path, package_sid: str, allowed_root: str | Path | None) -> Path:
+    if not isinstance(package_sid, str) or not _PACKAGE_SID_PATTERN.fullmatch(package_sid):
+        raise _grant_refused("the SID is not an AppContainer package SID")
+    if allowed_root is None:
+        from backend.app.execution.check_runtime import check_runtime_root
+
+        allowed_root = check_runtime_root(create=False)
+    root = Path(os.path.abspath(allowed_root))
+    target = Path(os.path.abspath(path))
+    if root not in target.parents:
+        raise _grant_refused("the directory is not inside the allowed root")
+    # The allowed root and every component below it down to the target must be real
+    # directories: a junction anywhere would redirect the grant elsewhere.
+    chain = [root, *reversed([parent for parent in target.parents if root in parent.parents]), target]
+    for component in chain:
+        try:
+            if _is_link(component):
+                raise _grant_refused("the directory or one of its parents is a link or reparse point")
+            if not stat.S_ISDIR(os.lstat(component).st_mode):
+                raise _grant_refused("the target is not a directory")
+        except FileNotFoundError as exc:
+            raise _grant_refused("the directory does not exist") from exc
+    return target
+
+
+def _run_icacls_change(target: Path, arguments: list[str]) -> None:
+    if os.name != "nt":
+        raise _grant_failed("package-SID grants are Windows-only")
+    icacls = icacls_executable()
+    if icacls is None:
+        raise _grant_failed("icacls.exe is unavailable")
+    try:
+        completed = subprocess.run(
+            [str(icacls), str(target), *arguments],
+            capture_output=True,
+            shell=False,
+            timeout=PACKAGE_GRANT_TIMEOUT_SECONDS,
+            cwd=icacls.parent,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _grant_failed(type(exc).__name__) from exc
+    if completed.returncode != 0:
+        raise _grant_failed(f"icacls exited with {completed.returncode}")
+
+
+def grant_package_read(
+    path: str | Path, package_sid: str, *, allowed_root: str | Path | None = None,
+) -> None:
+    """Add one inheritable read/execute ACE for ``package_sid`` on ``path``.
+
+    ``path`` must be a real directory strictly inside ``allowed_root`` (by
+    default the check runtime cache). No other ACE is changed.
+    """
+
+    target = _package_grant_target(path, package_sid, allowed_root)
+    _run_icacls_change(target, ["/grant", f"*{package_sid}:(OI)(CI)(RX)"])
+
+
+def revoke_package_read(
+    path: str | Path, package_sid: str, *, allowed_root: str | Path | None = None,
+) -> None:
+    """Remove every granted ACE for ``package_sid`` on ``path`` (the inverse of the grant)."""
+
+    target = _package_grant_target(path, package_sid, allowed_root)
+    _run_icacls_change(target, ["/remove:g", f"*{package_sid}"])

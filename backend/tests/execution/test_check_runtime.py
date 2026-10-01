@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from backend.app.core.errors import AppError
 from backend.app.execution import check_runtime
 from backend.app.execution._process import CapturedProcess
+from backend.app.execution.acl import grant_package_read, revoke_package_read
 from backend.app.execution.check_runtime import (
     RuntimeSnapshot,
     check_runtime_root,
@@ -301,3 +305,163 @@ def test_node_modules_junction_is_refused(tmp_path: Path, cache: Path) -> None:
     with pytest.raises(AppError) as raised:
         node_modules_snapshot(repo, root=cache)
     assert raised.value.code == "CHECK_RUNTIME_UNSAFE_SOURCE"
+
+
+# --------------------------------------------------------------------- package-SID grants
+
+PACKAGE_SID = "S-1-15-2-1111111111-2222222222-333333333-444444444-555555555-666666666-777777777"
+FAKE_ICACLS = Path(r"C:\Windows\System32\icacls.exe")
+
+
+class _Recorder:
+    def __init__(self, returncode: int = 0) -> None:
+        self.calls: list[tuple[list[str], dict]] = []
+        self.returncode = returncode
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        return subprocess.CompletedProcess(argv, self.returncode, b"", b"")
+
+
+@pytest.fixture
+def icacls_recorder(monkeypatch) -> _Recorder:
+    fake = _Recorder()
+    monkeypatch.setattr("backend.app.execution.acl.subprocess.run", fake)
+    monkeypatch.setattr("backend.app.execution.acl.icacls_executable", lambda: FAKE_ICACLS)
+    monkeypatch.setattr("backend.app.execution.acl.os.name", "nt")
+    return fake
+
+
+@pytest.fixture
+def entry(cache: Path) -> Path:
+    path = cache / "python" / ("a" * 64)
+    path.mkdir(parents=True)
+    (path / "python.exe").write_text("exe", encoding="utf-8")
+    return path
+
+
+def test_grant_adds_exactly_one_inheritable_rx_ace(icacls_recorder, entry: Path, cache: Path) -> None:
+    grant_package_read(entry, PACKAGE_SID, allowed_root=cache)
+    assert len(icacls_recorder.calls) == 1
+    argv, kwargs = icacls_recorder.calls[0]
+    assert argv == [str(FAKE_ICACLS), str(entry), "/grant", f"*{PACKAGE_SID}:(OI)(CI)(RX)"]
+    assert kwargs["shell"] is False
+    assert kwargs["cwd"] == FAKE_ICACLS.parent
+
+
+def test_revoke_removes_only_that_sid(icacls_recorder, entry: Path, cache: Path) -> None:
+    revoke_package_read(entry, PACKAGE_SID, allowed_root=cache)
+    argv, _ = icacls_recorder.calls[0]
+    assert argv == [str(FAKE_ICACLS), str(entry), "/remove:g", f"*{PACKAGE_SID}"]
+
+
+@pytest.mark.parametrize("sid", [
+    "S-1-5-18",                                          # SYSTEM
+    "S-1-15-2-1",                                        # ALL APPLICATION PACKAGES
+    "S-1-15-3-1",                                        # a capability SID
+    "S-1-5-21-1-2-3-1001",                               # a user
+    PACKAGE_SID + ":(F)",                                # injection into the icacls ACE text
+    "*" + PACKAGE_SID,
+])
+@pytest.mark.parametrize("operation", [grant_package_read, revoke_package_read])
+def test_non_package_sids_are_refused(icacls_recorder, entry, cache, sid, operation) -> None:
+    with pytest.raises(AppError) as raised:
+        operation(entry, sid, allowed_root=cache)
+    assert raised.value.code == "CHECK_RUNTIME_GRANT_REFUSED"
+    assert icacls_recorder.calls == []
+
+
+@pytest.mark.parametrize("operation", [grant_package_read, revoke_package_read])
+def test_paths_outside_the_allowed_root_are_refused(
+    icacls_recorder, cache: Path, tmp_path: Path, operation,
+) -> None:
+    cache.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    for path in (outside, cache, cache / ".." / "outside", tmp_path):
+        with pytest.raises(AppError) as raised:
+            operation(path, PACKAGE_SID, allowed_root=cache)
+        assert raised.value.code == "CHECK_RUNTIME_GRANT_REFUSED"
+    assert icacls_recorder.calls == []
+
+
+def test_missing_and_file_targets_are_refused(icacls_recorder, entry: Path, cache: Path) -> None:
+    for path in (cache / "python" / "missing", entry / "python.exe"):
+        with pytest.raises(AppError) as raised:
+            grant_package_read(path, PACKAGE_SID, allowed_root=cache)
+        assert raised.value.code == "CHECK_RUNTIME_GRANT_REFUSED"
+    assert icacls_recorder.calls == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
+@pytest.mark.parametrize("where", ["target", "parent"])
+def test_reparse_points_are_refused(icacls_recorder, cache: Path, tmp_path: Path, where) -> None:
+    import _winapi
+
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    cache.mkdir()
+    if where == "target":
+        _winapi.CreateJunction(str(outside), str(cache / "link"))
+        path = cache / "link"
+    else:
+        _winapi.CreateJunction(str(outside), str(cache / "python"))
+        path = cache / "python" / "inner"
+    with pytest.raises(AppError) as raised:
+        grant_package_read(path, PACKAGE_SID, allowed_root=cache)
+    assert raised.value.code == "CHECK_RUNTIME_GRANT_REFUSED"
+    assert icacls_recorder.calls == []
+
+
+def test_default_allowed_root_is_the_check_runtime_cache(
+    icacls_recorder, tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    root = check_runtime_root(create=False)
+    target = root / "node" / ("b" * 64)
+    target.mkdir(parents=True)
+    grant_package_read(target, PACKAGE_SID)
+    assert len(icacls_recorder.calls) == 1
+    with pytest.raises(AppError):
+        grant_package_read(tmp_path, PACKAGE_SID)
+
+
+def test_icacls_failure_is_loud(monkeypatch, entry: Path, cache: Path) -> None:
+    monkeypatch.setattr("backend.app.execution.acl.subprocess.run", _Recorder(returncode=5))
+    monkeypatch.setattr("backend.app.execution.acl.icacls_executable", lambda: FAKE_ICACLS)
+    with pytest.raises(AppError) as raised:
+        grant_package_read(entry, PACKAGE_SID, allowed_root=cache)
+    assert raised.value.code == "CHECK_RUNTIME_GRANT_FAILED"
+
+
+_ACE = re.compile(r"\([^()]*\)")
+
+
+def _dacl_aces(path: Path) -> list[str]:
+    from backend.tests.workspace.conftest import security_sddl
+
+    sddl = security_sddl(path)
+    dacl = sddl.split("D:", 1)[1].split("S:", 1)[0]
+    return _ACE.findall(dacl)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
+def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> None:
+    from backend.app.execution.appcontainer import derive_package_sid
+
+    sid = derive_package_sid("sentinel.test." + uuid4().hex)  # derivation only; no profile
+    child = entry / "python.exe"
+    before_dir, before_child = _dacl_aces(entry), _dacl_aces(child)
+    assert not any(sid in ace for ace in before_dir)
+
+    grant_package_read(entry, sid, allowed_root=cache)
+    granted = _dacl_aces(entry)
+    added = [ace for ace in granted if ace not in before_dir]
+    assert len(added) == 1 and sid in added[0]
+    assert added[0].startswith("(A;OICI;") and ";;;" + sid + ")" in added[0]
+    assert sorted(ace for ace in granted if sid not in ace) == sorted(before_dir)
+    assert any(sid in ace for ace in _dacl_aces(child))  # inherited by the snapshot's files
+
+    revoke_package_read(entry, sid, allowed_root=cache)
+    assert _dacl_aces(entry) == before_dir
+    assert _dacl_aces(child) == before_child
