@@ -11,26 +11,10 @@ import shutil
 import sys
 
 from backend.app.contracts.models import VerificationRequest
+# Single-sourced with the confined toolchain mapping (Phase 5).
+from backend.app.execution.check_toolchains import ALLOWED_EXECUTABLES
 from backend.app.verification.errors import executable_not_allowed, executable_not_found
 
-ALLOWED_EXECUTABLES = frozenset(
-    {
-        "python",
-        "python3",
-        "pytest",
-        "uv",
-        "node",
-        "npm",
-        "npm.cmd",
-        "pnpm",
-        "pnpm.cmd",
-        "yarn",
-        "yarn.cmd",
-        "cargo",
-        "go",
-        "dotnet",
-    }
-)
 
 
 def resolve_executable(request: VerificationRequest) -> str:

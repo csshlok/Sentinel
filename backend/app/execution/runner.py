@@ -18,12 +18,9 @@ from backend.app.contracts.models import (
 )
 from backend.app.core.errors import AppError
 from backend.app.execution._process import capture, minimal_environment
+from backend.app.execution.check_toolchains import ALLOWED_EXECUTABLES
 
 
-ALLOWED_EXECUTABLES = frozenset({
-    "python", "python3", "pytest", "uv", "node", "npm", "npm.cmd",
-    "pnpm", "pnpm.cmd", "yarn", "yarn.cmd", "cargo", "go", "dotnet",
-})
 MAX_OUTPUT_BYTES = 1_048_576
 
 

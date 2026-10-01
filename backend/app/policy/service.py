@@ -45,6 +45,9 @@ _DENIAL_EXPLANATIONS: dict[DelegationDenialReason, str] = {
 _DEFAULT_OPERATION_RISK: dict[str, RiskLevel] = {
     "github.pr.create": RiskLevel.MEDIUM,
     "recovery.execute": RiskLevel.MEDIUM,
+    # Phase 5: a check outside any AppContainer box. HIGH, so even a delegated
+    # actor is refused unless the Change Contract's max_risk admits HIGH.
+    "checks.unconfined": RiskLevel.HIGH,
 }
 
 

@@ -19,6 +19,8 @@ class PolicyOperation(StrEnum):
     PROVIDER_FORCE_PUSH = "PROVIDER_FORCE_PUSH"
     PROVIDER_SECRET_READ = "PROVIDER_SECRET_READ"
     ASSURANCE_RUN = "ASSURANCE_RUN"
+    # Phase 5: run a check toolchain with no confined runtime (default deny, HIGH risk).
+    CHECKS_UNCONFINED = "CHECKS_UNCONFINED"
 
 
 class RiskLevel(StrEnum):
