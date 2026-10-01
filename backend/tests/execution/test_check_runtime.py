@@ -164,6 +164,36 @@ def test_junction_in_source_is_refused(source: Path, cache: Path, tmp_path: Path
     assert not (cache / "node-modules").exists() or not any((cache / "node-modules").iterdir())
 
 
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows-only")
+@pytest.mark.parametrize("where", ["base_prefix", "purelib"])
+def test_python_runtime_refuses_an_install_with_a_reparse_point(
+    monkeypatch, cache: Path, tmp_path: Path, where: str,
+) -> None:
+    """Intended behaviour behind the hosted-runner skip of the real snapshot test.
+
+    A Python install containing a junction (as the GitHub-hosted toolcache
+    install does) is refused, not followed: the link could point the box's
+    read grant at anything. Nothing is written into the cache.
+    """
+
+    import _winapi
+
+    base = _tree(tmp_path / "install", {"python.exe": "exe", "Lib/os.py": "x = 1\n"})
+    purelib = _tree(tmp_path / "site-packages", {"pytest/__init__.py": "x = 1\n"})
+    outside = _tree(tmp_path / "outside", {"secret.txt": "secret"})
+    linked = (base / "Lib") if where == "base_prefix" else purelib
+    _winapi.CreateJunction(str(outside), str(linked / "linked"))
+    monkeypatch.setattr(check_runtime, "_interpreter_facts", lambda interpreter: (base, purelib))
+    with pytest.raises(AppError) as raised:
+        python_runtime(base / "python.exe", root=cache)
+    assert raised.value.code == "CHECK_RUNTIME_UNSAFE_SOURCE"
+    assert "linked" in raised.value.details["reason"]
+    refused = cache / ("python" if where == "base_prefix" else "python-deps")
+    leftovers = [path for path in refused.rglob("*") if path.is_file()] if refused.exists() else []
+    assert leftovers == []
+    assert not any("secret" in path.name for path in cache.rglob("*")) if cache.exists() else True
+
+
 def test_symlink_in_source_is_refused(source: Path, cache: Path) -> None:
     try:
         os.symlink(source / "a.txt", source / "pkg" / "alias.txt")
@@ -445,23 +475,60 @@ def _dacl_aces(path: Path) -> list[str]:
     return _ACE.findall(dacl)
 
 
+def _explicit(aces: list[str]) -> list[str]:
+    """ACEs set on the object itself (no ``ID`` flag), as opposed to inherited ones."""
+
+    return [ace for ace in aces if "ID" not in ace.split(";")[1]]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
 def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> None:
+    """The grant adds exactly one ACE for the package SID and the revoke removes exactly it.
+
+    The comparison is per ACE, not a raw count. When icacls rewrites a DACL,
+    Windows re-propagates the parent's inheritable ACEs in canonical form; on
+    hosted runners that re-propagation shows up as SY/BA/OW ``OICIID`` ACEs that
+    were not textually present before (CI run 36831151656). Those are the
+    parent's ACEs, not something the grant added, so they are compared as
+    inherited ACEs: none of them may name the package SID, and the explicit
+    ACEs must be exactly the original ones plus (then minus) the single grant.
+    """
+
     from backend.app.execution.appcontainer import derive_package_sid
 
     sid = derive_package_sid("sentinel.test." + uuid4().hex)  # derivation only; no profile
     child = entry / "python.exe"
     before_dir, before_child = _dacl_aces(entry), _dacl_aces(child)
-    assert not any(sid in ace for ace in before_dir)
+    assert not any(sid in ace for ace in before_dir + before_child)
+    expected_grant = f"(A;OICI;0x1200a9;;;{sid})"
 
     grant_package_read(entry, sid, allowed_root=cache)
     granted = _dacl_aces(entry)
-    added = [ace for ace in granted if ace not in before_dir]
-    assert len(added) == 1 and sid in added[0]
-    assert added[0].startswith("(A;OICI;") and ";;;" + sid + ")" in added[0]
-    assert sorted(ace for ace in granted if sid not in ace) == sorted(before_dir)
-    assert any(sid in ace for ace in _dacl_aces(child))  # inherited by the snapshot's files
+    context = f"before={before_dir} granted={granted}"
+    # Exactly one ACE names the package SID: explicit, inheritable, read+execute only.
+    assert [ace for ace in granted if sid in ace] == [expected_grant], context
+    assert sorted(_explicit(granted)) == sorted(_explicit(before_dir) + [expected_grant]), context
+    # Child files inherit exactly that ACE and nothing else for the SID.
+    granted_child = _dacl_aces(child)
+    assert [ace for ace in granted_child if sid in ace] == [f"(A;ID;0x1200a9;;;{sid})"], granted_child
+    assert _explicit(granted_child) == _explicit(before_child), granted_child
 
     revoke_package_read(entry, sid, allowed_root=cache)
-    assert _dacl_aces(entry) == before_dir
-    assert _dacl_aces(child) == before_child
+    revoked, revoked_child = _dacl_aces(entry), _dacl_aces(child)
+    context = f"before={before_dir} granted={granted} revoked={revoked}"
+    # The revoke removes exactly the granted ACE and nothing else ...
+    assert revoked == [ace for ace in granted if ace != expected_grant], context
+    assert not any(sid in ace for ace in revoked + revoked_child), context
+    # ... so the explicit ACL is the original one, and every inherited ACE is the parent's.
+    assert sorted(_explicit(revoked)) == sorted(_explicit(before_dir)), context
+    assert _explicit(revoked_child) == _explicit(before_child), revoked_child
+    # Where Windows did not need to re-canonicalize inheritance (e.g. this
+    # developer machine), the original DACL comes back byte-for-byte.
+    if sorted(before_dir) == sorted(ace for ace in granted if ace != expected_grant):
+        assert revoked == before_dir and revoked_child == before_child
+
+    # A second cycle on the now-canonical DACL is an exact inverse everywhere.
+    grant_package_read(entry, sid, allowed_root=cache)
+    revoke_package_read(entry, sid, allowed_root=cache)
+    assert _dacl_aces(entry) == revoked
+    assert _dacl_aces(child) == revoked_child

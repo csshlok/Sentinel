@@ -9,6 +9,7 @@ cannot load again. The profile and the cache are removed afterwards.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import time
@@ -20,6 +21,20 @@ import pytest
 from backend.app.execution.process_supervisor import IS_WINDOWS
 
 pytestmark = pytest.mark.skipif(not IS_WINDOWS, reason="AppContainers are Windows-only")
+
+# GitHub-hosted runners install Python under C:\hostedtoolcache with a reparse point
+# inside the install (CI run 36831151656). Sentinel deliberately refuses to snapshot a
+# runtime source containing a link (CHECK_RUNTIME_UNSAFE_SOURCE; proven by
+# test_check_runtime.py::test_python_runtime_refuses_an_install_with_a_reparse_point),
+# so this real-box proof cannot build its snapshot there. It runs on any machine
+# whose interpreter install is link-free, and on hosted runners only when opted in.
+HOSTED_PYTHON_HAS_REPARSE_POINT = pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") == "true"
+    and os.environ.get("SENTINEL_CI_REAL_APPCONTAINER") != "1",
+    reason="hosted runner Python install contains a reparse point, which the check-runtime "
+           "snapshot refuses by design (CHECK_RUNTIME_UNSAFE_SOURCE); "
+           "set SENTINEL_CI_REAL_APPCONTAINER=1 to run",
+)
 
 TEST_PROFILE_PREFIX = "sentinel.test."
 
@@ -108,6 +123,7 @@ def _cannot_load(result) -> bool:
 IMPORT_PROBE = "import pytest, coverage, sys; print(sys.prefix); print(pytest.__file__)"
 
 
+@HOSTED_PYTHON_HAS_REPARSE_POINT
 def test_snapshot_python_runs_in_the_box_only_while_granted(runtime, profile) -> None:
     from backend.app.execution.acl import grant_package_read, revoke_package_read
 
