@@ -447,6 +447,38 @@ def test_python_conftest_escapes_are_denied_through_the_api(
     _no_test_profiles_left()
 
 
+def test_an_agent_gitignore_edit_does_not_put_dotenv_in_the_box(
+    live_api: LiveApi, tmp_path: Path,
+) -> None:
+    """CR-01: the agent's change un-ignores ``.env``; the box still never receives it."""
+
+    api = live_api
+    repo = make_repo(tmp_path / "repo", PY_FILES)
+    write(repo, ".env", "SECRET=canary-in-the-user-repository\n")
+    # The agent's (applied, uncommitted) change: un-ignore .env, plus a conftest probe.
+    write(repo, ".gitignore", "__pycache__/\n.pytest_cache/\n!.env\n")
+    config = {"writes": {}, "reads": {}, "lists": {}, "ports": {}}
+    write(repo, "conftest.py", _render("hostile_conftest.py.tmpl", config))
+    # Control: the edit really makes Git list .env as an ordinary untracked file,
+    # and the agent's probe sees it when the tree is copied by Git's own rules.
+    assert ".env" in git(repo, "ls-files", "--others", "--exclude-standard").split()
+    assert _host_pytest(_copy_outside(repo, tmp_path / "control-copy"))[
+        "tree_has_ignored_env"] is True
+
+    change_id = _create_change(api, repo)
+    actor = _actor(api, change_id, ["change.legacy_verify"])
+    response = _verify(api, change_id, actor, "pytest", PYTEST_ARGS)
+    assert response.status_code == 200, response.text
+    verification = response.json()["verification"]
+    assert verification["status"] == "PASSED", verification["stdout"] + verification["stderr"]
+    probe = _probe_line(verification["stdout"])
+    assert Path(probe["cwd"]).name == "tree"
+    assert probe["tree_has_ignored_env"] is False, probe
+    assert "canary-in-the-user-repository" not in verification["stdout"]
+    _assert_confined_run(api, change_id, verification)
+    _no_test_profiles_left()
+
+
 def test_internet_is_denied_without_a_declared_network(live_api: LiveApi, tmp_path: Path) -> None:
     api = live_api
     try:

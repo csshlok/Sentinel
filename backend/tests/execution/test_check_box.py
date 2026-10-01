@@ -513,6 +513,87 @@ def test_reparse_point_on_a_listed_path_is_refused(boxes, windows, repo, runtime
                                     "CHECK_TREE_REPARSE_POINT")
 
 
+# ---------------------------------------------------------------------- CR-01: ignore rules
+
+
+def _save_baseline_checkpoint(database: Database, change_id: UUID, head_sha: str) -> None:
+    with database.connection(immediate=True) as connection:
+        connection.execute(
+            "INSERT INTO git_checkpoints (id, change_id, name, head_sha, evidence_revision, "
+            "payload_json, captured_at) VALUES (?, ?, 'baseline', ?, 1, '{}', ?)",
+            (str(uuid4()), str(change_id), head_sha, datetime.now(UTC).isoformat()))
+
+
+AGENT_IGNORE_EDITS = {
+    "drop-the-line": ".venv/\nnode_modules/\nbuild/\n",
+    "negate-it": ".env\n.venv/\nnode_modules/\nbuild/\n!.env\n",
+    "delete-the-file": None,
+}
+
+
+@pytest.mark.parametrize("edit", sorted(AGENT_IGNORE_EDITS))
+def test_an_agent_gitignore_edit_cannot_put_an_ignored_secret_in_the_box(
+    boxes, repo, runtime, database, edit,
+) -> None:
+    """CR-01: what is "ignored" is not decided by the tested tree's own ``.gitignore``."""
+
+    text = AGENT_IGNORE_EDITS[edit]
+    if text is None:
+        (repo / ".gitignore").unlink()
+    else:
+        write(repo, ".gitignore", text)
+    # Precondition: the agent's edit really makes Git list .env as untracked, not ignored.
+    assert ".env" in git(repo, "ls-files", "--others", "--exclude-standard").split()
+    change_id = _make_change(database)
+    with boxes.open(change_id, repo, runtime) as box:
+        files = _tree_files(box.tree)
+    assert ".env" not in files
+    assert "untracked.py" in files  # a legitimate new file still reaches the check
+
+
+def test_a_committed_agent_gitignore_change_is_judged_by_the_baseline_checkpoint(
+    boxes, repo, runtime, database,
+) -> None:
+    """Apply-back fast-forwards HEAD to the agent's commit, so HEAD's rules are the agent's."""
+
+    write(repo, "pkg/.gitignore", "*.key\n")
+    git(repo, "add", "pkg/.gitignore")
+    git(repo, "commit", "-q", "-m", "user: ignore keys")
+    baseline = git(repo, "rev-parse", "HEAD").strip()
+    write(repo, "pkg/signing.key", "PRIVATE\n")
+    write(repo, ".gitignore", ".venv/\nnode_modules/\nbuild/\n")
+    (repo / "pkg" / ".gitignore").unlink()
+    git(repo, "add", "-A", ".gitignore", "pkg/.gitignore")
+    git(repo, "commit", "-q", "-m", "agent: stop ignoring secrets")
+    change_id = _make_change(database)
+    _save_baseline_checkpoint(database, change_id, baseline)
+    with boxes.open(change_id, repo, runtime) as box:
+        files = _tree_files(box.tree)
+    assert ".env" not in files and "pkg/signing.key" not in files
+    assert "untracked.py" in files
+
+
+def test_a_missing_baseline_commit_refuses_rather_than_trusting_the_tree(
+    boxes, windows, repo, runtime, database,
+) -> None:
+    change_id = _make_change(database)
+    _save_baseline_checkpoint(database, change_id, "0" * 40)
+    _assert_refused_before_anything(boxes, windows, change_id, repo, runtime,
+                                    "CHECK_TREE_BASELINE_UNAVAILABLE")
+
+
+def test_an_unborn_repository_with_untracked_files_is_refused(
+    boxes, windows, runtime, database, tmp_path,
+) -> None:
+    root = tmp_path / "unborn"
+    root.mkdir()
+    git(root, "init", "-q")
+    write(root, ".gitignore", "!.env\n")
+    write(root, ".env", "SECRET=1\n")
+    _assert_refused_before_anything(boxes, windows, _make_change(database), root, runtime,
+                                    "CHECK_TREE_BASELINE_UNAVAILABLE")
+
+
 def test_a_failed_open_after_the_profile_cleans_up(boxes, windows, repo, runtime) -> None:
     def grant(*_args, **_kwargs):
         raise AppError("CHECK_RUNTIME_GRANT_FAILED", "x", status_code=500)

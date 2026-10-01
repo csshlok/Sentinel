@@ -8,7 +8,10 @@ folders and runtime entries its own rows name.
 
 The check tree is exactly ``git ls-files -z --cached --others
 --exclude-standard`` (listed through ``git/safe_exec.run_git``; deleted paths
-are dropped). Ignored files never reach a box. A reparse point anywhere on a
+are dropped), minus every untracked file the Change's baseline commit's
+committed ``.gitignore`` files ignore: the tested tree's ignore rules are part
+of the agent's change, so they alone never decide what a box may see (CR-01).
+Ignored files never reach a box. A reparse point anywhere on a
 listed path, a gitlink or embedded repository, a skip-worktree or
 assume-unchanged index entry, or a tree over the size limit is refused before
 any row or profile exists. Runs go through ``spawn_appcontainer_supervised``
@@ -20,9 +23,12 @@ and digests only (no argv text, output or host paths).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import re
 import stat
+import tempfile
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -69,6 +75,9 @@ GIT_LIST_LIMIT = 8 * 1_048_576
 BOUNDARY_APPCONTAINER = "APPCONTAINER"
 NETWORK_CAPABILITIES = ("internetClient",)
 _GITLINK_MODE = "160000"
+_SHA_PATTERN = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+IGNORE_RULES_LIMIT = 1_048_576
+BASELINE_CHECKPOINT_NAME = "baseline"
 _CHUNK = 1 << 20
 # base_environment owns these; a runtime may never override them.
 _RESERVED_ENV_KEYS = frozenset({
@@ -345,6 +354,36 @@ class CheckBoxes:
 
     # ------------------------------------------------------------------ open
 
+    def baseline_for(self, change_id: UUID) -> str:
+        """The commit whose committed ``.gitignore`` files also decide what a box may see.
+
+        The Change's earliest ``baseline`` Git checkpoint; else the base commit
+        of its earliest workspace (apply-back fast-forwards HEAD to the agent's
+        commit, so HEAD is the agent's); else ``HEAD`` for a Change that never
+        recorded either (the agent then wrote nothing Sentinel applied).
+        """
+
+        with self.repository.database.connection() as connection:
+            row = connection.execute(
+                "SELECT head_sha FROM git_checkpoints WHERE change_id = ? AND name = ? "
+                "ORDER BY captured_at ASC LIMIT 1",
+                (str(change_id), BASELINE_CHECKPOINT_NAME),
+            ).fetchone()
+            if row is not None:
+                return str(row["head_sha"])
+            rows = connection.execute(
+                "SELECT payload_json FROM change_workspaces WHERE change_id = ? "
+                "ORDER BY created_at ASC, rowid ASC", (str(change_id),),
+            ).fetchall()
+        for workspace in rows:
+            try:
+                base = json.loads(workspace["payload_json"]).get("base_sha")
+            except (ValueError, AttributeError, RecursionError):
+                continue
+            if isinstance(base, str) and base:
+                return base
+        return "HEAD"
+
     def open(
         self, change_id: UUID, source_root: str | Path, runtime: BoxRuntime, *,
         network: bool = False, size_limit: int = DEFAULT_TREE_SIZE_LIMIT_BYTES,
@@ -361,7 +400,8 @@ class CheckBoxes:
         if not isinstance(runtime, BoxRuntime):
             raise TypeError("runtime must be a BoxRuntime")
         source = _resolve_source(source_root)
-        files = list_check_tree(source, size_limit=size_limit)
+        files = list_check_tree(source, size_limit=size_limit,
+                                baseline=self.baseline_for(change_id))
         run_id = uuid4()
         name = self._prefix + run_id.hex
         package_sid = self._platform.derive_package_sid(name)
@@ -491,10 +531,92 @@ def _validate_relpath(relpath: str) -> None:
             "CHECK_TREE_UNSAFE_PATH", "a listed path is not a safe relative path", relpath)
 
 
+def _baseline_commit(source: Path, baseline: str) -> str:
+    if baseline != "HEAD" and not _SHA_PATTERN.fullmatch(baseline):
+        raise check_tree_refused("CHECK_TREE_BASELINE_UNAVAILABLE",
+                                 "the baseline is not a commit id")
+    try:
+        result = run_git(source, ["rev-parse", "--verify", "-q", f"{baseline}^{{commit}}"],
+                         timeout=GIT_LIST_TIMEOUT_SECONDS)
+    except AppError as exc:
+        raise check_tree_refused(
+            "CHECK_TREE_FAILED", f"Git refused the baseline lookup ({exc.code})") from exc
+    commit = result.stdout.decode("ascii", errors="replace").strip()
+    if result.returncode != 0 or not _SHA_PATTERN.fullmatch(commit):
+        raise check_tree_refused(
+            "CHECK_TREE_BASELINE_UNAVAILABLE",
+            "the baseline commit whose ignore rules decide what a check may see is missing")
+    return commit
+
+
+def baseline_ignored(source: Path, baseline: str, candidates: Sequence[str]) -> set[str]:
+    """The ``candidates`` (untracked relpaths) that the baseline commit's ``.gitignore`` ignores.
+
+    The tested tree's ``.gitignore`` files are part of the agent's change, so
+    they cannot be what decides which secrets stay out of a box (CR-01). The
+    baseline commit's committed ``.gitignore`` blobs are written into a
+    throwaway Sentinel-owned repository at their own paths, every candidate
+    gets an empty placeholder there, and Git itself answers which are ignored
+    (same nesting, negation and directory semantics; no file content is read).
+    """
+
+    commit = _baseline_commit(source, baseline)
+    rules: list[tuple[str, str]] = []
+    for entry in _git_list(source, ["ls-tree", "-r", "-z", "--full-tree", commit]):
+        meta, _, relpath = entry.partition("\t")
+        fields = meta.split(" ")
+        if len(fields) != 3 or fields[1] != "blob" or relpath.rsplit("/", 1)[-1] != ".gitignore":
+            continue
+        if fields[0] not in ("100644", "100755"):
+            continue  # Git does not follow a symlinked .gitignore either
+        _validate_relpath(relpath)
+        rules.append((relpath, fields[2]))
+    if not rules:
+        return set()
+    scratch = Path(tempfile.mkdtemp(prefix="sentinel-ignore-"))
+    try:
+        _git_list(scratch, ["init", "-q"])
+        root = _long(scratch)
+        for relpath, oid in rules:
+            try:
+                blob = run_git(source, ["cat-file", "blob", oid],
+                               timeout=GIT_LIST_TIMEOUT_SECONDS, limit=IGNORE_RULES_LIMIT)
+            except AppError as exc:
+                raise check_tree_refused(
+                    "CHECK_TREE_FAILED", f"Git refused a baseline ignore file ({exc.code})"
+                ) from exc
+            if blob.returncode != 0 or blob.truncated or blob.incomplete or blob.timed_out:
+                raise check_tree_refused(
+                    "CHECK_TREE_FAILED", "a baseline ignore file could not be read", relpath)
+            target = root.joinpath(*relpath.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(blob.stdout)
+        for relpath in candidates:
+            target = root.joinpath(*relpath.split("/"))
+            if not os.path.lexists(target):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+        ignored = set(_git_list(scratch, ["ls-files", "-z", "--others", "--ignored",
+                                          "--exclude-standard"]))
+    except OSError as exc:
+        raise check_tree_refused(
+            "CHECK_TREE_FAILED", f"the baseline ignore rules could not be evaluated "
+                                 f"({type(exc).__name__})") from exc
+    finally:
+        appcontainer.remove_tree_no_follow(scratch)
+    return ignored & set(candidates)
+
+
 def list_check_tree(
     source: Path, *, size_limit: int = DEFAULT_TREE_SIZE_LIMIT_BYTES,
+    baseline: str = "HEAD",
 ) -> list[str]:
     """The sorted posix relpaths a check tree copies from ``source`` (read-only).
+
+    Tracked files, plus untracked files that NEITHER the tested tree's ignore
+    rules NOR the ``baseline`` commit's committed ``.gitignore`` files ignore
+    (an agent edit to ``.gitignore`` cannot un-ignore a secret; CR-01). With
+    untracked files and no resolvable baseline commit the tree is refused.
 
     Refuses (``CHECK_TREE_*``) gitlinks and embedded repositories,
     skip-worktree/assume-unchanged entries, unsafe paths, reparse points on any
@@ -507,6 +629,7 @@ def list_check_tree(
         if meta.split(" ", 1)[0] == _GITLINK_MODE:
             raise check_tree_refused("CHECK_TREE_GITLINK", "the index holds a gitlink", relpath)
     listed: dict[str, None] = {}
+    untracked: list[str] = []
     for entry in _git_list(source, ["ls-files", "-z", "-v", "--cached", "--others",
                                     "--exclude-standard"]):
         tag, _, relpath = entry.partition(" ")
@@ -519,6 +642,11 @@ def list_check_tree(
                 "CHECK_TREE_GITLINK", "an untracked embedded repository is present", relpath)
         _validate_relpath(relpath)
         listed[relpath] = None
+        if tag == "?":
+            untracked.append(relpath)
+    if untracked:
+        for relpath in baseline_ignored(source, baseline, untracked):
+            listed.pop(relpath, None)
 
     root = _long(source)
     checked: dict[str, bool] = {}  # relative directory -> exists as a real directory
