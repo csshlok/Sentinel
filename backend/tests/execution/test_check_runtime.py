@@ -385,6 +385,66 @@ def test_revoke_removes_only_that_sid(icacls_recorder, entry: Path, cache: Path)
     assert argv == [str(FAKE_ICACLS), str(entry), "/remove:g", f"*{PACKAGE_SID}"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
+def test_concurrent_grants_and_revokes_on_one_entry_are_serialized(
+    monkeypatch, entry: Path, cache: Path,
+) -> None:
+    """WR-03: icacls rewrites the whole DACL, so two changes on one entry may never overlap."""
+
+    import threading
+    import time
+
+    in_flight: list[int] = [0]
+    peak: list[int] = [0]
+    guard = threading.Lock()
+
+    def slow_icacls(argv, **_kwargs):
+        with guard:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+        time.sleep(0.05)
+        with guard:
+            in_flight[0] -= 1
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr("backend.app.execution.acl.subprocess.run", slow_icacls)
+    monkeypatch.setattr("backend.app.execution.acl.icacls_executable", lambda: FAKE_ICACLS)
+    sids = [PACKAGE_SID[:-1] + str(digit) for digit in range(6)]
+    errors: list[BaseException] = []
+
+    def cycle(sid: str) -> None:
+        try:
+            grant_package_read(entry, sid, allowed_root=cache)
+            revoke_package_read(entry, sid, allowed_root=cache)
+        except BaseException as exc:  # surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=cycle, args=(sid,)) for sid in sids]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert errors == []
+    assert peak[0] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
+def test_a_revoke_that_leaves_the_ace_in_place_is_a_failure(
+    icacls_recorder, monkeypatch, entry: Path, cache: Path,
+) -> None:
+    """WR-03: the DACL is re-read after the revoke; a surviving ACE is never reported clean."""
+
+    monkeypatch.setattr("backend.app.execution.acl.dacl_sddl",
+                        lambda path: f"D:(A;OICI;0x1200a9;;;{PACKAGE_SID})")
+    with pytest.raises(AppError) as raised:
+        revoke_package_read(entry, PACKAGE_SID, allowed_root=cache)
+    assert raised.value.code == "CHECK_RUNTIME_GRANT_FAILED"
+    # A different SID that merely starts with the same digits is not a match.
+    monkeypatch.setattr("backend.app.execution.acl.dacl_sddl",
+                        lambda path: f"D:(A;OICI;0x1200a9;;;{PACKAGE_SID}1)")
+    revoke_package_read(entry, PACKAGE_SID, allowed_root=cache)
+
+
 @pytest.mark.parametrize("sid", [
     "S-1-5-18",                                          # SYSTEM
     "S-1-15-2-1",                                        # ALL APPLICATION PACKAGES

@@ -35,6 +35,10 @@ import os
 import re
 import stat
 import subprocess
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 ICACLS_TIMEOUT_SECONDS = 10
@@ -251,23 +255,137 @@ def _run_icacls_change(target: Path, arguments: list[str]) -> None:
         raise _grant_failed(f"icacls exited with {completed.returncode}")
 
 
+# WR-03: a runtime cache entry is shared by every box that uses the same digest,
+# and icacls reads, edits and rewrites the whole DACL (then re-propagates it), so
+# two changes in flight on one entry can lose or resurrect an ACE. Every grant
+# and revoke on an entry is serialized in this process (a lock per entry path)
+# and across processes (an exclusive byte-range lock on a sibling lock file).
+ACL_LOCK_TIMEOUT_SECONDS = 600
+_ACL_LOCK_POLL_SECONDS = 0.05
+_ENTRY_LOCKS: dict[str, threading.Lock] = {}
+_ENTRY_LOCKS_GUARD = threading.Lock()
+_SE_FILE_OBJECT = 1
+_DACL_SECURITY_INFORMATION = 0x00000004
+_SDDL_REVISION_1 = 1
+
+
+def acl_lock_path(target: Path) -> Path:
+    """The cross-process lock file for ``target`` (a sibling; never inside the entry)."""
+
+    return target.parent / f".{target.name}.acl-lock"
+
+
+@contextmanager
+def _entry_lock(target: Path) -> Iterator[None]:
+    key = os.path.normcase(os.path.abspath(target))
+    with _ENTRY_LOCKS_GUARD:
+        lock = _ENTRY_LOCKS.setdefault(key, threading.Lock())
+    if not lock.acquire(timeout=ACL_LOCK_TIMEOUT_SECONDS):
+        raise _grant_failed("timed out waiting for the access-list lock")
+    try:
+        if os.name != "nt":
+            yield
+            return
+        import msvcrt
+
+        try:
+            descriptor = os.open(acl_lock_path(target),
+                                 os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+        except OSError as exc:
+            raise _grant_failed(f"the access-list lock could not be opened "
+                                f"({type(exc).__name__})") from exc
+        try:
+            deadline = time.monotonic() + ACL_LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise _grant_failed("timed out waiting for the access-list lock") from None
+                    time.sleep(_ACL_LOCK_POLL_SECONDS)
+            try:
+                yield
+            finally:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(descriptor)
+    finally:
+        lock.release()
+
+
+def dacl_sddl(path: str | Path) -> str:
+    """The DACL of ``path`` as SDDL (``GetNamedSecurityInfoW``); ``OSError`` if unreadable."""
+
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.LPVOID),
+    ]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR),
+        ctypes.POINTER(wintypes.ULONG),
+    ]
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [wintypes.LPVOID]
+    kernel32.LocalFree.restype = wintypes.LPVOID
+    descriptor = wintypes.LPVOID()
+    status = advapi32.GetNamedSecurityInfoW(
+        str(path), _SE_FILE_OBJECT, _DACL_SECURITY_INFORMATION, None, None, None, None,
+        ctypes.byref(descriptor))
+    if status != 0:
+        raise OSError(0, "GetNamedSecurityInfoW failed", str(path), status)
+    try:
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor, _SDDL_REVISION_1, _DACL_SECURITY_INFORMATION, ctypes.byref(text),
+                None):
+            raise OSError(0, "ConvertSecurityDescriptorToStringSecurityDescriptorW failed",
+                          str(path), ctypes.get_last_error())
+        try:
+            return text.value or ""
+        finally:
+            kernel32.LocalFree(ctypes.cast(text, wintypes.LPVOID))
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
 def grant_package_read(
     path: str | Path, package_sid: str, *, allowed_root: str | Path | None = None,
 ) -> None:
     """Add one inheritable read/execute ACE for ``package_sid`` on ``path``.
 
     ``path`` must be a real directory strictly inside ``allowed_root`` (by
-    default the check runtime cache). No other ACE is changed.
+    default the check runtime cache). No other ACE is changed. Serialized with
+    every other grant/revoke on the same entry (WR-03).
     """
 
     target = _package_grant_target(path, package_sid, allowed_root)
-    _run_icacls_change(target, ["/grant", f"*{package_sid}:(OI)(CI)(RX)"])
+    with _entry_lock(target):
+        _run_icacls_change(target, ["/grant", f"*{package_sid}:(OI)(CI)(RX)"])
 
 
 def revoke_package_read(
     path: str | Path, package_sid: str, *, allowed_root: str | Path | None = None,
 ) -> None:
-    """Remove every granted ACE for ``package_sid`` on ``path`` (the inverse of the grant)."""
+    """Remove every granted ACE for ``package_sid`` on ``path`` (the inverse of the grant).
+
+    Serialized with every other grant/revoke on the same entry, then verified:
+    the DACL is re-read and a package SID still on it is ``CHECK_RUNTIME_GRANT_FAILED``
+    (so the box's row ends CLEANUP_FAILED, never CLEANED with the ACE in place).
+    """
 
     target = _package_grant_target(path, package_sid, allowed_root)
-    _run_icacls_change(target, ["/remove:g", f"*{package_sid}"])
+    with _entry_lock(target):
+        _run_icacls_change(target, ["/remove:g", f"*{package_sid}"])
+        try:
+            remaining = dacl_sddl(target)
+        except OSError as exc:
+            raise _grant_failed("the access list could not be re-read after the revoke") from exc
+    if f";{package_sid.upper()})" in remaining.upper():  # an ACE ends with ";<sid>)"
+        raise _grant_failed("the package SID is still on the access list after the revoke")
