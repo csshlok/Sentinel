@@ -17,8 +17,10 @@ def documentation_paths(baseline: GitCheckpoint, tested: GitCheckpoint) -> tuple
     root = tested.repository_root
     try:
         status = run_git(root, ["diff", "--name-status", "-z", "--no-renames",
+                                "--no-ext-diff", "--no-textconv",
                                 baseline.head_sha, "--"])
         raw = run_git(root, ["diff", "--raw", "-z", "--no-renames",
+                             "--no-ext-diff", "--no-textconv",
                              baseline.head_sha, "--"])
         other = run_git(root, ["ls-files", "--others", "-z", "--"])
         for result in (status, raw, other):
