@@ -522,7 +522,8 @@ def test_repository_change_during_the_run_is_stale(tmp_path: Path) -> None:
     result = collect_diff_coverage(change=change, baseline=baseline, tested=tested,
                                    request=_request(baseline, tested, required=True),
                                    on_check_run=mutate_repository)
-    assert len(boxed) == 1 and boxed[0][1] == "APPCONTAINER"
+    # WR-02: the host harness's token facts do not verify, so no boundary is claimed.
+    assert len(boxed) == 1 and boxed[0][1] is None
     assert result.diff_exercised == "STALE"
     assert result.freshness == "STALE"
     assert result.gate_satisfied is False
