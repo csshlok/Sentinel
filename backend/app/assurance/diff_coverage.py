@@ -64,6 +64,16 @@ def _report_path(root: Path, raw: str) -> str | None:
     return relative.as_posix()
 
 
+def _junit_class_module(classname: str) -> str | None:
+    """Map a pytest class testcase name to its containing Python module."""
+    parts = classname.split(".")
+    if not parts or not all(part.isidentifier() for part in parts):
+        return None
+    while len(parts) > 1 and parts[-1].startswith("Test"):
+        parts.pop()
+    return "/".join(parts) + ".py"
+
+
 def _fixture_definition(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for decorator in node.decorator_list:
         if isinstance(decorator, ast.Call):
@@ -450,8 +460,9 @@ def collect_diff_coverage(
                             if normalized:
                                 collected_test_paths.add(normalized)
                         classname = case.attrib.get("classname", "")
-                        if classname and all(part.isidentifier() for part in classname.split(".")):
-                            collected_test_paths.add(classname.replace(".", "/") + ".py")
+                        class_module = _junit_class_module(classname)
+                        if class_module:
+                            collected_test_paths.add(class_module)
                     if executed_tests <= 0:
                         reasons.append("Pytest did not execute any tests.")
                     else:
