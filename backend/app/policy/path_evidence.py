@@ -23,10 +23,19 @@ def documentation_paths(baseline: GitCheckpoint, tested: GitCheckpoint) -> tuple
                              "--no-ext-diff", "--no-textconv",
                              baseline.head_sha, "--"])
         other = run_git(root, ["ls-files", "--others", "-z", "--"])
-        for result in (status, raw, other):
+        index = run_git(root, ["ls-files", "-v", "-z", "--"])
+        for result in (status, raw, other, index):
             if (result.returncode != 0 or result.truncated or result.incomplete or
                     result.timed_out):
                 return (), (), "Git path enumeration failed or was truncated"
+        index_entries = index.stdout.split(b"\0")
+        if index_entries[-1] != b"":
+            return (), (), "malformed Git index listing"
+        for entry in index_entries[:-1]:
+            if len(entry) < 3 or entry[1:2] != b" ":
+                return (), (), "malformed Git index listing"
+            if entry[:1] in {b"h", b"S", b"s"}:
+                return (), (), "hidden index entry (assume-unchanged or skip-worktree)"
         entries = status.stdout.split(b"\0")
         if entries[-1] != b"":
             return (), (), "malformed name-status diff"

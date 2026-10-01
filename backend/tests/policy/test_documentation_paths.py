@@ -14,7 +14,7 @@ from backend.app.contracts.models import ChangeContract, DiffCoverageResult
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.policy.presets import PresetEvidence, evaluate_preset
 from backend.tests.passport.test_builder import _database, _seed_change
-from backend.tests.support_kb import make_repo, write
+from backend.tests.support_kb import git, make_repo, write
 
 
 @pytest.mark.parametrize("change", ["delete-code", "rename-code", "dependency-swap", "docs-edit"])
@@ -104,3 +104,25 @@ def test_docs_allowlist_excludes_agent_instructions_and_build_files() -> None:
                                  evidence=PresetEvidence(checks_passed=True,
                                                          freshness="CURRENT", changed_paths=(path,)))
         assert result.status == "DENY", path
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_docs_inventory_denies_hidden_index_entries(tmp_path, flag: str) -> None:
+    from backend.app.policy.path_evidence import documentation_paths
+    root = make_repo(tmp_path / "repo", {
+        "README.md": "hello\n", "pay.py": "def charge(): return 1\n",
+    })
+    tracker = GitStateTracker()
+    identifier = uuid4()
+    baseline = tracker.capture(identifier, "BASELINE", str(root), 1, 1_048_576)
+    git(root, "update-index", flag, "pay.py")
+    write(root, "pay.py", "def charge(): return 999\n")
+    write(root, "README.md", "updated\n")
+    tested = tracker.capture(identifier, "TESTED", str(root), 1, 1_048_576)
+    paths, modes, error = documentation_paths(baseline, tested)
+    decision = evaluate_preset(preset_name="docs-only", change_type="docs",
+                               evidence=PresetEvidence(checks_passed=True, freshness="CURRENT",
+                                                       changed_paths=paths, mode_changed_paths=modes,
+                                                       path_evidence_error=error))
+    assert error == "hidden index entry (assume-unchanged or skip-worktree)"
+    assert decision.status == "DENY"
