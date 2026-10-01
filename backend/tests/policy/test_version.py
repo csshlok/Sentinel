@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -13,6 +14,7 @@ from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.main import create_app
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.policy.version import product_version
+import backend.app.policy.version as version_module
 from backend.tests.passport.test_builder import _database, _seed_change
 
 
@@ -35,3 +37,13 @@ def test_version_matches_package_api_cli_and_signed_payload(tmp_path) -> None:
         response = client.get("/api/v1/version")
     assert response.status_code == 200
     assert response.json() == {"product_version": expected}
+
+
+def test_source_checkout_version_fallback(monkeypatch, tmp_path) -> None:
+    def missing(_name):
+        raise PackageNotFoundError("change-assurance")
+
+    monkeypatch.setattr(version_module, "version", missing)
+    assert product_version() == "0.1.0"
+    monkeypatch.setattr(version_module.Path, "read_text", lambda *_args, **_kwargs: "broken")
+    assert product_version() == version_module.SOURCE_VERSION_FALLBACK
