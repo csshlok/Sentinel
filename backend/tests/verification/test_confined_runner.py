@@ -133,7 +133,7 @@ def _host_python_as(monkeypatch, runner_type) -> None:
 
     if runner_type is SubprocessVerificationRunner:
         monkeypatch.setattr("backend.app.verification.runner.resolve_executable",
-                            lambda request: sys.executable)
+                            lambda request, **_kwargs: sys.executable)
     else:
         monkeypatch.setattr("backend.app.execution.runner._resolve",
                             lambda name, root, env: sys.executable)

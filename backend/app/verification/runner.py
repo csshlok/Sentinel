@@ -79,7 +79,7 @@ class SubprocessVerificationRunner:
             if is_unconfined_toolchain(request.executable):
                 if not allow_unconfined:
                     raise check_toolchain_unconfined(request.executable)
-                argv = [resolve_executable(request), *request.args]
+                argv = [resolve_executable(request, root=repository_path), *request.args]
                 outcome = run_unconfined_check(
                     self._checks, change_id=change_id, cwd=repository_path, argv=argv,
                     executable=request.executable, timeout=request.timeout_seconds,

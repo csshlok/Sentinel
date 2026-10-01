@@ -7,12 +7,14 @@ resolves the executable, which the contract cannot do on its own.
 
 from __future__ import annotations
 
-import shutil
 import sys
+from pathlib import Path
 
 from backend.app.contracts.models import VerificationRequest
 # Single-sourced with the confined toolchain mapping (Phase 5).
 from backend.app.execution.check_toolchains import ALLOWED_EXECUTABLES
+from backend.app.execution.commands import unconfined_environment
+from backend.app.execution.resolve import find_executable
 from backend.app.verification.errors import executable_not_allowed, executable_not_found
 
 
@@ -30,7 +32,7 @@ def validate_executable(request: VerificationRequest) -> str:
     return executable
 
 
-def resolve_executable(request: VerificationRequest) -> str:
+def resolve_executable(request: VerificationRequest, *, root: str | Path) -> str:
     """Validate the requested executable and return its resolved host path.
 
     Used only by the delegated unconfined path; confined checks resolve to a
@@ -38,6 +40,12 @@ def resolve_executable(request: VerificationRequest) -> str:
     for a disallowed or path-qualified executable, and
     ``VERIFICATION_EXECUTABLE_NOT_FOUND`` for an allowlisted executable that
     is not on PATH.
+
+    WR-07: the lookup uses the unconfined path's own reduced environment and
+    only absolute PATH directories outside the repository ``root``, and the
+    result is never inside ``root`` (the same rule as ``execution/runner.py``):
+    an agent-added ``tools/cargo.cmd`` on a repository PATH entry, or in the
+    current directory, is never what a ``checks.unconfined`` run executes.
     """
 
     executable = validate_executable(request)
@@ -54,7 +62,8 @@ def resolve_executable(request: VerificationRequest) -> str:
     if executable in {"python", "python3"}:
         return sys.executable
 
-    resolved = shutil.which(executable)
+    repository = Path(root).resolve()
+    resolved = find_executable(executable, unconfined_environment(repository), repository)
     if resolved is None:
         raise executable_not_found(executable)
-    return resolved
+    return str(resolved)
