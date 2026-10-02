@@ -25,6 +25,8 @@ def _normal(path: str) -> str:
 
 
 def _repository_path(filename: str, root: str) -> str | None:
+    if filename.startswith("<") and filename.endswith(">"):
+        return None
     try:
         relative = os.path.relpath(_normal(filename), root)
     except (OSError, ValueError):
@@ -34,14 +36,10 @@ def _repository_path(filename: str, root: str) -> str | None:
     return relative.replace(os.sep, "/")
 
 
-def _allowed_caller(filename: str, root: str) -> bool:
-    relative = _repository_path(filename, root)
-    if relative is not None:
-        name = relative.rsplit("/", 1)[-1].lower()
-        return (name == "conftest.py" or name.startswith("test_") and name.endswith(".py")
-                or name.endswith("_test.py") or "tests" in relative.lower().split("/"))
-    parts = {part.lower() for part in Path(filename).parts}
-    return bool(parts & {"pytest", "_pytest", "pluggy"})
+def _is_test_code(relative: str) -> bool:
+    name = relative.rsplit("/", 1)[-1].lower()
+    return (name == "conftest.py" or name.startswith("test_") and name.endswith(".py")
+            or name.endswith("_test.py") or "tests" in relative.lower().split("/"))
 
 
 def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
@@ -57,18 +55,20 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
             found[filename] = targets.get(_normal(filename))
         return found[filename]
 
-    def observe(code, caller) -> None:
+    def observe(code, started_frame) -> None:
         if code.co_name == "<module>" or len(violations) >= MAX_VIOLATIONS:
             return
         path = target(code.co_filename)
         if path is None:
             return
-        caller_file = caller.f_code.co_filename if caller is not None else "<no caller>"
-        if _allowed_caller(caller_file, root):
-            return
-        caller_path = _repository_path(caller_file, root) or caller_file
-        caller_line = caller.f_lineno if caller is not None else 0
-        violations.append(f"{caller_path}:{caller_line} -> {path}:{code.co_firstlineno}")
+        frame = started_frame.f_back if started_frame is not None else None
+        while frame is not None:
+            caller_path = _repository_path(frame.f_code.co_filename, root)
+            if caller_path is not None and not _is_test_code(caller_path):
+                violations.append(f"{caller_path}:{frame.f_lineno} -> "
+                                  f"{path}:{code.co_firstlineno}")
+                return
+            frame = frame.f_back
 
     backend = "sys.setprofile"
     monitoring = getattr(sys, "monitoring", None)
@@ -81,7 +81,7 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
 
             def on_start(code, _offset):
                 frame = sys._getframe(1)
-                observe(code, frame.f_back)
+                observe(code, frame)
 
             monitoring.register_callback(tool, monitoring.events.PY_START, on_start)
             monitoring.set_events(tool, monitoring.events.PY_START)
@@ -95,7 +95,7 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
     if backend == "sys.setprofile":
         def on_call(frame, event, _arg):
             if event == "call":
-                observe(frame.f_code, frame.f_back)
+                observe(frame.f_code, frame)
 
         sys.setprofile(on_call)
 
@@ -142,7 +142,8 @@ def assess_record(data: bytes | None, changed_tests: list[str]) -> str | None:
                 for item in record["violations"])):
         return "Test-call monitor record is invalid."
     if record["violations"]:
-        return "Production called changed test module: " + record["violations"][0]
+        return ("Repository production frame reached changed test module "
+                "(including callbacks): " + record["violations"][0])
     return None
 
 
