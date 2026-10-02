@@ -56,7 +56,7 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
         return found[filename]
 
     def observe(code, started_frame) -> None:
-        if code.co_name == "<module>" or len(violations) >= MAX_VIOLATIONS:
+        if len(violations) >= MAX_VIOLATIONS:
             return
         path = target(code.co_filename)
         if path is None:

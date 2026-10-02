@@ -80,6 +80,33 @@ def test_monitor_allows_legitimate_test_caller(tmp_path: Path) -> None:
                          ["tests/test_helpers.py"]) is None
 
 
+def test_monitor_records_production_import_of_changed_test_module(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    scratch = tmp_path / "scratch"
+    (root / "tests").mkdir(parents=True)
+    scratch.mkdir()
+    (root / "tests/__init__.py").write_text("", encoding="utf-8")
+    (root / "tests/test_helpers.py").write_text("VALUE = 5\n", encoding="utf-8")
+    (root / "module.py").write_text(
+        "import importlib\n"
+        "def price():\n"
+        "    return importlib.import_module('tests.test_helpers').VALUE\n",
+        encoding="utf-8")
+    (root / "tests/test_price.py").write_text(
+        "from module import price\n"
+        "def test_price():\n    assert price() == 5\n", encoding="utf-8")
+    argv, record_name = prepare_monitor(
+        scratch, root, ["tests/test_helpers.py"],
+        [sys.executable, "-X", f"pycache_prefix={scratch / 'pycache'}",
+         "-m", "coverage", "run", "-m", "pytest", "-q", "tests/test_price.py",
+         "-o", "addopts=", f"--junitxml={scratch / 'junit.xml'}"])
+    run = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    record = (scratch / record_name).read_bytes()
+    assert any("module.py:" in item and "tests/test_helpers.py:" in item
+               for item in json.loads(record)["violations"])
+
+
 def test_monitor_evidence_is_fail_closed() -> None:
     assert "missing" in assess_record(None, ["tests/test_helpers.py"])
     assert "unreadable" in assess_record(b"not json", ["tests/test_helpers.py"])
