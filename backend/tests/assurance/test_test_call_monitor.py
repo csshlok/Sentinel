@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.assurance.test_call_monitor import assess_record, prepare_monitor
+from backend.app.assurance.test_call_monitor import _is_test_code, assess_record, prepare_monitor
+from backend.app.assurance.diff_map import _classification
 from backend.app.assurance.diff_coverage import evaluate_report
 from backend.app.contracts.models import DiffCoverageRequest, DiffCoverageResult, DiffCoverageRule, utc_now
 
@@ -180,6 +181,16 @@ def test_profile_fallback_record_is_unknown() -> None:
                          "changed_tests": ["tests/test_helpers.py"],
                          "violations": []}).encode()
     assert "cannot observe all threads" in assess_record(record, ["tests/test_helpers.py"])
+
+
+def test_monitor_test_code_predicate_agrees_with_mapper() -> None:
+    directories = ("", "src/", "tests/", "test/", "src/Tests/", "src/mytests/")
+    names = ("module.py", "test_module.py", "module_test.py", "conftest.py",
+             "contest.py", "test_data.json", "module.pyi")
+    for directory in directories:
+        for name in names:
+            path = directory + name
+            assert _is_test_code(path) == (_classification(path) == "test code"), path
 
 
 def test_monitor_evidence_is_fail_closed() -> None:

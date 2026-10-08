@@ -40,7 +40,9 @@ def _repository_path(filename: str, root: str) -> str | None:
 def _is_test_code(relative: str) -> bool:
     name = relative.rsplit("/", 1)[-1].lower()
     return (name == "conftest.py" or name.startswith("test_") and name.endswith(".py")
-            or name.endswith("_test.py") or "tests" in relative.lower().split("/"))
+            or name.endswith("_test.py") or
+            any(part in {"test", "tests"} for part in relative.lower().split("/")[:-1])
+            and name.endswith(".py"))
 
 
 def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
