@@ -440,3 +440,41 @@ def test_non_windows_is_refused_with_a_stable_code(monkeypatch) -> None:
         )
     assert raised.value.code == "APPCONTAINER_UNSUPPORTED"
     assert raised.value.status_code == 501
+
+
+def test_remove_tree_no_follow_removes_entries_deeper_than_max_path(tmp_path: Path) -> None:
+    """Live test 2026-10-08: Claude Code syncs skills deeper than 260 characters into the home."""
+
+    prefix = "\\\\?\\"
+    deep = str(tmp_path / "home")
+    os.mkdir(deep)
+    while len(deep) < 250:
+        deep = os.path.join(deep, "d" * 30)
+        os.mkdir(prefix + deep)
+    long_file = deep + "\\" + "f" * 40 + ".xsd"
+    with open(prefix + long_file, "w", encoding="utf-8") as handle:
+        handle.write("synced")
+    assert len(long_file) > 260
+    remove_tree_no_follow(tmp_path / "home")
+    assert not os.path.exists(tmp_path / "home")
+
+
+def test_remove_tree_retrying_retries_only_transient_errors(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def flaky(path):
+        calls.append(str(path))
+        if len(calls) < 3:
+            error = OSError(41, "The directory is not empty")
+            error.winerror = 145
+            raise error
+
+    monkeypatch.setattr(appcontainer.time, "sleep", lambda seconds: None)
+    appcontainer.remove_tree_retrying(tmp_path, remove=flaky)
+    assert len(calls) == 3
+
+    def broken(path):
+        raise OSError(2, "not transient")
+
+    with pytest.raises(OSError):
+        appcontainer.remove_tree_retrying(tmp_path, remove=broken)

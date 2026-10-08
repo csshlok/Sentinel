@@ -18,7 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.app.core.errors import AppError
-from backend.app.execution.appcontainer import remove_tree_no_follow
+from backend.app.execution.appcontainer import remove_tree_no_follow, remove_tree_retrying
 
 _CHUNK = 1 << 20
 
@@ -146,7 +146,9 @@ def rebuild_staged_home(home: str | Path) -> StagedHome:
 
     root = Path(home)
     try:
-        remove_tree_no_follow(root)
+        # The previous run's agent may have synced hundreds of files here, some
+        # still pending delete when the next run starts (ERROR_DIR_NOT_EMPTY).
+        remove_tree_retrying(root)
         if os.path.lexists(root):
             raise staged_home_failed("the previous staged home could not be removed")
         root.mkdir(parents=False)

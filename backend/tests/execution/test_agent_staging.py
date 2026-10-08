@@ -132,3 +132,51 @@ def test_junction_home_is_removed_as_a_link_only(tmp_path):
     assert not (outside / ".claude").exists()
     info = os.lstat(staged.root)
     assert not (getattr(info, "st_file_attributes", 0) & 0x400)  # a real directory now
+
+
+def _dir_not_empty() -> OSError:
+    error = OSError(41, "The directory is not empty")
+    error.winerror = 145
+    return error
+
+
+def test_rebuild_retries_a_home_that_is_briefly_not_empty(tmp_path, monkeypatch) -> None:
+    """Live test 2026-10-08: a synced home can still hold files pending delete."""
+
+    from backend.app.execution import appcontainer
+
+    home = tmp_path / "home"
+    (home / ".claude" / "skills").mkdir(parents=True)
+    (home / ".claude" / "skills" / "SKILL.md").write_text("synced", encoding="utf-8")
+    real_remove = appcontainer.remove_tree_no_follow
+    calls = {"count": 0}
+
+    def flaky(path):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise _dir_not_empty()
+        return real_remove(path)
+
+    monkeypatch.setattr(appcontainer, "remove_tree_no_follow", flaky)
+    monkeypatch.setattr(appcontainer.time, "sleep", lambda seconds: None)
+    staged = rebuild_staged_home(home)
+    assert calls["count"] == 2
+    assert sorted(path.name for path in staged.root.iterdir()) == [".claude", "AppData"]
+
+
+def test_rebuild_does_not_retry_a_non_transient_error(tmp_path, monkeypatch) -> None:
+    from backend.app.execution import appcontainer
+
+    home = tmp_path / "home"
+    home.mkdir()
+    calls = {"count": 0}
+
+    def broken(path):
+        calls["count"] += 1
+        raise OSError(2, "gone wrong")
+
+    monkeypatch.setattr(appcontainer, "remove_tree_no_follow", broken)
+    with pytest.raises(AppError) as raised:
+        rebuild_staged_home(home)
+    assert raised.value.code == "AGENT_STAGED_HOME_FAILED"
+    assert calls["count"] == 1

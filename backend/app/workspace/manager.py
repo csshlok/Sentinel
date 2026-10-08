@@ -32,7 +32,6 @@ import re
 import secrets
 import sqlite3
 import stat
-import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -56,6 +55,7 @@ from backend.app.execution.appcontainer import (
     local_appdata_known_folder,
     profile_exists,
     remove_tree_no_follow,
+    remove_tree_retrying,
     validate_profile_name,
 )
 from backend.app.git.safe_exec import METADATA_LIMIT, RECOVERY_IDENTITY, GitIdentity, run_git
@@ -97,7 +97,6 @@ _WORKSPACE_DIRECTORY = "ws"
 _CONTAINER_SUBDIRECTORIES = ("ws", "home", "tools", "Temp")
 _REMOVE_ATTEMPTS = 5
 _REMOVE_BACKOFF_SECONDS = 0.2
-_TRANSIENT_WINERRORS = frozenset({5, 32})  # access denied, sharing violation
 PROFILE_DISPLAY_NAME = "Sentinel workspace"
 
 UNTRACKED_SOURCE_LIMITATION = (
@@ -1143,20 +1142,14 @@ class WorkspaceManager:
         """``remove_tree_no_follow`` retried on transient Windows sharing/access errors.
 
         Handles close late after a Job is terminated (research Pitfall 11), so
-        access-denied (5) and sharing-violation (32) errors are retried up to
-        ``_REMOVE_ATTEMPTS`` times with a growing delay; anything else raises.
+        access-denied (5), sharing-violation (32) and directory-not-empty (145)
+        errors are retried up to ``_REMOVE_ATTEMPTS`` times with a growing
+        delay; anything else raises.
         """
 
-        for attempt in range(1, _REMOVE_ATTEMPTS + 1):
-            try:
-                remove_tree_no_follow(target)
-                return
-            except OSError as exc:
-                transient = (isinstance(exc, PermissionError)
-                             or getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS)
-                if not transient or attempt == _REMOVE_ATTEMPTS:
-                    raise
-                time.sleep(_REMOVE_BACKOFF_SECONDS * attempt)
+        remove_tree_retrying(target, attempts=_REMOVE_ATTEMPTS,
+                             backoff_seconds=_REMOVE_BACKOFF_SECONDS,
+                             remove=remove_tree_no_follow)
 
     def _profile_folder(self, record: WorkspaceRecord) -> tuple[Path, Path]:
         """(``Packages\\<profile>``, its ``AC`` folder), refusing a foreign recorded path."""

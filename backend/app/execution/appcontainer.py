@@ -22,6 +22,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 import types
 import uuid
 from ctypes import wintypes
@@ -531,13 +532,32 @@ def _remove_link(path: str | Path, is_directory: bool) -> None:
         os.unlink(path)
 
 
+def _extended_length(path: str | Path) -> str:
+    r"""``path`` as a ``\\?\`` extended-length path, so MAX_PATH never applies.
+
+    An agent can create files deeper than 260 characters (Claude Code syncs
+    skills several levels below the staged home). Without the prefix, and with
+    LongPathsEnabled off, Windows reports those entries as missing, so they
+    could never be removed (live test, 2026-10-08).
+    """
+
+    text = os.path.abspath(str(path))
+    if not IS_WINDOWS or text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
 def remove_tree_no_follow(path: str | Path) -> None:
     """Delete ``path`` without ever descending into a junction or symbolic link.
 
     A reparse point (at the top or anywhere below) is removed as a link only.
     Read-only entries (Git object files) get the write bit and one retry.
+    Entries deeper than MAX_PATH are removed too (extended-length paths).
     """
 
+    path = _extended_length(path)
     try:
         reparse, is_directory = _is_reparse_point(path)
     except FileNotFoundError:
@@ -567,6 +587,30 @@ def remove_tree_no_follow(path: str | Path) -> None:
         function(target)
 
     shutil.rmtree(path, onexc=handler)
+
+
+# Access denied, sharing violation, directory not empty: handles close late after
+# a Job ends, and a scanner may still hold a just-written file pending delete.
+TRANSIENT_REMOVE_WINERRORS = frozenset({5, 32, 145})
+
+
+def remove_tree_retrying(
+    path: str | Path, *, attempts: int = 5, backoff_seconds: float = 0.2,
+    remove: Callable[[str | Path], None] | None = None,
+) -> None:
+    """``remove_tree_no_follow`` retried on transient Windows errors; anything else raises."""
+
+    remover = remove or remove_tree_no_follow
+    for attempt in range(1, attempts + 1):
+        try:
+            remover(path)
+            return
+        except OSError as exc:
+            transient = (isinstance(exc, PermissionError)
+                         or getattr(exc, "winerror", None) in TRANSIENT_REMOVE_WINERRORS)
+            if not transient or attempt == attempts:
+                raise
+            time.sleep(backoff_seconds * attempt)
 
 
 # --------------------------------------------------------------------------- token facts
