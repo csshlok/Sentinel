@@ -703,6 +703,17 @@ def _explicit(aces: list[str]) -> list[str]:
     return [ace for ace in aces if "ID" not in ace.split(";")[1]]
 
 
+def _access(aces: list[str]) -> set[str]:
+    """The access an ACL grants, regardless of whether an ACE is explicit or inherited."""
+
+    def strip(ace: str) -> str:
+        fields = ace.split(";")
+        fields[1] = fields[1].replace("ID", "")
+        return ";".join(fields)
+
+    return {strip(ace) for ace in aces}
+
+
 @pytest.mark.skipif(os.name != "nt", reason="icacls only runs on Windows")
 def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> None:
     """The grant adds exactly one ACE for the package SID and the revoke removes exactly it.
@@ -714,6 +725,11 @@ def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> N
     parent's ACEs, not something the grant added, so they are compared as
     inherited ACEs: none of them may name the package SID, and the explicit
     ACEs must be exactly the original ones plus (then minus) the single grant.
+
+    The same re-propagation may convert a child's explicit ACEs that duplicate
+    the parent's inheritable ACEs into inherited ones (CI run 36961022864: the
+    child's explicit SY/BA/OW became ``ID`` ACEs). That changes no access, so
+    the child is compared by the access its ACL grants.
     """
 
     from backend.app.execution.appcontainer import derive_package_sid
@@ -733,7 +749,8 @@ def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> N
     # Child files inherit exactly that ACE and nothing else for the SID.
     granted_child = _dacl_aces(child)
     assert [ace for ace in granted_child if sid in ace] == [f"(A;ID;0x1200a9;;;{sid})"], granted_child
-    assert _explicit(granted_child) == _explicit(before_child), granted_child
+    other = [ace for ace in granted_child if sid not in ace]
+    assert _access(other) == _access(before_child), f"before={before_child} granted={granted_child}"
 
     revoke_package_read(entry, sid, allowed_root=cache)
     revoked, revoked_child = _dacl_aces(entry), _dacl_aces(child)
@@ -743,7 +760,7 @@ def test_real_grant_and_revoke_are_exact_inverses(entry: Path, cache: Path) -> N
     assert not any(sid in ace for ace in revoked + revoked_child), context
     # ... so the explicit ACL is the original one, and every inherited ACE is the parent's.
     assert sorted(_explicit(revoked)) == sorted(_explicit(before_dir)), context
-    assert _explicit(revoked_child) == _explicit(before_child), revoked_child
+    assert _access(revoked_child) == _access(before_child), f"before={before_child} revoked={revoked_child}"
     # Where Windows did not need to re-canonicalize inheritance (e.g. this
     # developer machine), the original DACL comes back byte-for-byte.
     if sorted(before_dir) == sorted(ace for ace in granted if ace != expected_grant):
