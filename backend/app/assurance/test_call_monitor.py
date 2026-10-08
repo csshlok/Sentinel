@@ -79,12 +79,19 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
             monitoring.use_tool_id(tool, "sentinel-test-call-monitor")
             acquired = True
 
-            def on_start(code, _offset):
+            def on_enter(code, _offset, *_exception):
+                if target(code.co_filename) is None:
+                    # CPython does not permit DISABLE for PY_THROW.
+                    return None if _exception else monitoring.DISABLE
                 frame = sys._getframe(1)
                 observe(code, frame)
 
-            monitoring.register_callback(tool, monitoring.events.PY_START, on_start)
-            monitoring.set_events(tool, monitoring.events.PY_START)
+            events = (monitoring.events.PY_START | monitoring.events.PY_RESUME |
+                      monitoring.events.PY_THROW)
+            for event in (monitoring.events.PY_START, monitoring.events.PY_RESUME,
+                          monitoring.events.PY_THROW):
+                monitoring.register_callback(tool, event, on_enter)
+            monitoring.set_events(tool, events)
             backend = "sys.monitoring"
         except (AttributeError, RuntimeError, ValueError):
             if acquired:
