@@ -43,6 +43,10 @@ def pytest_configure(config) -> None:
         "markers",
         "real_check_boxes: create_app builds real AppContainer check boxes (no host harness)",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_platform_probe: run the real AppContainer platform probe (not the supported stub)",
+    )
 
 
 import pytest  # noqa: E402
@@ -62,4 +66,22 @@ def _host_check_boxes_in_create_app(request, monkeypatch, tmp_path_factory):
         return boxes
 
     monkeypatch.setattr(main, "CheckBoxes", factory)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _appcontainer_platform_supported(request, monkeypatch):
+    """Tests with fake spawns must not depend on the host SKU (hosted runners are Server).
+
+    The real probe is exercised by tests marked ``real_platform_probe``
+    (``backend/tests/execution/test_platform_probe.py``).
+    """
+
+    if request.node.get_closest_marker("real_platform_probe") is not None:
+        yield
+        return
+    from backend.app.execution import platform_probe
+
+    monkeypatch.setattr(platform_probe, "_cached",
+                        platform_probe.PlatformSupport(True, None, platform_probe.VER_NT_WORKSTATION))
     yield

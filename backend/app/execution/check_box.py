@@ -43,6 +43,7 @@ from backend.app.contracts.models import JournalEventType, utc_now
 from backend.app.core.database import Database
 from backend.app.core.errors import AppError
 from backend.app.core.journal import JournalWriter
+from backend.app.execution.platform_probe import require_appcontainer_platform
 from backend.app.execution import acl, appcontainer
 from backend.app.execution._process import capture
 from backend.app.execution.agent_staging import _is_reparse
@@ -419,6 +420,8 @@ class CheckBoxes:
 
         if not isinstance(runtime, BoxRuntime):
             raise TypeError("runtime must be a BoxRuntime")
+        # Plan 02-02 (D3): refuse loudly on a Windows that cannot run a box.
+        require_appcontainer_platform()
         if self._evidence_guard is not None and self._evidence_guard(change_id):
             raise workspace_not_applied()
         source = _resolve_source(source_root)

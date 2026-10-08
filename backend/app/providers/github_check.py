@@ -293,7 +293,7 @@ class GitHubCheckPublisher:
         conclusion = ("failure" if checks_text == "FAIL" or diff.diff_exercised == "FAIL"
                       else "neutral" if freshness != "CURRENT" or
                       checks_text != "PASS" or diff.diff_exercised != "PASS" or
-                      claims.execution_boundary == "UNKNOWN" or policy_decision != "ALLOW"
+                      claims.execution_boundary != "APPCONTAINER" or policy_decision != "ALLOW"
                       else "success")
         verify_command = (f"Verify: export change-{change_id}.sentinel from Sentinel; use "
                           "a fingerprint you already trust.")

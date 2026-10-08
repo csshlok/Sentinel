@@ -37,7 +37,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from backend.app.contracts.models import (
-    AgentAttachRequest, AgentLaunchRequest, AgentRun, AgentRunStatus, ToolManifest, utc_now,
+    AgentAttachRequest, AgentLaunchRequest, AgentRun, AgentRunStatus, ExecutionBoundary,
+    ToolManifest, utc_now,
 )
 from backend.app.contracts.ports import ToolRegistryPort
 from backend.app.core.errors import AppError, policy_denied
@@ -51,6 +52,7 @@ from backend.app.execution.agent_profiles import (
 )
 from backend.app.execution.agent_staging import ensure_tool_snapshot, rebuild_staged_home
 from backend.app.execution.dos_drive import map_drive, unmap_drive
+from backend.app.execution.platform_probe import require_appcontainer_platform
 from backend.app.execution.appcontainer import (
     CAPABILITY_SIDS, appcontainer_unsupported, base_environment, spawn_appcontainer_supervised,
 )
@@ -216,6 +218,26 @@ def appcontainer_authority(facts: object) -> str | None:
     )
 
 
+def appcontainer_boundary(
+    facts: object, *, working_directory: str | None, workspace_drive: str | None,
+) -> ExecutionBoundary | None:
+    """The observed AppContainer boundary; None unless the live token was verified."""
+
+    if (facts is None or not getattr(facts, "is_appcontainer", False)
+            or not getattr(facts, "job_verified", False)):
+        return None
+    names = {sid.upper(): name for name, sid in CAPABILITY_SIDS.items()}
+    return ExecutionBoundary(
+        kind="APPCONTAINER", profile=getattr(facts, "profile_name", None),
+        capabilities=[names.get(sid.upper(), sid)
+                      for sid in getattr(facts, "capability_sids", ())],
+        package_sid=getattr(facts, "package_sid", None),
+        integrity_rid=f"{getattr(facts, 'integrity_rid', 0):#06x}",
+        job_verified=True, verified_at=getattr(facts, "verified_at", None),
+        working_directory=working_directory, workspace_drive=workspace_drive,
+    )
+
+
 class AgentLauncher:
     """Concrete ``AgentLauncherPort`` for the generic, Codex and Claude adapters."""
 
@@ -314,11 +336,12 @@ class AgentLauncher:
             change_id=change_id, adapter=adapter, request=request,
             output_limit_bytes=output_limit_bytes, run_id=uuid4(), argv=argv,
             resolve_error=resolve_error, cwd=root, env=env, secrets=secrets,
-            tool_manifest=tool_manifest, strategy=self._restricted_strategy(),
+            tool_manifest=tool_manifest,
+            strategy=self._restricted_strategy(adapter.name, str(root)),
         )
 
     @staticmethod
-    def _restricted_strategy() -> _LaunchStrategy:
+    def _restricted_strategy(adapter: str, working_directory: str) -> _LaunchStrategy:
         def spawn(arguments, process_cwd, process_env, redact):
             return spawn_restricted_supervised(
                 arguments, cwd=process_cwd, env=process_env, redact=redact)
@@ -330,6 +353,9 @@ class AgentLauncher:
                 "descendant_control_available": supervised,
                 "restricted_token_applied": restricted,
                 "authority_reduction": RESTRICTED_AUTHORITY if restricted else None,
+                "execution_boundary": ExecutionBoundary(
+                    kind="RESTRICTED_TOKEN" if restricted else "NONE", profile=adapter,
+                    job_verified=supervised, working_directory=working_directory),
                 "limitations": (
                     [SUPERVISED_LIMITATION, RESTRICTED_AUTHORITY]
                     if supervised else [DESCENDANT_LIMITATION, RESTRICTED_AUTHORITY]
@@ -365,6 +391,9 @@ class AgentLauncher:
 
         if not IS_WINDOWS:
             raise appcontainer_unsupported()
+        # Plan 02-02 (D3): a Windows that cannot run a box is refused loudly,
+        # before any workspace, credential or process exists.
+        require_appcontainer_platform()
         workspaces = self._workspaces
         if workspaces is None:
             raise AppError(
@@ -445,11 +474,15 @@ class AgentLauncher:
 
         def start_update(process: SupervisedProcess | None, record: AgentRun) -> dict[str, object]:
             supervised = bool(process and process.session is not None)
+            facts = getattr(process, "appcontainer", None)
             return {
                 "descendant_control_available": supervised,
                 "restricted_token_applied": False,
-                "authority_reduction": appcontainer_authority(
-                    getattr(process, "appcontainer", None)),
+                "authority_reduction": appcontainer_authority(facts),
+                # Never a weaker kind here: an unverified box records no boundary.
+                "execution_boundary": appcontainer_boundary(
+                    facts, working_directory=str(lease.workspace_path),
+                    workspace_drive=drives[-1][0] if drives else None),
                 "limitations": ([SUPERVISED_LIMITATION, *limitations]
                                 if supervised else record.limitations),
             }
@@ -722,6 +755,7 @@ class AgentLauncher:
             restricted_token_applied=state.record.restricted_token_applied,
             authority_reduction=state.record.authority_reduction,
             limitations=list(dict.fromkeys(limitations)),
+            execution_boundary=state.record.execution_boundary,
         )
         with self._lock:
             state.record = final
@@ -744,6 +778,7 @@ class AgentLauncher:
             id=uuid4(), change_id=change_id, adapter=adapter.name,
             status=AgentRunStatus.ATTACHED, external_run_id=request.external_run_id,
             started_at=request.declared_started_at or utc_now(),
+            execution_boundary=ExecutionBoundary(kind="NONE", profile=adapter.name),
             limitations=[
                 "Attach records caller-declared metadata only; no process was observed.",
                 "The declared invocation cannot be stopped or attributed by this runtime.",

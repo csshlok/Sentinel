@@ -454,6 +454,31 @@ class DescendantProcess(ContractModel):
         return self
 
 
+# The Change-level boundary claim in Passport v2, derived from bound launch facts.
+PassportExecutionBoundary = Literal[
+    "APPCONTAINER", "RESTRICTED_TOKEN_ONLY", "MIXED", "NONE", "UNKNOWN"]
+
+
+class ExecutionBoundary(ContractModel):
+    """The launch boundary observed for one agent run (never inferred from a profile).
+
+    ``APPCONTAINER`` only from a live token verified before the process
+    resumed; ``RESTRICTED_TOKEN`` only when a reduced token was applied
+    (not a sandbox); ``NONE`` for a run without either (attached, or an
+    unreduced top-level process).
+    """
+
+    kind: Literal["APPCONTAINER", "RESTRICTED_TOKEN", "NONE"]
+    profile: str | None = Field(default=None, max_length=128)
+    capabilities: list[ShortText] = Field(default_factory=list, max_length=16)
+    package_sid: str | None = Field(default=None, max_length=256)
+    integrity_rid: str | None = Field(default=None, max_length=16)
+    job_verified: bool = False
+    verified_at: AwareDatetime | None = None
+    working_directory: str | None = Field(default=None, max_length=4096)
+    workspace_drive: str | None = Field(default=None, pattern=r"^[D-Z]:$")
+
+
 class AgentRun(ContractModel):
     id: UUID
     change_id: UUID
@@ -475,6 +500,7 @@ class AgentRun(ContractModel):
     limitations: list[str] = Field(default_factory=list, max_length=32)
     paused_at: AwareDatetime | None = None
     resumed_at: AwareDatetime | None = None
+    execution_boundary: ExecutionBoundary | None = None
 
 
 class GitCheckpoint(ContractModel):
@@ -1236,6 +1262,13 @@ class DiffCoverageResult(ContractModel):
     boundary: Literal["APPCONTAINER", "UNCONFINED"] | None = None
 
 
+class PassportV2ExecutionBearing(ContractModel):
+    """A changed file that makes code run later outside Sentinel (CI, IDE, hooks, builds)."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    category: Literal["npm-scripts", "ci", "test-bootstrap", "build-hook", "git-or-ide-hook"]
+
+
 class PassportV2LaunchBinding(ContractModel):
     """Digest of a persisted launch record, without its possibly secret output."""
 
@@ -1272,9 +1305,11 @@ class PassportV2Payload(ContractModel):
     journal_event_count: int = Field(ge=0)
     journal_integrity: Literal["PASS", "UNKNOWN"]
     launch_records: list[PassportV2LaunchBinding] = Field(max_length=1024)
-    execution_boundary: Literal["UNKNOWN"] = "UNKNOWN"
+    execution_boundary: PassportExecutionBoundary = "UNKNOWN"
     diff_coverage: PassportV2DiffClaim = Field(default_factory=PassportV2DiffClaim)
-    runs_later: Literal["UNKNOWN"] = "UNKNOWN"
+    runs_later: Literal["NONE", "PRESENT", "UNKNOWN"] = "UNKNOWN"
+    execution_bearing_changes: list[PassportV2ExecutionBearing] = Field(
+        default_factory=list, max_length=1024)
     limitations: list[ShortText] = Field(default_factory=list, max_length=32)
     issued_at: AwareDatetime
     signer_provider: Literal["TPM", "SOFTWARE"] | None = None
@@ -1356,7 +1391,7 @@ class GitHubCheckPublicationResult(ContractModel):
     diff_exercised: Literal["PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"] | None = None
     freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
     signed_freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
-    execution_boundary: Literal["UNKNOWN"] | None = None
+    execution_boundary: PassportExecutionBoundary | None = None
 
 
 class PolicyPresetEvaluation(ContractModel):

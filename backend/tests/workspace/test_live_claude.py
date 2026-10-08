@@ -127,6 +127,10 @@ def test_real_claude_code_edits_renames_and_deletes_inside_the_workspace(
         assert facts["integrity_rid"] == "0x1000"
         assert facts["capability_sids"] == ["S-1-15-3-1"]
         assert facts["job_verified"] is True
+        boundary = first.execution_boundary  # plan 02-03: the structured, observed boundary
+        assert boundary is not None and boundary.kind == "APPCONTAINER", first.execution_boundary
+        assert boundary.capabilities == ["internetClient"] and boundary.job_verified
+        assert boundary.workspace_drive and boundary.working_directory == str(workspace)
 
         # Step 2: rename and delete through the PowerShell tool (quick 261008-9pq; Git
         # Bash cannot initialise in the box, spike 007).

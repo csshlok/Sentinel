@@ -27,7 +27,10 @@ def card_facts(passport: dict[str, object], *, payload_digest: str) -> list[tupl
         ("Diff exercised", f"{diff['diff_exercised']} — {counts}"),
         ("Freshness", str(diff["freshness"])),
         ("Execution boundary", str(claims["execution_boundary"])),
-        ("Runs later", str(claims["runs_later"])),
+        ("Runs later", str(claims["runs_later"]) + (
+            " — " + ", ".join(f"{item['path']} ({item['category']})"
+                              for item in claims.get("execution_bearing_changes", [])[:8])
+            if claims.get("execution_bearing_changes") else "")),
         ("Journal integrity", str(claims["journal_integrity"])),
         ("Assertion quality", str(diff["assertion_quality"])),
         ("Caveat", str(diff["caveat"])),

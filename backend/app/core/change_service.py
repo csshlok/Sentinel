@@ -60,6 +60,7 @@ class ChangeService:
         clock: Clock = utc_now,
         workspace_guard: Callable[[UUID], bool] | None = None,
         unapplied_work_guard: Callable[[UUID], bool] | None = None,
+        preset_gate: Callable[[ChangeView], None] | None = None,
     ) -> None:
         self.repository = repository
         self.git_inspection = git_inspection
@@ -78,9 +79,13 @@ class ChangeService:
         # Evidence guard (01-06, WR-06): True while the Change's workspace may still
         # hold unapplied agent work; a check run then would test the base tree.
         self.unapplied_work_guard = unapplied_work_guard
+        # Plan 02-05: raises PRESET_GATE_DENIED unless a selected preset allows review.
+        self.preset_gate = preset_gate
 
     def capabilities(self) -> CapabilitiesResponse:
-        return build_capabilities(self.configured_capabilities)
+        from backend.app.execution.platform_probe import platform_support
+
+        return build_capabilities(self.configured_capabilities, platform=platform_support())
 
     def validate_repository(self, path: str) -> RepositoryInfo:
         return self.git_inspection.validate_repository(path)
@@ -225,6 +230,9 @@ class ChangeService:
                 self._to_view(stored), request.target_state.value
             )
         validate_transition(stored.lifecycle_state, request.target_state, facts)
+        if (request.target_state is ChangeLifecycleState.REVIEW_READY
+                and self.preset_gate is not None):
+            self.preset_gate(self._to_view(stored))
         updated = self.repository.transition(
             change_id,
             request.target_state,

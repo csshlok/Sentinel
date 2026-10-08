@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from backend.app.contracts.models import (
@@ -14,6 +15,7 @@ from backend.app.contracts.models import (
     GitCheckpoint,
     PassportV2CheckRun,
     PassportV2DiffClaim,
+    PassportV2ExecutionBearing,
     PassportV2Issued,
     PassportV2LaunchBinding,
     PassportV2Payload,
@@ -27,6 +29,8 @@ from backend.app.execution.check_repository import (
 )
 from backend.app.git.state import GitStateTracker
 from backend.app.policy.path_evidence import documentation_paths
+from backend.app.assurance.execution_bearing import execution_bearing
+from backend.app.git.safe_exec import run_git
 from backend.app.passport.cng import CngKey, fingerprint
 from backend.app.passport.jcs import canonicalize
 from backend.app.passport.identity import open_signing_key
@@ -37,6 +41,14 @@ _MAX_JOURNAL_EVENTS = 4096
 _MAX_LAUNCHES = 1024
 _MAX_CHECK_RUNS = 1024
 _MAX_RECORD_BYTES = 1_048_576
+_BOUNDARY_LIMITATIONS = {
+    "RESTRICTED_TOKEN_ONLY": ("Agent runs used a reduced token only (restricted token and Job "
+                              "Object); that is not a sandbox."),
+    "MIXED": ("Agent runs used different boundaries; not every run was in a verified "
+              "AppContainer."),
+    "NONE": "An agent run was attached or unreduced; no execution boundary was observed.",
+    "UNKNOWN": "Execution boundary evidence is missing for at least one agent run; UNKNOWN.",
+}
 
 
 def canonical_payload(payload: PassportV2Payload) -> bytes:
@@ -99,6 +111,7 @@ class PassportV2Issuer:
             raise AppError("PASSPORT_LAUNCH_INVALID", "Launch records and journal differ.",
                            status_code=409)
         bindings: list[PassportV2LaunchBinding] = []
+        boundaries: list[str] = []
         for row in launches:
             raw = row["payload_json"]
             if not isinstance(raw, str) or len(raw.encode("utf-8")) > _MAX_RECORD_BYTES:
@@ -131,6 +144,9 @@ class PassportV2Issuer:
             if status != row["status"] or not valid:
                 raise AppError("PASSPORT_LAUNCH_INVALID", "Launch status differs from journal.",
                                status_code=409)
+            boundary = self._launch_boundary(parsed, events[row["id"]], status)
+            if boundary is not None:
+                boundaries.append(boundary)
             try:
                 bindings.append(PassportV2LaunchBinding(
                     run_id=UUID(row["id"]), status=status,
@@ -159,9 +175,10 @@ class PassportV2Issuer:
             comparable, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         diff_claim, diff_limit, changed_paths, measured_percent = self._coverage_claim(
             coverage, coverage_contract_digest)
+        execution_boundary = self._aggregate_boundary(boundaries)
         limitations = [
-            "Execution boundary evidence is not yet structured; UNKNOWN.",
-            "Execution-bearing files that run later are not measured; UNKNOWN.",
+            *([_BOUNDARY_LIMITATIONS[execution_boundary]]
+              if execution_boundary in _BOUNDARY_LIMITATIONS else []),
             "An executed line does not prove an assertion verified behavior.",
             "Offline journal export contains hash links, not event payloads; original event hashes cannot be recomputed offline.",
         ]
@@ -175,6 +192,10 @@ class PassportV2Issuer:
             journal, check_runs)
         if confined_limit:
             limitations.append(confined_limit)
+        runs_later, bearing, bearing_limit = self._runs_later(
+            change_id, change["repository_path"], coverage)
+        if bearing_limit:
+            limitations.append(bearing_limit)
         contract_digest = (hashlib.sha256(contract_raw.encode("utf-8")).hexdigest()
                            if isinstance(contract_raw, str) else None)
         payload = PassportV2Payload(
@@ -183,8 +204,9 @@ class PassportV2Issuer:
             contract_digest=contract_digest, journal_head=head,
             journal_event_count=len(journal),
             journal_integrity="PASS" if journal else "UNKNOWN",
-            launch_records=bindings, execution_boundary="UNKNOWN",
-            diff_coverage=diff_claim, runs_later="UNKNOWN", limitations=limitations,
+            launch_records=bindings, execution_boundary=execution_boundary,
+            diff_coverage=diff_claim, runs_later=runs_later,
+            execution_bearing_changes=bearing, limitations=limitations,
             issued_at=utc_now(), product_version=product_version(),
             confined_checks=confined_checks, check_runs=bound_check_runs,
         )
@@ -222,11 +244,12 @@ class PassportV2Issuer:
             "policy_denials": list(decision.reasons),
         })
 
-    def _preset_paths(self, change_id: UUID, root: str, coverage: object | None) -> tuple[
-        tuple[str, ...], tuple[str, ...], str | None,
-    ]:
+    def _bound_checkpoints(self, change_id: UUID, root: str, coverage: object | None,
+                           ) -> tuple[GitCheckpoint, GitCheckpoint] | str:
+        """The (baseline, tested) checkpoints the coverage result binds, or why not."""
+
         if coverage is None:
-            return (), (), "coverage checkpoints are absent"
+            return "coverage checkpoints are absent"
         try:
             result = DiffCoverageResult.model_validate_json(coverage["payload_json"])
             with self._database.connection() as connection:
@@ -239,10 +262,66 @@ class PassportV2Issuer:
             baseline, tested = (GitCheckpoint.model_validate_json(record["payload_json"])
                                 for record in records)
             if tested.repository_root != root or tested.head_sha != result.head_sha:
-                return (), (), "tested checkpoint does not match coverage"
-            return documentation_paths(baseline, tested)
+                return "tested checkpoint does not match coverage"
+            return baseline, tested
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
+            return f"bound checkpoint inspection failed ({type(exc).__name__})"
+
+    def _preset_paths(self, change_id: UUID, root: str, coverage: object | None) -> tuple[
+        tuple[str, ...], tuple[str, ...], str | None,
+    ]:
+        bound = self._bound_checkpoints(change_id, root, coverage)
+        if isinstance(bound, str):
+            return (), (), bound
+        try:
+            return documentation_paths(*bound)
         except (OSError, ValueError, TypeError, RecursionError) as exc:
             return (), (), f"bound checkpoint inspection failed ({type(exc).__name__})"
+
+    def _runs_later(self, change_id: UUID, root: str, coverage: object | None) -> tuple[
+        str, list[PassportV2ExecutionBearing], str | None,
+    ]:
+        """Plan 02-06: changed files that make code run later outside Sentinel."""
+
+        bound = self._bound_checkpoints(change_id, root, coverage)
+        paths: tuple[str, ...] = ()
+        error = bound if isinstance(bound, str) else None
+        if error is None:
+            try:
+                paths, _modes, error = documentation_paths(*bound)
+            except (OSError, ValueError, TypeError, RecursionError) as exc:
+                error = f"path inspection failed ({type(exc).__name__})"
+        if error is not None:
+            return "UNKNOWN", [], (f"Execution-bearing files could not be listed ({error}); "
+                                   "UNKNOWN.")
+        baseline = bound[0]
+
+        def before(path: str) -> bytes | None:
+            shown = run_git(root, ["show", f"{baseline.head_sha}:{path}"],
+                            limit=_MAX_RECORD_BYTES)
+            return shown.stdout if shown.returncode == 0 and not shown.truncated else None
+
+        def after(path: str) -> bytes | None:
+            target = Path(root, *path.split("/"))
+            try:
+                if target.is_symlink() or not target.is_file():
+                    return None
+                return target.read_bytes()[:_MAX_RECORD_BYTES]
+            except OSError:
+                return None
+
+        contents = {"package.json", "pyproject.toml"}
+        found = execution_bearing(
+            (path, before(path), after(path)) if path.rsplit("/", 1)[-1].casefold() in contents
+            else (path, b"", b"") for path in paths)
+        bearing = [PassportV2ExecutionBearing(path=path, category=category)
+                   for path, category in found]
+        if not bearing:
+            return "NONE", [], None
+        return "PRESENT", bearing[:1024], (
+            f"{len(bearing)} changed file(s) make code run later outside Sentinel's supervision "
+            "(CI, IDE, hooks, builds or test bootstrap); they were not exercised inside the "
+            "execution boundary.")
 
     @staticmethod
     def _checked_freshness(change_id: UUID, claims: PassportV2Payload,
@@ -321,6 +400,44 @@ class PassportV2Issuer:
         bound = [PassportV2CheckRun(check_run_id=run_id, boundary=boundary)
                  for run_id, boundary in runs]
         return fact, (f"Confined checks {fact}: {reason}." if reason else None), bound
+
+    @staticmethod
+    def _launch_boundary(record: dict, run_events: dict, status: object) -> str | None:
+        """One run's observed boundary kind, or None for a run that never started.
+
+        The persisted record (digest-bound) and the hash-chained
+        ``agent.launched`` event must carry the same boundary; a mismatch is
+        tampering, not a weaker claim.
+        """
+
+        if status == "ATTACHED":
+            return "NONE"
+        recorded = record.get("execution_boundary")
+        journaled = run_events.get("agent.launched", {}).get("boundary")
+        if recorded != journaled:
+            raise AppError("PASSPORT_LAUNCH_INVALID",
+                           "Launch boundary differs between record and journal.", status_code=409)
+        if recorded is None:
+            # A launch that failed before any process started ran no agent code.
+            return None if status == "ERROR" and record.get("top_level_pid") is None else "UNKNOWN"
+        if not isinstance(recorded, dict):
+            return "UNKNOWN"
+        kind = recorded.get("kind")
+        if kind == "APPCONTAINER":
+            return "APPCONTAINER" if recorded.get("job_verified") is True else "UNKNOWN"
+        return kind if kind in {"RESTRICTED_TOKEN", "NONE"} else "UNKNOWN"
+
+    @staticmethod
+    def _aggregate_boundary(kinds: list[str]) -> str:
+        """APPCONTAINER only when every started run verified it."""
+
+        found = set(kinds)
+        if not found or "UNKNOWN" in found:
+            return "UNKNOWN"
+        if len(found) > 1:
+            return "MIXED"
+        only = found.pop()
+        return "RESTRICTED_TOKEN_ONLY" if only == "RESTRICTED_TOKEN" else only
 
     @staticmethod
     def _coverage_claim(row: object | None,

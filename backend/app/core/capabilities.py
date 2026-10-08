@@ -35,8 +35,20 @@ _RETAINED = {
 }
 
 
-def build_capabilities(configured: set[str]) -> CapabilitiesResponse:
+def build_capabilities(configured: set[str], *, platform: object | None = None,
+                       ) -> CapabilitiesResponse:
+    """``platform`` is the cached AppContainer platform probe result, when known."""
+
     items: list[Capability] = []
+    if platform is not None:
+        supported = bool(getattr(platform, "supported", False))
+        items.append(Capability(
+            id="appcontainer_boundary", name="AppContainer Boundary",
+            state=CapabilityState.AVAILABLE if supported else CapabilityState.UNSUPPORTED,
+            reason=None if supported else getattr(platform, "reason", None),
+            limitations=["Checked once per backend process by a boxed probe (NUL device, "
+                         "System32 child); Windows workstation editions only."],
+        ))
     for capability_id, description in _RETAINED.items():
         available = capability_id in configured
         items.append(

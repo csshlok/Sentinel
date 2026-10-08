@@ -199,7 +199,7 @@ def _validate_claims(passport: dict[str, object], manifest: dict[str, object],
         normalized.pop("signer_provider")  # pre-additive v2 bundles remain verifiable
     for field in ("policy_preset_name", "policy_preset_version", "policy_change_type",
                   "policy_decision", "policy_denials", "product_version",
-                  "confined_checks", "check_runs"):
+                  "confined_checks", "check_runs", "execution_bearing_changes"):
         if field not in passport["claims"]:
             normalized.pop(field)
     if canonicalize(normalized) != canonicalize(passport["claims"]):
@@ -254,6 +254,8 @@ def _claims_summary(claims: PassportV2Payload) -> dict[str, object]:
         "executed_changed_lines": diff.executed_changed_lines,
         "execution_boundary": claims.execution_boundary,
         "runs_later": claims.runs_later,
+        "execution_bearing_changes": [item.model_dump(mode="json")
+                                      for item in claims.execution_bearing_changes],
         "journal_integrity": claims.journal_integrity,
         "limitations": claims.limitations,
         "policy_preset_name": claims.policy_preset_name,

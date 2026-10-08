@@ -359,6 +359,7 @@ PROCESS_STARTING_EXECUTION_MODULES = {
     "commands.py": "the delegated checks.unconfined opt-in path only",
     "tool_probe.py": "tool --version probes (PATH tools, not repository code)",
     "signature.py": "Authenticode check of a registered tool",
+    "platform_probe.py": "boxed System32 platform probe (cmd/powershell, no repository code)",
 }
 _SPAWN_MARKERS = ("capture(", "Popen(", "subprocess.run(", "CreateProcess")
 CHECK_RUNNER_MODULES = (

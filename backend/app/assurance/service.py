@@ -16,6 +16,7 @@ processes, which the launcher cannot observe across restarts.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Callable
 from uuid import UUID, uuid4
@@ -326,7 +327,16 @@ class EvidenceService:
         self._journal_append(
             change.id, JournalEventType.AGENT_LAUNCHED,
             subject_type="agent_run", subject_id=run.id,
-            payload={"adapter": request.adapter, "executable": request.executable},
+            payload={
+                "adapter": request.adapter, "executable": request.executable,
+                # Section 4.3: the boundary actually applied and an argv digest
+                # (arguments may hold prompts, so only their digest is kept).
+                "argv_sha256": hashlib.sha256(json.dumps(
+                    [request.executable, *request.args],
+                    separators=(",", ":")).encode("utf-8")).hexdigest(),
+                "boundary": (run.execution_boundary.model_dump(mode="json")
+                             if run.execution_boundary is not None else None),
+            },
         )
         self._journal_append(
             change.id, JournalEventType.AGENT_COMPLETED,

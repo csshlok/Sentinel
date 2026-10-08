@@ -382,6 +382,16 @@
             ],
             "title": "Duration Ms"
           },
+          "execution_boundary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionBoundary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "exit_code": {
             "anyOf": [
               {
@@ -3674,6 +3684,113 @@
         "title": "EvidenceStatus",
         "type": "string"
       },
+      "ExecutionBoundary": {
+        "additionalProperties": false,
+        "description": "The launch boundary observed for one agent run (never inferred from a profile).\n\n``APPCONTAINER`` only from a live token verified before the process\nresumed; ``RESTRICTED_TOKEN`` only when a reduced token was applied\n(not a sandbox); ``NONE`` for a run without either (attached, or an\nunreduced top-level process).",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "integrity_rid": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integrity Rid"
+          },
+          "job_verified": {
+            "default": false,
+            "title": "Job Verified",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "APPCONTAINER",
+              "RESTRICTED_TOKEN",
+              "NONE"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "package_sid": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Sid"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          },
+          "working_directory": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Working Directory"
+          },
+          "workspace_drive": {
+            "anyOf": [
+              {
+                "pattern": "^[D-Z]:$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Drive"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ExecutionBoundary",
+        "type": "object"
+      },
       "GitCheckpoint": {
         "additionalProperties": false,
         "properties": {
@@ -3984,7 +4101,13 @@
           "execution_boundary": {
             "anyOf": [
               {
-                "const": "UNKNOWN",
+                "enum": [
+                  "APPCONTAINER",
+                  "RESTRICTED_TOKEN_ONLY",
+                  "MIXED",
+                  "NONE",
+                  "UNKNOWN"
+                ],
                 "type": "string"
               },
               {
@@ -4777,6 +4900,35 @@
         "title": "PassportV2DiffClaim",
         "type": "object"
       },
+      "PassportV2ExecutionBearing": {
+        "additionalProperties": false,
+        "description": "A changed file that makes code run later outside Sentinel (CI, IDE, hooks, builds).",
+        "properties": {
+          "category": {
+            "enum": [
+              "npm-scripts",
+              "ci",
+              "test-bootstrap",
+              "build-hook",
+              "git-or-ide-hook"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "category"
+        ],
+        "title": "PassportV2ExecutionBearing",
+        "type": "object"
+      },
       "PassportV2Issued": {
         "additionalProperties": false,
         "description": "Sentinel-issued v2 payload signature; bundle manifests are signed in Phase 8.",
@@ -4907,9 +5059,23 @@
           "diff_coverage": {
             "$ref": "#/components/schemas/PassportV2DiffClaim"
           },
+          "execution_bearing_changes": {
+            "items": {
+              "$ref": "#/components/schemas/PassportV2ExecutionBearing"
+            },
+            "maxItems": 1024,
+            "title": "Execution Bearing Changes",
+            "type": "array"
+          },
           "execution_boundary": {
-            "const": "UNKNOWN",
             "default": "UNKNOWN",
+            "enum": [
+              "APPCONTAINER",
+              "RESTRICTED_TOKEN_ONLY",
+              "MIXED",
+              "NONE",
+              "UNKNOWN"
+            ],
             "title": "Execution Boundary",
             "type": "string"
           },
@@ -5051,8 +5217,12 @@
             "type": "string"
           },
           "runs_later": {
-            "const": "UNKNOWN",
             "default": "UNKNOWN",
+            "enum": [
+              "NONE",
+              "PRESENT",
+              "UNKNOWN"
+            ],
             "title": "Runs Later",
             "type": "string"
           },
