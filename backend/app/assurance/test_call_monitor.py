@@ -60,6 +60,46 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
             found[filename] = targets.get(_normal(filename))
         return found[filename]
 
+    machinery: list[str] = []
+
+    def is_machinery(filename: str) -> bool:
+        if not machinery:
+            for name in ("_pytest", "pluggy", "pytest"):
+                module = sys.modules.get(name)
+                location = getattr(module, "__file__", None)
+                if location:
+                    machinery.append(_normal(os.path.dirname(location)) + os.sep)
+        normal = _normal(filename)
+        return any(normal.startswith(prefix) for prefix in machinery)
+
+    def entry_relay(caller) -> str | None:
+        """Who handed control to changed test code, when that is a relay.
+
+        Allowed entries: the immediate caller is repository code (a production
+        caller is then reported by the stack walk), or a chain of library
+        frames that pytest/pluggy started (fixtures, unittest integration).
+        A library chain that a repository frame started (an asyncio loop, a
+        contextlib exit, a weakref finalizer run from a test) is a relay: it
+        can run a callable that production code scheduled earlier.
+        Frozen import frames are transparent (a test importing a helper).
+        """
+
+        frame = caller
+        first_library: str | None = None
+        while frame is not None and frame is not session_entry:
+            filename = frame.f_code.co_filename
+            if filename.startswith("<frozen importlib"):
+                frame = frame.f_back
+                continue
+            if _repository_path(filename, root) is not None:
+                return None if frame is caller else first_library
+            if is_machinery(filename):
+                return None
+            if first_library is None:
+                first_library = os.path.basename(filename) or filename
+            frame = frame.f_back
+        return first_library
+
     def observe(code, started_frame) -> None:
         if len(violations) >= MAX_VIOLATIONS:
             return
@@ -68,6 +108,12 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
             return
         if threading.current_thread() is not main_thread:
             violations.append(f"Changed test code ran on a non-main thread: "
+                              f"{path}:{code.co_firstlineno}")
+            return
+        relay = entry_relay(started_frame.f_back if started_frame is not None else None)
+        if relay is not None:
+            violations.append(f"Changed test code was invoked by a scheduler or relay "
+                              f"({relay}), not by test code or pytest: "
                               f"{path}:{code.co_firstlineno}")
             return
         frame = started_frame.f_back if started_frame is not None else None

@@ -238,3 +238,91 @@ def test_required_evaluator_needs_clean_monitor_record(tmp_path: Path) -> None:
     assert any("module.py:2" in reason for reason in blocked.reasons)
 
 
+def _monitored_run(tmp_path: Path, helper: str, test_body: str) -> bytes:
+    root = tmp_path / "tree"
+    scratch = tmp_path / "scratch"
+    (root / "tests").mkdir(parents=True)
+    scratch.mkdir()
+    (root / "tests/__init__.py").write_text("", encoding="utf-8")
+    (root / "tests/test_helpers.py").write_text(helper, encoding="utf-8")
+    (root / "tests/test_price.py").write_text(test_body, encoding="utf-8")
+    argv, record_name = prepare_monitor(
+        scratch, root, ["tests/test_helpers.py"],
+        [sys.executable, "-X", f"pycache_prefix={scratch / 'pycache'}",
+         "-m", "coverage", "run", "-m", "pytest", "-q", "tests/test_price.py",
+         "-o", "addopts=", f"--junitxml={scratch / 'junit.xml'}"])
+    run = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    return (scratch / record_name).read_bytes()
+
+
+_SYNC_HELPER = ("def test_compute(x=0, out=None):\n    value = -1 if x > 100 else x\n"
+                "    if out is not None:\n        out.append(value)\n    return value\n")
+
+
+@pytest.mark.parametrize(("relay", "body"), [
+    # N9-01: a callable handed to a scheduler runs later from the test's own stack.
+    ("events.py",
+     "import asyncio\nfrom tests.test_helpers import test_compute\n"
+     "async def schedule(out):\n"
+     "    asyncio.get_running_loop().call_soon(test_compute, 5, out)\n"
+     "    await asyncio.sleep(0)\n"
+     "def test_price():\n    out = []\n    asyncio.run(schedule(out))\n    assert out == [5]\n"),
+    ("events.py",
+     "import asyncio\nfrom tests.test_helpers import test_compute\n"
+     "async def schedule(out):\n"
+     "    asyncio.get_running_loop().call_later(0, test_compute, 5, out)\n"
+     "    await asyncio.sleep(0.05)\n"
+     "def test_price():\n    out = []\n    asyncio.run(schedule(out))\n    assert out == [5]\n"),
+    ("_base.py",
+     "from concurrent.futures import Future\nfrom tests.test_helpers import test_compute\n"
+     "def test_price():\n    out = []\n    future = Future()\n"
+     "    future.add_done_callback(lambda f: None)\n"
+     "    future.add_done_callback(lambda f, o=out: None)\n"
+     "    future.add_done_callback(test_compute)\n"
+     "    future.set_result(1)\n"),
+    ("weakref.py",
+     "import weakref\nfrom tests.test_helpers import test_compute\n"
+     "class Box:\n    pass\n"
+     "def test_price():\n    out = []\n    box = Box()\n"
+     "    weakref.finalize(box, test_compute, 5, out)\n    del box\n    assert out == [5]\n"),
+])
+def test_monitor_records_scheduler_relays(tmp_path: Path, relay: str, body: str) -> None:
+    record = _monitored_run(tmp_path, _SYNC_HELPER, body)
+    reason = assess_record(record, ["tests/test_helpers.py"])
+    assert reason is not None and "scheduler or relay" in reason and relay in reason, reason
+
+
+def test_monitor_records_a_contextmanager_helper_as_a_relay(tmp_path: Path) -> None:
+    """Fail closed: contextlib can also resume a callable production prepared."""
+
+    helper = ("import contextlib\n@contextlib.contextmanager\n"
+              "def test_resource():\n    yield 5\n")
+    body = ("from tests.test_helpers import test_resource\n"
+            "def test_price():\n    with test_resource() as value:\n        assert value == 5\n")
+    reason = assess_record(_monitored_run(tmp_path, helper, body), ["tests/test_helpers.py"])
+    assert reason is not None and "contextlib.py" in reason, reason
+
+
+@pytest.mark.parametrize("body", [
+    "from tests.test_helpers import test_compute\n"
+    "def test_price():\n    assert sorted([3, 1], key=test_compute) == [1, 3]\n",
+    "import tests.test_helpers\n"
+    "def test_price():\n    assert tests.test_helpers.test_compute(5) == 5\n",
+    "import unittest\nfrom tests.test_helpers import test_compute\n"
+    "class TestPrice(unittest.TestCase):\n"
+    "    def test_price(self):\n        self.assertEqual(test_compute(5), 5)\n",
+])
+def test_monitor_allows_direct_and_pytest_started_entries(tmp_path: Path, body: str) -> None:
+    record = _monitored_run(tmp_path, _SYNC_HELPER, body)
+    assert assess_record(record, ["tests/test_helpers.py"]) is None
+
+
+def test_monitor_allows_a_unittest_case_in_a_changed_module(tmp_path: Path) -> None:
+    helper = ("import unittest\nclass TestHelpers(unittest.TestCase):\n"
+              "    def test_value(self):\n        self.assertEqual(1 + 1, 2)\n")
+    body = "from tests.test_helpers import TestHelpers\ndef test_price():\n    assert TestHelpers\n"
+    root_record = _monitored_run(tmp_path, helper, body)
+    assert assess_record(root_record, ["tests/test_helpers.py"]) is None
+
+
