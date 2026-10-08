@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Header, Static
 
 from backend.app.cli.client import ApiClient, ApiConnectionError, ApiError
+from backend.app.core.boundary_text import boundary_line
 
 _ACTIVE_STATUSES = {"RUNNING", "PAUSED"}
 # How often the screen re-polls agent runs while this screen is open, so
@@ -117,6 +119,32 @@ def _run_status_label(status: str) -> str:
              "FAILED": "red", "ERROR": "red", "TIMED_OUT": "red",
              "CANCELLED": "grey50", "ATTACHED": "white"}.get(status, "white")
     return f"[{color}]{status}[/{color}]"
+
+
+def format_run_detail(run: dict[str, Any]) -> str:
+    """The selected run's output tail, observed boundary, supervision and descendants."""
+
+    stdout_tail = _tail(run.get("stdout", ""), _OUTPUT_TAIL_LINES)
+    stderr_tail = run.get("stderr", "")
+    text = f"[bold]stdout (last {_OUTPUT_TAIL_LINES} lines)[/bold]\n{stdout_tail}"
+    if stderr_tail:
+        text += f"\n\n[bold]stderr[/bold]\n{_tail(stderr_tail, _OUTPUT_TAIL_LINES)}"
+    # Plan 02-04: the observed boundary, in a colour per kind so an AppContainer
+    # run and a reduced-token run cannot be mistaken for each other.
+    kind = (run.get("execution_boundary") or {}).get("kind")
+    colour = {"APPCONTAINER": "green", "RESTRICTED_TOKEN": "yellow"}.get(kind, "red")
+    text += f"\n\n[bold {colour}]{escape(boundary_line(run))}[/bold {colour}]"
+    control = "available" if run.get("descendant_control_available") else "unavailable"
+    text += f"\n[bold]Process-tree supervision[/bold]: {control}"
+    if run.get("authority_reduction"):
+        text += f"\n{run['authority_reduction']}"
+    descendants = run.get("descendant_processes", [])
+    if descendants:
+        text += "\n[bold]Observed descendants[/bold]"
+        for process in descendants:
+            identity = process.get("executable_path") or process.get("attribution_reason") or "unknown"
+            text += f"\n  - PID {process['pid']} (parent {process.get('parent_pid') or '-'}): {identity}"
+    return text
 
 
 class EvidenceScreen(Screen):
@@ -242,22 +270,7 @@ class EvidenceScreen(Screen):
         if run is None:
             output.update("")
             return
-        stdout_tail = _tail(run.get("stdout", ""), _OUTPUT_TAIL_LINES)
-        stderr_tail = run.get("stderr", "")
-        text = f"[bold]stdout (last {_OUTPUT_TAIL_LINES} lines)[/bold]\n{stdout_tail}"
-        if stderr_tail:
-            text += f"\n\n[bold]stderr[/bold]\n{_tail(stderr_tail, _OUTPUT_TAIL_LINES)}"
-        control = "available" if run.get("descendant_control_available") else "unavailable"
-        text += f"\n\n[bold]Process-tree supervision[/bold]: {control}"
-        if run.get("authority_reduction"):
-            text += f"\n{run['authority_reduction']}"
-        descendants = run.get("descendant_processes", [])
-        if descendants:
-            text += "\n[bold]Observed descendants[/bold]"
-            for process in descendants:
-                identity = process.get("executable_path") or process.get("attribution_reason") or "unknown"
-                text += f"\n  - PID {process['pid']} (parent {process.get('parent_pid') or '-'}): {identity}"
-        output.update(text)
+        output.update(format_run_detail(run))
 
     def _update_run_buttons(self) -> None:
         run = self._selected_run()

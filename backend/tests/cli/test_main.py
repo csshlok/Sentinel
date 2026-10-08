@@ -300,3 +300,39 @@ def test_tool_trust_omits_optional_fields_when_not_given(monkeypatch):
     )
     body = json.loads(call["body"])
     assert body == {"actor_id": ACTOR, "decision": "DENY", "scope": "exact_version"}
+
+
+_BOX_RUN = {"id": "r1", "status": "PASSED", "adapter": "claude", "execution_boundary": {
+    "kind": "APPCONTAINER", "capabilities": ["internetClient"], "integrity_rid": "0x1000",
+    "job_verified": True, "workspace_drive": "Z:"}}
+_REDUCED_RUN = {"id": "r2", "status": "PASSED", "adapter": "generic",
+                "execution_boundary": {"kind": "RESTRICTED_TOKEN", "job_verified": True}}
+
+
+@pytest.mark.parametrize(("run", "expected", "absent"), [
+    (_BOX_RUN, "Boundary: AppContainer (capabilities: internetClient; integrity low; "
+               "Job verified; workspace drive Z:)", "reduced token"),
+    (_REDUCED_RUN, "Boundary: reduced token only (restricted token in a Job Object; "
+                   "not a sandbox", "AppContainer"),
+])
+def test_agent_output_names_the_observed_boundary(monkeypatch, run, expected, absent):
+    """Plan 02-04 (SC4): CLI output alone tells the two boundaries apart."""
+
+    transport = FakeHttpTransport([json_response(200, run)])
+    _patch_client(monkeypatch, transport)
+    result = runner.invoke(cli_main.app, ["agent", "launch", CHANGE, ACTOR, "claude",
+                                          "--no-color"])
+    assert result.exit_code == 0, result.stdout
+    first = result.stdout.splitlines()[0]
+    assert first.startswith(expected) and absent not in first
+
+
+def test_agent_list_prints_one_boundary_line_per_run_and_json_stays_clean(monkeypatch):
+    transport = FakeHttpTransport([json_response(200, {"items": [_BOX_RUN, _REDUCED_RUN]})])
+    _patch_client(monkeypatch, transport)
+    result = runner.invoke(cli_main.app, ["agent", "list", CHANGE, "--no-color"])
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("r1: Boundary: AppContainer")
+    assert lines[1].startswith("r2: Boundary: reduced token only")
+    payload, _ = _invoke(monkeypatch, {"items": [_BOX_RUN]}, ["agent", "list", CHANGE])
+    assert payload == {"items": [_BOX_RUN]}

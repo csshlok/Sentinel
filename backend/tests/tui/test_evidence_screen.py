@@ -1,4 +1,4 @@
-from backend.app.tui.evidence_screen import EvidenceScreen, format_evidence
+from backend.app.tui.evidence_screen import EvidenceScreen, format_evidence, format_run_detail
 
 
 def test_format_evidence_all_missing_shows_honest_empty_states() -> None:
@@ -41,3 +41,16 @@ def test_format_evidence_shows_assurance_facts() -> None:
 def test_screen_is_constructible() -> None:
     screen = EvidenceScreen("change-1", "http://127.0.0.1:8000")
     assert screen.change_id == "change-1"
+
+
+def test_run_detail_shows_each_boundary_in_its_own_colour() -> None:
+    """Plan 02-04 (SC4): the TUI alone tells an AppContainer run from a reduced-token run."""
+
+    box = format_run_detail({"execution_boundary": {
+        "kind": "APPCONTAINER", "capabilities": ["internetClient"], "integrity_rid": "0x1000",
+        "job_verified": True, "workspace_drive": "Z:"}})
+    reduced = format_run_detail({"execution_boundary": {"kind": "RESTRICTED_TOKEN"}})
+    unknown = format_run_detail({})
+    assert "[bold green]Boundary: AppContainer (capabilities: internetClient" in box
+    assert "[bold yellow]Boundary: reduced token only" in reduced and "AppContainer" not in reduced
+    assert "[bold red]Boundary: not observed" in unknown

@@ -28,6 +28,7 @@ from backend.app.cli.passport_commands import (
     VerifyUsageCommand, export_passport_command, rotate_identity_command, trust_app,
     verify_command,
 )
+from backend.app.core.boundary_text import boundary_lines
 from backend.app.core.errors import AppError
 from backend.app.core.evidence_store import (
     default_database_path,
@@ -101,7 +102,9 @@ def _console(no_color: bool) -> Console:
     return Console(no_color=plain, highlight=not plain)
 
 
-def _run(callback, *, as_json: bool, no_color: bool) -> None:
+def _run(callback, *, as_json: bool, no_color: bool, summary=None) -> None:
+    """``summary(result)`` lines are printed before a human-readable result (never in JSON)."""
+
     console = _console(no_color)
     try:
         result = callback()
@@ -126,6 +129,8 @@ def _run(callback, *, as_json: bool, no_color: bool) -> None:
     if as_json:
         typer.echo(json.dumps(result, separators=(",", ":"), sort_keys=True))
     else:
+        for line in (summary(result) if summary is not None else []):
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
         console.print(result)
     raise typer.Exit(EXIT_OK)
 
@@ -608,7 +613,8 @@ def agent_adapters(api_url: str = ApiUrlOption, json_: bool = JsonOption, no_col
 
 @agent_app.command("list")
 def agent_list(change_id: UUID, api_url: str = ApiUrlOption, json_: bool = JsonOption, no_color: bool = NoColorOption) -> None:
-    _run(lambda: ApiClient(api_url).list_agent_runs(change_id), as_json=json_, no_color=no_color)
+    _run(lambda: ApiClient(api_url).list_agent_runs(change_id), as_json=json_, no_color=no_color,
+         summary=boundary_lines)
 
 
 @agent_app.command("launch")
@@ -636,6 +642,7 @@ def agent_launch(
         ),
         as_json=json_,
         no_color=no_color,
+        summary=boundary_lines,
     )
 
 
@@ -650,7 +657,7 @@ def agent_attach(
         lambda: ApiClient(api_url).attach_agent(
             change_id, actor_id=actor_id, adapter=adapter, external_run_id=external_run_id,
             idempotency_key=idempotency_key),
-        as_json=json_, no_color=no_color,
+        as_json=json_, no_color=no_color, summary=boundary_lines,
     )
 
 
@@ -661,7 +668,7 @@ def agent_stop(
 ) -> None:
     """Stop a launched run and its supervised Job Object tree when available."""
     _run(lambda: ApiClient(api_url).stop_agent(change_id, run_id, actor_id=actor_id),
-         as_json=json_, no_color=no_color)
+         as_json=json_, no_color=no_color, summary=boundary_lines)
 
 
 @agent_app.command("pause")
@@ -671,7 +678,7 @@ def agent_pause(
 ) -> None:
     """Suspend the top-level process of a running agent (Windows only; direct child only)."""
     _run(lambda: ApiClient(api_url).pause_agent(change_id, run_id, actor_id=actor_id),
-         as_json=json_, no_color=no_color)
+         as_json=json_, no_color=no_color, summary=boundary_lines)
 
 
 @agent_app.command("resume")
@@ -681,7 +688,7 @@ def agent_resume(
 ) -> None:
     """Resume a previously paused agent run's top-level process."""
     _run(lambda: ApiClient(api_url).resume_agent(change_id, run_id, actor_id=actor_id),
-         as_json=json_, no_color=no_color)
+         as_json=json_, no_color=no_color, summary=boundary_lines)
 
 
 @assurance_app.command("plan")

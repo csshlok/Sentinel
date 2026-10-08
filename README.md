@@ -65,8 +65,8 @@ did doesn't depend on trusting the agent's account of itself.
 - **Launch any other executable under supervision** with a restricted access token (maximum
   privileges disabled) inside a Job Object. Every descendant process is attributed: PID, parent,
   image path, command line, lifetime, exit code.
-- **Work in an isolated workspace and apply changes back deliberately.** The agent edits a
-  Sentinel-owned clone of your repository. Sentinel commits the result, shows you a preview, and
+- **Work in a separate workspace and apply changes back deliberately.** The agent edits a
+  Sentinel-owned clone of your repository inside its AppContainer. Sentinel commits the result, shows you a preview, and
   applies it to your branch with a hardened fetch and a fast-forward-only merge — or discards it.
 - **Run checks in a confined check box.** Python and Node verification commands, assurance
   checks, and coverage collection run in a per-run AppContainer over a copy of the repository's
@@ -166,7 +166,7 @@ implement typed ports against that contract and are wired together in a single c
 ## Interfaces
 
 Every interface below talks to the same backend through the same frozen contract — 81
-operations across 76 routes, described by 139 typed schemas.
+operations across 76 routes, described by 141 typed schemas.
 
 - **Backend** (`backend/app`) — a local FastAPI service and the single source of truth. SQLite in
   WAL mode, bearer-token authenticated, loopback by default.
@@ -177,7 +177,7 @@ operations across 76 routes, described by 139 typed schemas.
   full-screen control: evidence, agent runs (with live output and pause/resume), a branch/fork
   tree for checkpoint forking, passport, recovery, delegation, tool trust, and the event timeline.
 - **Desktop app** (`apps/desktop`, Electron + React) — a native Windows shell over the same API;
-  contextually isolated, sandboxed, with the API token owned by the main process and never
+  with Electron's context isolation and the Electron renderer sandbox enabled, and the API token owned by the main process and never
   exposed to the renderer.
 
 ## Security posture
