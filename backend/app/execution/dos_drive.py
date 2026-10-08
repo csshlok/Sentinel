@@ -123,25 +123,21 @@ def unmap_drive(letter: str, target: str | Path) -> bool:
     )
 
 
-def sweep_drives(root: str | Path, *, name_prefix: str = "") -> list[str]:
-    """Remove every mapping whose target is a child of ``root`` named ``name_prefix*``.
+def unmap_all(target: str | Path) -> list[str]:
+    """Remove every letter mapped exactly to ``target``; the letters removed.
 
-    Returns the ``letter -> target`` strings that were removed. Used at startup
-    for runs that crashed before their own removal ran.
+    Used by the workspace sweep for a run that ended before its own removal
+    ran. It is driven by a recorded target, never by enumerating other
+    profiles, so another Sentinel instance's live mapping is never touched.
     """
 
     _require_windows()
-    root_text = _normal(os.path.abspath(str(root)))
-    prefix = os.path.normcase(name_prefix)
+    target_text = os.path.abspath(str(target))
     removed: list[str] = []
     for letter in CANDIDATE_LETTERS:
-        for device in query_drive(letter):
-            resolved = _target_path(device)
-            if resolved is None or not _normal(resolved).startswith(root_text + os.sep):
-                continue
-            child = _normal(resolved)[len(root_text) + 1:].split(os.sep, 1)[0]
-            if not child.startswith(prefix):
-                continue
-            if unmap_drive(letter, resolved):
-                removed.append(f"{letter} -> {resolved}")
+        if any(_target_path(device) is not None
+               and _normal(_target_path(device) or "") == _normal(target_text)
+               for device in query_drive(letter)):
+            if unmap_drive(letter, target_text):
+                removed.append(letter)
     return removed

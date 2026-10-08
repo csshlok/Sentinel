@@ -7,17 +7,14 @@ amount of API usage. Also skipped when ``~/.claude/.credentials.json`` or a
 ``claude`` executable is missing.
 
 Step 1 (create and edit): ``--allowedTools "Read Edit Write"``, as validated in
-spike 004. Step 2 (rename and delete, plan 01-04 Task 2 decision option-a,
-user-selected): a second run allowed only ``Bash(git mv:*)`` and
-``Bash(git rm:*)``. If Claude Code's Bash tool (Git Bash) cannot run inside the
-AppContainer, step 2 fails with the captured output rather than being weakened.
+spike 004. Step 2 (rename and delete): a second run allowed only the
+``PowerShell`` tool.
 
-Measured on 2026-09-28 (Claude Code 2.1.284, Git for Windows): step 1 PASSED;
-step 2 FAILED -- Git Bash started inside the container, but ``git mv`` run
-from it exited 66 (0x42, the low byte of STATUS_DLL_INIT_FAILED 0xC0000142)
-with no output, and bash started directly by a boxed process dies with
-0xC0000142. Real-agent rename/delete through the Bash tool therefore remains
-open; boxed Git itself renames and deletes (test_box_git_real.py).
+History: on 2026-09-28 (Claude Code 2.1.284) step 2 used ``Bash(git mv:*)`` and
+``Bash(git rm:*)`` and FAILED, because Git Bash (MSYS2) cannot initialise inside
+the AppContainer (0xC0000142). Spike 007 (2026-10-08) showed the PowerShell
+tool works when the workspace is run from a per-run drive (``<letter>:/ws``),
+which the claude profile now does (quick 261008-9pq).
 Then preview and apply land the changes in the user repository. The real
 ``~/.claude/.credentials.json`` is only read by the broker; its SHA-256 must
 be unchanged afterwards and no staged copy may remain.
@@ -39,6 +36,7 @@ from backend.app.contracts.models import AgentLaunchRequest, AgentRunStatus, Wor
 from backend.app.credentials.broker import CredentialBroker
 from backend.app.credentials.memory_store import InMemoryCredentialStore
 from backend.app.execution.agent_profiles import BoundaryKind
+from backend.app.execution.dos_drive import query_drive
 from backend.app.execution.launcher import AgentLauncher
 from backend.app.execution.process_supervisor import IS_WINDOWS
 from backend.app.workspace.manager import WorkspaceManager
@@ -61,9 +59,9 @@ pytestmark = [
 
 EDIT_PROMPT = ("Edit calc.py: add a function sub(a, b) that returns a - b. Then create notes.txt "
                "containing exactly: edited-in-appcontainer. Do nothing else.")
-RENAME_PROMPT = ("Use the Bash tool to run exactly these two commands, one at a time, in the "
-                 "current directory: `git mv rename_me.txt renamed.txt` and then "
-                 "`git rm -q delete_me.txt`. Do nothing else.")
+RENAME_PROMPT = ("Use the PowerShell tool to run exactly these two commands, one at a time, in "
+                 "the current directory: `Rename-Item rename_me.txt renamed.txt` and then "
+                 "`Remove-Item delete_me.txt`. Do nothing else.")
 
 
 def _sha256(path: Path) -> str:
@@ -130,9 +128,9 @@ def test_real_claude_code_edits_renames_and_deletes_inside_the_workspace(
         assert facts["capability_sids"] == ["S-1-15-3-1"]
         assert facts["job_verified"] is True
 
-        # Step 2 (option-a): rename and delete through the narrowly allowed Bash tool.
-        second = _claude(launcher, change_id, user_repo, RENAME_PROMPT,
-                         "Bash(git mv:*) Bash(git rm:*)")
+        # Step 2: rename and delete through the PowerShell tool (quick 261008-9pq; Git
+        # Bash cannot initialise in the box, spike 007).
+        second = _claude(launcher, change_id, user_repo, RENAME_PROMPT, "PowerShell")
         record = workspace_manager.live_for_change(change_id)
         evidence["step2"] = _evidence(second, record)
         evidence["step2"]["staged_credential_exists_after"] = os.path.lexists(staged)
@@ -144,6 +142,11 @@ def test_real_claude_code_edits_renames_and_deletes_inside_the_workspace(
         assert not (workspace / "rename_me.txt").exists(), evidence["step2"]
         assert not (workspace / "delete_me.txt").exists(), evidence["step2"]
         assert repo_fingerprint(user_repo) == before
+        # The run's workspace drive is disclosed and gone once the run has ended.
+        drive_notes = [text for text in second.limitations if "exposed to the agent as drive" in text]
+        assert len(drive_notes) == 1, second.limitations
+        letter = drive_notes[0].split("as drive ", 1)[1][:2]
+        assert query_drive(letter) == [], letter
 
         # Apply-back lands the agent's work in the user repository.
         preview = workspace_manager.preview(change_id)

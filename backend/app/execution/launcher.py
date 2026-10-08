@@ -50,6 +50,7 @@ from backend.app.execution.agent_profiles import (
     resolve_profile, validate_extra_profiles,
 )
 from backend.app.execution.agent_staging import ensure_tool_snapshot, rebuild_staged_home
+from backend.app.execution.dos_drive import map_drive, unmap_drive
 from backend.app.execution.appcontainer import (
     CAPABILITY_SIDS, appcontainer_unsupported, base_environment, spawn_appcontainer_supervised,
 )
@@ -120,6 +121,13 @@ CREDENTIAL_CHANGED_LIMITATION = (
     "it was not copied back, so the host login may need to be refreshed.")
 CREDENTIAL_NOT_STAGED_LIMITATION = (
     "No model credential was staged for this run (none was configured or found).")
+WORKSPACE_DRIVE_LIMITATION = (
+    "The workspace was exposed to the agent as drive {letter} for this run (Windows "
+    "PowerShell cannot work below folders the AppContainer may not list); other processes "
+    "of the same Windows user could see that drive letter while the run lasted.")
+WORKSPACE_DRIVE_NOT_REMOVED_LIMITATION = (
+    "The run's workspace drive {letter} could not be confirmed removed; the startup "
+    "workspace sweep removes it.")
 CREDENTIAL_NOT_DELETED_LIMITATION = (
     "The staged model credential could not be confirmed deleted after the run; the "
     "workspace sweep removes the staged home.")
@@ -389,6 +397,7 @@ class AgentLauncher:
         staged: list[StagedCredential] = []
         revoked = [False]
         notes: list[str] = []
+        drives: list[tuple[str, Path]] = []
         spawned: list[SupervisedProcess] = []
         limitations = list(APPCONTAINER_LIMITATIONS) if "internetClient" in profile.capabilities \
             else [WORKSPACE_CONTENT_LIMITATION, CONTAINMENT_LIMITATION]
@@ -407,10 +416,22 @@ class AgentLauncher:
                 texts.append(CREDENTIAL_CHANGED_LIMITATION)
             return texts
 
+        def unmap() -> list[str]:
+            texts: list[str] = []
+            while drives:
+                letter, target = drives.pop()
+                try:
+                    removed = unmap_drive(letter, target)
+                except OSError:
+                    removed = False
+                if not removed:
+                    texts.append(WORKSPACE_DRIVE_NOT_REMOVED_LIMITATION.format(letter=letter))
+            return texts
+
         def prepare(arguments: list[str]) -> tuple[list[str], Path, dict[str, str]]:
             return self._prepare_appcontainer(
                 change_id, lease, profile, request, arguments, host_env, root, secrets,
-                tool_manifest, staged, notes)
+                tool_manifest, staged, notes, drives)
 
         def spawn(arguments, process_cwd, process_env, redact):
             process = spawn_appcontainer_supervised(
@@ -434,7 +455,8 @@ class AgentLauncher:
             }
 
         def after() -> list[str]:
-            return [*notes, *revoke()]
+            # The run's process tree has ended (kill-on-close Job), so the drive can go.
+            return [*notes, *revoke(), *unmap()]
 
         strategy = _LaunchStrategy(
             spawn=spawn, supervise=True, start_update=start_update,
@@ -452,7 +474,7 @@ class AgentLauncher:
             )
             return run
         finally:
-            leftover = revoke()  # only if _execute itself raised before `after`
+            leftover = [*revoke(), *unmap()]  # only if _execute raised before `after`
             facts = getattr(spawned[0], "appcontainer", None) if spawned else None
             workspaces.finish_run(
                 lease.id, run_id,
@@ -465,9 +487,14 @@ class AgentLauncher:
         self, change_id: UUID, lease: WorkspaceLease, profile: RuntimeProfile,
         request: AgentLaunchRequest, argv: list[str], host_env: Mapping[str, str], root: Path,
         secrets: list[str], tool_manifest: ToolManifest | None,
-        staged: list[StagedCredential], notes: list[str],
+        staged: list[StagedCredential], notes: list[str], drives: list[tuple[str, Path]],
     ) -> tuple[list[str], Path, dict[str, str]]:
-        """Snapshot, staged home, credential and environment for one AppContainer run."""
+        """Snapshot, staged home, credential, environment and cwd for one AppContainer run.
+
+        With ``profile.workspace_drive`` the AC folder is mapped to a per-run
+        drive letter and the run's cwd is ``<letter>:/<workspace>``; the
+        workspace record and journal keep the real workspace path.
+        """
 
         if (lease.container_path is None or lease.workspace_path is None
                 or not lease.package_sid):
@@ -511,7 +538,21 @@ class AgentLauncher:
             value = host_env.get(key.upper())
             if value is not None:
                 env[key.upper()] = value
-        return argv, Path(lease.workspace_path), env
+        cwd = Path(lease.workspace_path)
+        if profile.workspace_drive:
+            try:
+                relative = cwd.relative_to(container)
+                letter = map_drive(container)
+            except (OSError, ValueError) as exc:
+                raise AppError(
+                    "AGENT_WORKSPACE_DRIVE_UNAVAILABLE",
+                    "The workspace could not be exposed on a drive letter for the agent.",
+                    status_code=503,
+                ) from exc
+            drives.append((letter, container))
+            notes.append(WORKSPACE_DRIVE_LIMITATION.format(letter=letter))
+            cwd = Path(letter + "\\") / relative
+        return argv, cwd, env
 
     @staticmethod
     def _git_locations(root: Path) -> tuple[Path | None, Path | None]:

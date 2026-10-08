@@ -49,6 +49,7 @@ from backend.app.execution.agent_ports import (
     CredentialFingerprint,
     contains_credential_material,
 )
+from backend.app.execution.dos_drive import unmap_all
 from backend.app.execution.appcontainer import (
     delete_profile,
     ensure_profile,
@@ -1295,6 +1296,19 @@ class WorkspaceManager:
                 problem = f"could not remove the staged home ({type(exc).__name__})"
         return problem
 
+    def _unmap_drives(self, record: WorkspaceRecord) -> None:
+        """Remove a crashed run's workspace drive (only mappings to this record's AC folder)."""
+
+        if record.container_path is None or os.name != "nt":
+            return
+        try:
+            removed = unmap_all(record.container_path)
+        except OSError:
+            LOGGER.warning("sweep: workspace %s drive removal failed", record.id)
+            return
+        if removed:
+            LOGGER.info("sweep: workspace %s drive(s) %s removed", record.id, ", ".join(removed))
+
     def sweep(self, *, live_run_ids: Collection[UUID] | None = None) -> SweepReport:
         """Recover every unclean workspace recorded in THIS database (never anything else).
 
@@ -1305,7 +1319,8 @@ class WorkspaceManager:
         skipped. CREATING, APPLIED, DISCARDED and CLEANUP_FAILED rows are
         cleaned. READY, SEALED and APPLY_REFUSED rows hold unapplied work and
         are preserved, but their staged home (credentials) is always purged and
-        a stale run marker is cleared and disclosed as interrupted.
+        a stale run marker is cleared and disclosed as interrupted. A per-run
+        workspace drive left by an interrupted run is removed (exact target only).
         """
 
         live = {str(run) for run in (self._live_runs if live_run_ids is None else live_run_ids)}
@@ -1319,6 +1334,7 @@ class WorkspaceManager:
                 continue
             if record.id in self._creating:
                 continue
+            self._unmap_drives(record)
             try:
                 interrupted = record.active_run_id
                 if interrupted is not None:

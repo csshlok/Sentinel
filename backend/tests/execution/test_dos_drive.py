@@ -12,7 +12,7 @@ from backend.app.execution.dos_drive import (
     CANDIDATE_LETTERS,
     map_drive,
     query_drive,
-    sweep_drives,
+    unmap_all,
     unmap_drive,
 )
 
@@ -78,16 +78,15 @@ def test_map_raises_when_no_letter_is_free(tmp_path, monkeypatch):
         map_drive(target)
 
 
-def test_sweep_removes_only_prefixed_targets_under_root(tmp_path, cleanup):
-    packages = tmp_path / "Packages"
-    ours = packages / "sentinel.w.abc" / "AC"
-    other_profile = packages / "someone.else" / "AC"
-    outside = tmp_path / "elsewhere"
-    for path in (ours, other_profile, outside):
+def test_unmap_all_removes_only_mappings_of_that_target(tmp_path, cleanup):
+    ours = tmp_path / "Packages" / "sentinel.w.abc" / "AC"
+    other = tmp_path / "Packages" / "sentinel.w.other" / "AC"
+    for path in (ours, other):
         path.mkdir(parents=True)
-    mapped = {target: map_drive(target) for target in (ours, other_profile, outside)}
-    cleanup.extend((letter, target) for target, letter in mapped.items())
-    removed = sweep_drives(packages, name_prefix="sentinel.w.")
-    assert removed == [f"{mapped[ours]} -> {ours}"]
-    assert query_drive(mapped[ours]) == []
-    assert query_drive(mapped[other_profile]) and query_drive(mapped[outside])
+    first = map_drive(ours)
+    second = map_drive(ours)
+    foreign = map_drive(other)
+    cleanup.extend([(first, ours), (second, ours), (foreign, other)])
+    assert sorted(unmap_all(ours)) == sorted([first, second])
+    assert query_drive(first) == [] and query_drive(second) == []
+    assert query_drive(foreign)

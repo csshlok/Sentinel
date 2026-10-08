@@ -127,6 +127,21 @@ def box(tmp_path, monkeypatch):
         raise verification_failed("integrity")
 
     monkeypatch.setattr(module, "spawn_appcontainer_supervised", failing_spawn)
+
+    drives = {"mapped": [], "unmapped": [], "map_error": None, "unmap_result": True}
+
+    def fake_map(target):
+        if drives["map_error"] is not None:
+            raise drives["map_error"]
+        drives["mapped"].append(Path(target))
+        return "Z:"
+
+    def fake_unmap(letter, target):
+        drives["unmapped"].append((letter, Path(target)))
+        return drives["unmap_result"]
+
+    monkeypatch.setattr(module, "map_drive", fake_map)
+    monkeypatch.setattr(module, "unmap_drive", fake_unmap)
     lease = FakeLease(uuid4(), "sentinel.test.fake", "S-1-15-2-1-2-3-4-5-6-7",
                       container, container / "ws")
     provider = FakeProvider(lease)
@@ -136,7 +151,7 @@ def box(tmp_path, monkeypatch):
     launcher.on_update = seen.append
     return {"repo": repo, "container": container, "exe": exe, "launcher": launcher,
             "provider": provider, "stager": stager, "spawn_calls": spawn_calls,
-            "restricted_calls": restricted_calls, "seen": seen}
+            "restricted_calls": restricted_calls, "seen": seen, "drives": drives}
 
 
 def claude(**kw) -> AgentLaunchRequest:
@@ -156,7 +171,10 @@ def test_verification_failure_is_an_error_run_that_never_falls_back(box):
     (call,) = box["spawn_calls"]
     snapshot = box["container"] / "tools" / "claude.exe"
     assert call["argv"] == [str(snapshot)] and snapshot.read_bytes() == box["exe"].read_bytes()
-    assert Path(call["cwd"]) == box["container"] / "ws"
+    # Spike 007: the run's cwd is the workspace on a per-run drive mapped to the AC folder.
+    assert Path(call["cwd"]) == Path("Z:\\") / "ws"
+    assert box["drives"]["mapped"] == [box["container"]]
+    assert box["drives"]["unmapped"] == [("Z:", box["container"])]
     assert call["profile_name"] == "sentinel.test.fake"
     assert call["expected_package_sid"] == "S-1-15-2-1-2-3-4-5-6-7"
     assert tuple(call["capabilities"]) == ("internetClient",)
@@ -164,6 +182,8 @@ def test_verification_failure_is_an_error_run_that_never_falls_back(box):
     assert env["USERPROFILE"] == str(box["container"] / "home")
     assert env["PATH"].split(";")[0] == str(box["container"] / "tools")
     assert env["DISABLE_AUTOUPDATER"] == "1" and "LOCALAPPDATA" in env
+    assert env["CLAUDE_CODE_USE_POWERSHELL_TOOL"] == "1"
+    assert "CLAUDE_CODE_GIT_BASH_PATH" not in env
     # The credential was staged, fingerprinted on the workspace, and revoked exactly once.
     assert len(box["stager"].staged) == 1 and len(box["stager"].revoked) == 1
     assert box["provider"].credentials == [box["stager"].staged[0].fingerprint]
@@ -301,3 +321,24 @@ def test_authority_text_is_built_from_verified_facts():
     assert appcontainer_authority(None) is None
     unverified = AppContainerFacts("p", "S", True, 0x1000, (), False, datetime.now(UTC))
     assert appcontainer_authority(unverified) is None
+
+
+def test_a_drive_mapping_failure_is_an_error_run_that_never_spawns(box):
+    box["drives"]["map_error"] = OSError("No free drive letter is available for the workspace")
+    run = box["launcher"].launch(CHANGE, str(box["repo"]), claude(), 10_000)
+    assert run.status is AgentRunStatus.ERROR
+    assert any("AGENT_WORKSPACE_DRIVE_UNAVAILABLE" in text for text in run.limitations)
+    assert box["spawn_calls"] == [] and box["restricted_calls"] == []
+    assert box["drives"]["unmapped"] == []
+    assert len(box["stager"].revoked) == len(box["stager"].staged)
+    (finished,) = box["provider"].finished
+    assert finished["status"] == "ERROR"
+
+
+def test_the_drive_is_named_in_the_run_and_a_failed_removal_is_reported(box):
+    box["drives"]["unmap_result"] = False
+    run = box["launcher"].launch(CHANGE, str(box["repo"]), claude(), 10_000)
+    assert any("exposed to the agent as drive Z:" in text for text in run.limitations)
+    assert any("drive Z: could not be confirmed removed" in text for text in run.limitations)
+    # Removal is attempted exactly once, even though both `after` and the finally run.
+    assert box["drives"]["unmapped"] == [("Z:", box["container"])]
