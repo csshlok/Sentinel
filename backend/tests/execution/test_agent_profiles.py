@@ -78,9 +78,11 @@ def test_builtin_profile_contents():
     assert claude.capabilities == ("internetClient",)
     assert claude.tool_snapshot and claude.staged_home
     assert claude.credential_kind == "claude-oauth-file"
-    assert claude.requires_native_executable and claude.git_bash_env
+    assert claude.requires_native_executable and not claude.git_bash_env
+    assert claude.powershell_tool and claude.workspace_drive
     assert dict(claude.static_env) == {
         "DISABLE_AUTOUPDATER": "1", "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
+        "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
     }
     codex = BUILTIN_PROFILES["codex"]
     assert codex.boundary is BoundaryKind.UNAVAILABLE
@@ -146,8 +148,8 @@ def test_claude_environment_has_exactly_the_validated_keys(tmp_path, monkeypatch
     assert set(env) == {
         "SystemRoot", "windir", "COMSPEC", "LOCALAPPDATA", "TEMP", "TMP", "PATH",
         "USERPROFILE", "HOME", "APPDATA", "HOMEDRIVE", "HOMEPATH",
-        "CLAUDE_CODE_GIT_BASH_PATH", "DISABLE_AUTOUPDATER", "GIT_CONFIG_NOSYSTEM",
-        "GIT_TERMINAL_PROMPT",
+        "DISABLE_AUTOUPDATER", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+        "CLAUDE_CODE_USE_POWERSHELL_TOOL", "PSModulePath",
     }
     assert env["LOCALAPPDATA"] == BASE_ENV["LOCALAPPDATA"]  # never os.environ (Pitfall 2)
     assert env["PATH"].split(";") == [
@@ -157,7 +159,10 @@ def test_claude_environment_has_exactly_the_validated_keys(tmp_path, monkeypatch
     assert env["USERPROFILE"] == env["HOME"] == str(home)
     assert env["APPDATA"] == str(home / "AppData" / "Roaming")
     assert env["HOMEDRIVE"] == "C:" and env["HOMEPATH"] == r"\ac\home"
-    assert env["CLAUDE_CODE_GIT_BASH_PATH"] == r"C:\Program Files\Git\bin\bash.exe"
+    # Spike 007: Git Bash cannot run in the box; the agent's shell is PowerShell.
+    assert "CLAUDE_CODE_GIT_BASH_PATH" not in env
+    assert env["CLAUDE_CODE_USE_POWERSHELL_TOOL"] == "1"
+    assert env["PSModulePath"] == r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules"
     assert env["DISABLE_AUTOUPDATER"] == "1"
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
     for key in ("SystemRoot", "windir", "COMSPEC", "TEMP", "TMP"):
@@ -194,3 +199,25 @@ def test_environment_refuses_a_non_appcontainer_profile_and_an_incomplete_base()
 def test_protected_keys_cover_the_plan_list():
     assert {"PATH", "LOCALAPPDATA", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE",
             "HOME", "APPDATA"} <= PROTECTED_ENV_KEYS
+
+
+def test_git_bash_path_is_set_only_for_a_profile_that_asks_for_it():
+    profile = RuntimeProfile("bash", BoundaryKind.APPCONTAINER, git_bash_env=True)
+    env = appcontainer_environment(
+        profile, base_env=BASE_ENV, home=None, tools_dir=None, git_cmd_dir=None,
+        node_dir=None, git_bash=Path(r"C:\Program Files\Git\bin\bash.exe"))
+    assert env["CLAUDE_CODE_GIT_BASH_PATH"] == r"C:\Program Files\Git\bin\bash.exe"
+    assert "PSModulePath" not in env
+
+
+def test_claude_profile_uses_the_powershell_tool_on_a_workspace_drive():
+    profile = BUILTIN_PROFILES["claude"]
+    assert profile.powershell_tool and profile.workspace_drive
+    assert not profile.git_bash_env
+
+
+def test_a_profile_cannot_override_psmodulepath():
+    bad = RuntimeProfile("bad", BoundaryKind.APPCONTAINER,
+                         static_env=(("PSModulePath", r"C:\evil"),))
+    with pytest.raises(ValueError):
+        validate_extra_profiles({"bad": bad})

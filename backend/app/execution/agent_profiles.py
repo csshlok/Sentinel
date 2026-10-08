@@ -47,6 +47,8 @@ class RuntimeProfile:
     static_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     requires_native_executable: bool = False
     git_bash_env: bool = False
+    powershell_tool: bool = False
+    workspace_drive: bool = False
     unavailable_reason: str | None = None
 
 
@@ -54,7 +56,7 @@ class RuntimeProfile:
 # folder, staged home, known folders). A profile can never override them.
 PROTECTED_ENV_KEYS = frozenset({
     "PATH", "LOCALAPPDATA", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOME",
-    "APPDATA", "HOMEDRIVE", "HOMEPATH", "COMSPEC",
+    "APPDATA", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PSMODULEPATH",
 })
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _BASE_KEYS = ("SystemRoot", "windir", "COMSPEC", "LOCALAPPDATA", "TEMP", "TMP")
@@ -73,14 +75,18 @@ BUILTIN_PROFILES: Mapping[str, RuntimeProfile] = types.MappingProxyType({
         staged_home=True,
         credential_kind="claude-oauth-file",
         # Validated in spike 004: no self-update inside the box, no system Git
-        # config, no interactive Git credential prompt.
+        # config, no interactive Git credential prompt. Spike 007: Git Bash
+        # (MSYS2) cannot initialise in the box, so the agent's shell is its
+        # PowerShell tool, run from the workspace on a per-run drive.
         static_env=(
             ("DISABLE_AUTOUPDATER", "1"),
             ("GIT_CONFIG_NOSYSTEM", "1"),
             ("GIT_TERMINAL_PROMPT", "0"),
+            ("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1"),
         ),
         requires_native_executable=True,
-        git_bash_env=True,
+        powershell_tool=True,
+        workspace_drive=True,
     ),
     "codex": RuntimeProfile(
         "codex", BoundaryKind.UNAVAILABLE, unavailable_reason=CODEX_UNAVAILABLE_REASON,
@@ -146,7 +152,8 @@ def appcontainer_environment(
     and it is copied as is. ``PATH`` is ``tools_dir`` → Git ``cmd`` → Node →
     the base ``PATH``. The home keys are set only when the profile stages a
     home; ``CLAUDE_CODE_GIT_BASH_PATH`` only when the profile asks for it and
-    Git Bash exists.
+    Git Bash exists; ``PSModulePath`` (Windows PowerShell's system modules only)
+    when the profile uses a PowerShell tool.
     """
 
     if profile.boundary is not BoundaryKind.APPCONTAINER:
@@ -172,6 +179,9 @@ def appcontainer_environment(
         })
     if profile.git_bash_env and git_bash is not None:
         env["CLAUDE_CODE_GIT_BASH_PATH"] = str(git_bash)
+    if profile.powershell_tool:
+        env["PSModulePath"] = ntpath.join(
+            base_env["SystemRoot"], "System32", "WindowsPowerShell", "v1.0", "Modules")
     for key, value in profile.static_env:
         if key.upper() in PROTECTED_ENV_KEYS:
             raise ValueError(f"The runtime profile may not override the protected key {key}.")
