@@ -73,6 +73,7 @@ from backend.app.passport.builder import PassportBuilder
 from backend.app.passport.signing import SigningService
 from backend.app.policy.service import DelegationPolicyEngine
 from backend.app.providers.github import GitHubProvider
+from backend.app.providers.github_check import GitHubCheckPublisher
 from backend.app.providers.http_transport import HttpTransport, UrllibHttpTransport
 from backend.app.providers.provider_port import GitHubProviderAdapter
 from backend.app.recovery.git_recovery import GitRecoveryEngine
@@ -435,6 +436,7 @@ def _build_runtime_services(
         workspace=(WorkspaceService(workspace_manager, policy, service, journal=resolved_journal)
                    if workspace_manager is not None else None),
         checks=CheckRunService(CheckRunRepository(database), service),
+        github_checks=GitHubCheckPublisher(database, broker, http_transport),
     )
 
 

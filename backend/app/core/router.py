@@ -92,8 +92,6 @@ from backend.app.core.errors import AppError, adapter_unavailable
 from backend.app.passport.v2 import PassportV2Issuer
 from backend.app.passport.bundle import BundleExporter
 from backend.app.providers.github_app import GitHubAppManifestFlows, app_provider_name
-from backend.app.providers.github_check import GitHubCheckPublisher
-from backend.app.providers.http_transport import UrllibHttpTransport
 from backend.app.policy.version import product_version
 
 
@@ -413,6 +411,10 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
             raise AppError("GITHUB_CHECK_PAYLOAD_FORBIDDEN",
                            "GitHub Checks are built only from Sentinel's Change records.",
                            status_code=422)
+        publisher = runtime.github_checks
+        if publisher is None:
+            raise adapter_unavailable("github_checks")
+
         def publish() -> GitHubCheckPublicationResult:
             service.get(change_id)
             operation = runtime.provider_operations.operations.get_succeeded_operation(
@@ -428,11 +430,8 @@ def build_router(service: ChangeService, runtime: RuntimeServices) -> APIRouter:
             finally:
                 runtime.credentials.revoke_grant(grant.id)
             try:
-                view = GitHubCheckPublisher(
-                    service.repository.database, runtime.credentials.broker,
-                    UrllibHttpTransport(),
-                ).publish(change_id, decline_app=decline_app,
-                          fallback_token=fallback_token)
+                view = publisher.publish(change_id, decline_app=decline_app,
+                                         fallback_token=fallback_token)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 raise AppError("GITHUB_CHECK_UNAVAILABLE",
                                "GitHub Check could not be published from current evidence.",

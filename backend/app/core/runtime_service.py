@@ -92,6 +92,7 @@ Clock = Callable[[], datetime]
 
 
 if TYPE_CHECKING:  # avoids a core -> workspace import cycle at runtime
+    from backend.app.providers.github_check import GitHubCheckPublisher
     from backend.app.workspace.service import WorkspaceService
 
 
@@ -802,3 +803,4 @@ class RuntimeServices:
     tools: ToolRegistryService
     workspace: WorkspaceService | None = None
     checks: CheckRunService | None = None
+    github_checks: GitHubCheckPublisher | None = None
