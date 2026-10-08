@@ -144,6 +144,44 @@ def test_monitor_records_production_generator_resume(tmp_path: Path, driver: str
                for item in json.loads(record)["violations"]), run.stderr
 
 
+@pytest.mark.parametrize("launch,reason", [
+    ("thread", "non-main thread"),
+    ("atexit", "outside the pytest session stack"),
+])
+def test_monitor_requires_main_thread_and_session_root(
+        tmp_path: Path, launch: str, reason: str) -> None:
+    root = tmp_path / "tree"
+    scratch = tmp_path / "scratch"
+    (root / "tests").mkdir(parents=True)
+    scratch.mkdir()
+    (root / "tests/__init__.py").write_text("", encoding="utf-8")
+    (root / "tests/test_helpers.py").write_text(
+        "def test_compute():\n    return 5\n", encoding="utf-8")
+    call = ("import threading\n"
+            "    worker = threading.Thread(target=test_compute)\n"
+            "    worker.start()\n    worker.join()\n") if launch == "thread" else (
+            "import atexit\n    atexit.register(test_compute)\n")
+    (root / "tests/test_price.py").write_text(
+        "from tests.test_helpers import test_compute\n"
+        "def test_price():\n    " + call, encoding="utf-8")
+    argv, record_name = prepare_monitor(
+        scratch, root, ["tests/test_helpers.py"],
+        [sys.executable, "-X", f"pycache_prefix={scratch / 'pycache'}",
+         "-m", "coverage", "run", "-m", "pytest", "-q", "tests/test_price.py",
+         "-o", "addopts=", f"--junitxml={scratch / 'junit.xml'}"])
+    run = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert reason in assess_record((scratch / record_name).read_bytes(),
+                                   ["tests/test_helpers.py"])
+
+
+def test_profile_fallback_record_is_unknown() -> None:
+    record = json.dumps({"schema": 1, "backend": "sys.setprofile",
+                         "changed_tests": ["tests/test_helpers.py"],
+                         "violations": []}).encode()
+    assert "cannot observe all threads" in assess_record(record, ["tests/test_helpers.py"])
+
+
 def test_monitor_evidence_is_fail_closed() -> None:
     assert "missing" in assess_record(None, ["tests/test_helpers.py"])
     assert "unreadable" in assess_record(b"not json", ["tests/test_helpers.py"])

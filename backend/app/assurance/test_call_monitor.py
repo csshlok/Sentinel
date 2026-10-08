@@ -12,6 +12,7 @@ import json
 import os
 import runpy
 import sys
+import threading
 from pathlib import Path
 
 RECORD_NAME = "test-call-monitor.json"
@@ -45,6 +46,8 @@ def _is_test_code(relative: str) -> bool:
 def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
     """Observe function starts in changed tests and write one bounded record at exit."""
     root = _normal(root)
+    session_entry = sys._getframe(1)
+    main_thread = threading.main_thread()
     targets = {_normal(os.path.join(root, path.replace("/", os.sep))): path
                for path in changed_tests}
     found: dict[str, str | None] = {}
@@ -61,14 +64,22 @@ def install_monitor(*, root: str, changed_tests: list[str], output: str) -> str:
         path = target(code.co_filename)
         if path is None:
             return
+        if threading.current_thread() is not main_thread:
+            violations.append(f"Changed test code ran on a non-main thread: "
+                              f"{path}:{code.co_firstlineno}")
+            return
         frame = started_frame.f_back if started_frame is not None else None
         while frame is not None:
+            if frame is session_entry:
+                return
             caller_path = _repository_path(frame.f_code.co_filename, root)
             if caller_path is not None and not _is_test_code(caller_path):
                 violations.append(f"{caller_path}:{frame.f_lineno} -> "
                                   f"{path}:{code.co_firstlineno}")
                 return
             frame = frame.f_back
+        violations.append("Changed test code ran outside the pytest session stack "
+                          f"(atexit/finalizer/signal handler): {path}:{code.co_firstlineno}")
 
     backend = "sys.setprofile"
     monitoring = getattr(sys, "monitoring", None)
@@ -149,8 +160,9 @@ def assess_record(data: bytes | None, changed_tests: list[str]) -> str | None:
                 for item in record["violations"])):
         return "Test-call monitor record is invalid."
     if record["violations"]:
-        return ("Repository production frame reached changed test module "
-                "(including callbacks): " + record["violations"][0])
+        return "Changed test code has an untrusted call path: " + record["violations"][0]
+    if record["backend"] == "sys.setprofile":
+        return "Test-call monitor fallback cannot observe all threads."
     return None
 
 

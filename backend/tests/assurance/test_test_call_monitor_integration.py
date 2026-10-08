@@ -42,8 +42,7 @@ def test_required_diff_rejects_production_call_into_changed_test(tmp_path: Path,
     result = _measure_changed_test(tmp_path, production)
     assert result.diff_exercised == "UNKNOWN"
     assert result.gate_satisfied is False
-    assert any("Repository production frame reached changed test module "
-               "(including callbacks):" in reason and "module.py:" in reason
+    assert any("Changed test code has an untrusted call path:" in reason and "module.py:" in reason
                and "tests/test_helpers.py:" in reason for reason in result.reasons)
 
 
@@ -53,7 +52,55 @@ def test_required_diff_allows_legitimate_added_test(tmp_path: Path) -> None:
     assert result.gate_satisfied is True
 
 
-def _measure_changed_test(tmp_path: Path, production: str) -> DiffCoverageResult:
+def test_required_diff_rejects_worker_thread_target(tmp_path: Path) -> None:
+    production = ("from concurrent.futures import ThreadPoolExecutor\n"
+                  "from sys import modules\n"
+                  "def price(x):\n"
+                  "    with ThreadPoolExecutor(1) as pool:\n"
+                  "        return pool.submit(modules['tests.test_helpers'].test_compute, x).result()\n")
+    result = _measure_changed_test(tmp_path, production)
+    assert result.diff_exercised == "UNKNOWN", result.reasons
+    assert result.gate_satisfied is False
+    assert any("non-main thread" in reason for reason in result.reasons)
+
+
+def test_required_diff_rejects_generator_resumed_by_production(tmp_path: Path) -> None:
+    helper = ("import builtins\n"
+              "def test_prime():\n"
+              "    def calc():\n"
+              "        x = yield\n"
+              "        while True:\n"
+              "            x = yield (-1 if x > 100 else x)\n"
+              "    builtins.SENTINEL_CALC = calc()\n"
+              "    next(builtins.SENTINEL_CALC)\n")
+    result = _measure_changed_test(
+        tmp_path, "import builtins\ndef price(x):\n"
+        "    return builtins.SENTINEL_CALC.send(x)\n",
+        helper=helper, test_body="    test_prime()\n    assert price(5) == 5\n")
+    assert result.diff_exercised == "UNKNOWN", result.reasons
+    assert result.gate_satisfied is False
+    assert any("module.py:" in reason for reason in result.reasons)
+
+
+@pytest.mark.parametrize("launch,phrase", [
+    ("thread", "non-main thread"), ("atexit", "outside the pytest session stack"),
+])
+def test_required_diff_rejects_unrooted_test_call(
+        tmp_path: Path, launch: str, phrase: str) -> None:
+    body = ("    import threading\n"
+            "    worker = threading.Thread(target=test_compute)\n"
+            "    worker.start()\n    worker.join()\n") if launch == "thread" else (
+            "    import atexit\n    atexit.register(test_compute)\n")
+    result = _measure_changed_test(
+        tmp_path, "def price(x):\n    return x\n",
+        test_body=body + "    assert price(5) == 5\n")
+    assert result.diff_exercised == "UNKNOWN", result.reasons
+    assert result.gate_satisfied is False
+    assert any(phrase in reason for reason in result.reasons)
+
+
+def _measure_changed_test(tmp_path: Path, production: str, *, helper: str | None = None,
+                          test_body: str | None = None) -> DiffCoverageResult:
     root = make_repo(tmp_path / "repo", {
         ".gitignore": "__pycache__/\n.pytest_cache/\n.coverage\n",
         "module.py": "def old():\n    return 1\n",
@@ -67,12 +114,13 @@ def _measure_changed_test(tmp_path: Path, production: str) -> DiffCoverageResult
     tracker = GitStateTracker()
     baseline = tracker.capture(change.id, "baseline", str(root), 1, 1_048_576)
     write(root, "module.py", "def old():\n    return 1\n\n" + production)
-    write(root, "tests/test_helpers.py",
+    write(root, "tests/test_helpers.py", helper or
           "def test_compute(x=0):\n    if x > 100:\n"
           "        return -1\n    return x\n")
     write(root, "tests/test_price.py",
           "import tests.test_helpers\nfrom module import price\n"
-          "def test_price():\n    assert price(5) == 5\n")
+          "from tests.test_helpers import *\n"
+          "def test_price():\n" + (test_body or "    assert price(5) == 5\n"))
     tested = tracker.capture(change.id, "tested", str(root), 1, 1_048_576)
     request = DiffCoverageRequest(
         baseline_checkpoint_id=baseline.id, tested_checkpoint_id=tested.id,
