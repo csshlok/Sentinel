@@ -9,6 +9,17 @@ does not launch at all, and an adapter whose profile says ``UNAVAILABLE``
 
 Built-in profiles cannot be overridden by callers. Pure module: no Win32, no
 process starts and no file I/O.
+
+Capabilities and their demonstrated need (plan 02-01, inventory in
+``backend/tests/execution/test_boundary_inventory.py``):
+
+* ``internetClient`` (claude only): the model API. A box reaches a public
+  HTTPS host with it and not without it
+  (``test_capability_need_real.py::test_internet_client_is_needed_and_sufficient``).
+  It also means outbound internet is not restricted for that agent.
+
+No other capability is requested; the workspace needs no grant (it is the
+box's own AC folder, also exposed as a per-run drive that grants nothing).
 """
 
 from __future__ import annotations
