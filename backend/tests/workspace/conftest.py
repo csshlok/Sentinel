@@ -260,6 +260,109 @@ def fake_node_launcher(workspace_manager, tmp_path: Path, node_exe: str) -> Fake
     return FakeNodeLauncher(launcher, broker, credential, DUMMY_ACCESS_TOKEN)
 
 
+BOXED_PYTHON_ADAPTER = "boxed-python"
+
+
+@pytest.fixture(scope="session")
+def boxed_python_runtime(tmp_path_factory):
+    """A stdlib-only snapshot of this interpreter in a throwaway check-runtime cache."""
+
+    import sys
+
+    from backend.app.execution.check_runtime import python_runtime
+
+    cache = tmp_path_factory.mktemp("boxed-python") / "check-runtimes"
+    try:
+        yield cache, python_runtime(sys.executable, root=cache).interpreter
+    finally:
+        shutil.rmtree(cache, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class BoxedPythonLauncher:
+    """An ``AgentLauncher`` whose box is the ``claude`` profile running snapshot Python.
+
+    The profile is ``BUILTIN_PROFILES["claude"]`` with only the tool snapshot and
+    the native-executable requirement dropped (the interpreter is not a single
+    self-contained exe), so any capability, drive or environment the claude box
+    gains, this box gains too. The snapshot is readable only by a workspace's
+    package SID granted through :meth:`grant` (03-01 harness).
+    """
+
+    launcher: object
+    workspaces: object
+    cache: Path
+    interpreter: Path
+
+    def prepare_workspace(self, change_id, repository: Path):
+        """Create the Change's workspace without a run; returns its record."""
+
+        from uuid import uuid4
+
+        from backend.app.contracts.models import AgentRunStatus
+
+        run_id = uuid4()
+        lease = self.workspaces.ensure(change_id, str(repository), run_id=run_id)
+        self.workspaces.finish_run(lease.id, run_id, facts=None,
+                                   status=AgentRunStatus.PASSED.value)
+        return self.workspaces.live_for_change(change_id)
+
+    def grant(self, package_sid: str) -> None:
+        from backend.app.execution.acl import grant_package_read
+
+        grant_package_read(self.interpreter, package_sid, allowed_root=self.cache)
+
+    def revoke(self, package_sid: str) -> None:
+        from backend.app.execution.acl import revoke_package_read
+
+        revoke_package_read(self.interpreter, package_sid, allowed_root=self.cache)
+
+    def launch(self, change_id, repository: Path, args: list[str], *, timeout: int = 120,
+               output_limit: int = 262_144):
+        from backend.app.contracts.models import AgentLaunchRequest
+
+        return self.launcher.launch(change_id, str(repository), AgentLaunchRequest(
+            adapter=BOXED_PYTHON_ADAPTER, executable="python.exe", args=args,
+            timeout_seconds=timeout), output_limit)
+
+
+@pytest.fixture
+def boxed_python_launcher(workspace_manager, tmp_path: Path, boxed_python_runtime,
+                          monkeypatch) -> BoxedPythonLauncher:
+    from dataclasses import replace
+
+    from backend.app.credentials.broker import CredentialBroker
+    from backend.app.credentials.memory_store import InMemoryCredentialStore
+    from backend.app.execution.agent_profiles import BUILTIN_PROFILES
+    from backend.app.execution.launcher import AgentAdapter, AgentLauncher
+
+    cache, interpreter = boxed_python_runtime
+    # AgentLaunchRequest.executable is at most 128 characters, so the snapshot is
+    # found by name: its directory goes first on PATH ("python.exe" is not the
+    # bare "python" that resolve_argv maps to this test's own interpreter).
+    monkeypatch.setenv("PATH", os.pathsep.join([str(interpreter.path), os.environ["PATH"]]))
+    claude = BUILTIN_PROFILES["claude"]
+    profile = replace(
+        claude, adapter=BOXED_PYTHON_ADAPTER, tool_snapshot=False,
+        requires_native_executable=False,
+        static_env=(*claude.static_env,
+                    ("PYTHONHOME", str(interpreter.path)), ("PYTHONNOUSERSITE", "1"),
+                    ("PYTHONDONTWRITEBYTECODE", "1"), ("PYTHONUTF8", "1")),
+    )
+    credential = tmp_path / "boxed-python-home" / ".claude" / ".credentials.json"
+    credential.parent.mkdir(parents=True)
+    credential.write_bytes(dummy_credential_bytes())
+    broker = CredentialBroker(InMemoryCredentialStore(),
+                              agent_credential_sources={claude.credential_kind: credential})
+    launcher = AgentLauncher(
+        adapters={BOXED_PYTHON_ADAPTER: AgentAdapter(
+            BOXED_PYTHON_ADAPTER, frozenset({"python"}))},
+        profiles={BOXED_PYTHON_ADAPTER: profile},
+        workspaces=workspace_manager, credentials=broker,
+    )
+    return BoxedPythonLauncher(launcher, workspace_manager, cache, interpreter.path)
+
+
 def teardown_workspaces(manager) -> None:
     """Release any leftover run lease and clean every unclean workspace (best effort)."""
 
