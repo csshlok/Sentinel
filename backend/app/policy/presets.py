@@ -117,3 +117,28 @@ def evaluate_preset(*, preset_name: str, change_type: str,
         reasons.append("observed AppContainer boundary is required")
     return PresetDecision(preset_name, PRESET_VERSION, change_type,
                           "DENY" if reasons else "ALLOW", tuple(reasons))
+
+
+def pre_apply_denials(*, preset_name: str, change_type: str, changed_paths: tuple[str, ...],
+                      mode_changed_paths: tuple[str, ...],
+                      execution_boundary: str) -> tuple[str, ...]:
+    """The preset rules decidable before workspace apply-back (plan 02-05, user decision).
+
+    Checks, coverage and freshness only exist after apply (checks are refused
+    while agent work is unapplied), so they are enforced at REVIEW_READY.
+    Before apply, the sealed diff's paths and the agent runs' boundary are
+    already known: those rules are enforced here. Default deny.
+    """
+
+    rule = _RULES.get((preset_name, change_type))
+    if rule is None:
+        return ("preset/change type combination is not permitted",)
+    reasons: list[str] = []
+    if rule.docs_paths_only and (not changed_paths
+                                 or any(not _docs_path(path) for path in changed_paths)):
+        reasons.append("docs-only paths are missing or include non-documentation files")
+    if rule.docs_paths_only and mode_changed_paths:
+        reasons.append("documentation path mode changed: " + ", ".join(mode_changed_paths[:8]))
+    if rule.appcontainer_boundary and execution_boundary != "APPCONTAINER":
+        reasons.append("observed AppContainer boundary is required")
+    return tuple(reasons)

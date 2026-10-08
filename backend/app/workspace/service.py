@@ -30,6 +30,8 @@ from backend.app.contracts.ports import PolicyPort
 from backend.app.core.change_service import ChangeService
 from backend.app.core.errors import AppError, policy_denied
 from backend.app.core.journal import JournalWriter
+from backend.app.core.preset_gate import preset_gate_denied
+from backend.app.policy.presets import pre_apply_denials
 from backend.app.workspace.errors import workspace_approval_invalid, workspace_not_found
 from backend.app.workspace.manager import WorkspaceManager
 from backend.app.workspace.models import (
@@ -53,6 +55,40 @@ class WorkspaceService:
         self.policy = policy
         self.change_service = change_service
         self._journal = journal
+
+    def _preset_apply_gate(self, change: ChangeView) -> None:
+        """Plan 02-05 (user decision): enforce the preset rules decidable before apply.
+
+        The sealed diff (read only, no Git in the user repository) supplies the
+        changed paths and mode changes; the bound agent runs supply the
+        execution boundary. Check, coverage and freshness rules are enforced at
+        REVIEW_READY, because those facts only exist after apply.
+        """
+
+        preset, change_type = (change.contract.policy_preset_name,
+                               change.contract.policy_change_type)
+        if preset is None or change_type is None:
+            return
+        try:
+            preview = self.manager.inspect(change.id)
+        except AppError as exc:
+            raise preset_gate_denied("APPLY", preset, [
+                f"the sealed diff could not be read ({exc.code}); UNKNOWN"]) from exc
+        paths = tuple(path for _status, path, _old, _new, _flags in preview.changed_paths)
+        modes = tuple(path for _status, path, old, new, _flags in preview.changed_paths
+                      if old != new and old.strip("0") and new.strip("0"))
+        from backend.app.passport.v2 import PassportV2Issuer
+
+        try:
+            boundary = PassportV2Issuer(
+                self.change_service.repository.database).snapshot(change.id).execution_boundary
+        except AppError:
+            boundary = "UNKNOWN"
+        reasons = pre_apply_denials(preset_name=preset, change_type=change_type,
+                                    changed_paths=paths, mode_changed_paths=modes,
+                                    execution_boundary=boundary)
+        if reasons:
+            raise preset_gate_denied("APPLY", preset, list(reasons))
 
     def _authorize(self, actor_id: UUID, change: ChangeView, operation: str,
                    parameters: dict[str, object]) -> None:
@@ -100,6 +136,7 @@ class WorkspaceService:
             return WorkspaceApplyResult(workspace=record_to_contract(record), applied=True)
         self._authorize(request.actor_id, change, WORKSPACE_APPLY_SCOPE, {
             "risk_level": WORKSPACE_APPLY_RISK, "sealed_sha": record.sealed_sha or ""})
+        self._preset_apply_gate(change)
         updated = self.manager.apply(change_id, request.approval_token)
         if updated.applied_sha and updated.state in (WorkspaceState.APPLIED,
                                                      WorkspaceState.CLEANED):

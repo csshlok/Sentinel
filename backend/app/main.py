@@ -24,6 +24,7 @@ from backend.app.contracts.ports import (
     LifecycleFactsPort,
     VerificationPort,
 )
+from backend.app.core.preset_gate import review_ready_gate
 from backend.app.core.auth import load_or_create_api_token, require_bearer_token
 from backend.app.core.change_repository import ChangeRepository
 from backend.app.core.change_service import ChangeService
@@ -216,6 +217,7 @@ def create_app(
         or set(_DEFAULT_CONFIGURED_CAPABILITIES),
         workspace_guard=workspace_manager.has_live_workspace,
         unapplied_work_guard=workspace_manager.unapplied_work,
+        preset_gate=lambda change: review_ready_gate(database, change),
     )
     runtime = _build_runtime_services(
         database,
