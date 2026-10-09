@@ -66,7 +66,9 @@ did doesn't depend on trusting the agent's account of itself.
   vendored native `codex.exe` with only its staged `auth.json` (tested in a real box). The
   `boxed` adapter runs any other native agent executable you name, with no staged credential:
   only model-provider API keys you list explicitly are forwarded, and they are redacted from
-  output. A script shim (`.cmd`, `.ps1`, a Node or Python entry point) is refused for `boxed`,
+  output. Only the single executable is copied into the box, so it must be self-contained
+  (an executable that needs DLLs or resource files beside it can fail there). A script shim
+  (`.cmd`, `.ps1`, a Node or Python entry point) is refused for `boxed`,
   and a boxed agent that cannot work inside an AppContainer simply fails; it is never retried
   unconfined.
 - **Launch any other executable under supervision** with a restricted access token (maximum
