@@ -110,8 +110,9 @@ WORKSPACE_CONTENT_LIMITATION = (
     "Only files committed at the workspace base are present in the workspace; uncommitted, "
     "untracked and ignored files are absent.")
 CONTAINMENT_LIMITATION = (
-    "Containment was verified only by Sentinel's Phase 1 probes (repository, user profile, "
-    "loopback, Credential Manager); other resources are UNKNOWN until tested.")
+    "Containment was verified only by Sentinel's probes (user repo and profile, Sentinel's "
+    "store, other boxes, loopback/LAN, named pipes, Credential Manager, signing keys, "
+    "registry writes); other resources and escape routes are UNKNOWN until tested.")
 APPCONTAINER_LIMITATIONS = (
     INTERNET_CLIENT_LIMITATION, WORKSPACE_CONTENT_LIMITATION, CONTAINMENT_LIMITATION,
 )
