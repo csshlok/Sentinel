@@ -97,7 +97,7 @@ export const createDelegation = (body: { change_id: string; grantor_id: string; 
 export const revokeDelegation = (id: string) => http.post<Delegation>(`/api/v1/delegations/${seg(id)}/revoke`, undefined, idem());
 
 // --- agents -----------------------------------------------------------------------------------------------------------
-export interface LaunchBody { actor_id: string; launch: { adapter: string; executable: string; args: string[]; timeout_seconds?: number }; output_limit_bytes?: number }
+export interface LaunchBody { actor_id: string; launch: { adapter: string; executable: string; args: string[]; timeout_seconds?: number; environment_keys?: string[] }; output_limit_bytes?: number }
 export const launchAgent = (id: string, body: LaunchBody, key?: string) => http.post<AgentRun>(`${base(id)}/agents/launch`, body, idem(key));
 export interface AttachBody { actor_id: string; attach: { adapter: string; external_run_id: string; declared_started_at?: string | null } }
 export const attachAgent = (id: string, body: AttachBody, key?: string) => http.post<AgentRun>(`${base(id)}/agents/attach`, body, idem(key));

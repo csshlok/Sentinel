@@ -1363,10 +1363,21 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** AgentAdapterInfo */
+        /**
+         * AgentAdapterInfo
+         * @description One launchable adapter. ``boundary`` is its declared runtime profile (what a
+         *     launch will require), not an observed fact; each run records its own.
+         */
         AgentAdapterInfo: {
             /** Adapter */
             adapter: string;
+            /**
+             * Any Native Executable
+             * @default false
+             */
+            any_native_executable: boolean;
+            /** Boundary */
+            boundary?: ("APPCONTAINER" | "RESTRICTED_TOKEN" | "UNAVAILABLE") | null;
             /** Credential Keys */
             credential_keys?: string[];
             /**

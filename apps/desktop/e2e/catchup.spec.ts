@@ -129,3 +129,28 @@ test("GitHub Check without an installed App offers install, App creation and the
   expect(api.calls.filter((c) => c.path === "providers/github/checks")).toHaveLength(2);
   expect(errors).toEqual([]);
 });
+
+test("the boxed adapter forwards only the API key names it allows and says it runs only in the box", async ({ page }) => {
+  const adapters = [
+    { adapter: "boxed", executables: {}, credential_keys: ["GEMINI_API_KEY", "OPENAI_API_KEY"], descendant_control_available: true, restricted_token_available: true, boundary: "APPCONTAINER", any_native_executable: true },
+    { adapter: "generic", executables: { python: true }, credential_keys: [], descendant_control_available: true, restricted_token_available: true, boundary: "RESTRICTED_TOKEN", any_native_executable: false },
+  ];
+  const { api, errors } = await open(page, "agents", (() => ({})) as Over);
+  await page.route("**/api/v1/agents/adapters", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ count: adapters.length, items: adapters }) }));
+  await page.reload();
+  await expect(page.getByText("any native agent executable you name")).toBeVisible();
+  await page.getByRole("button", { name: "Launch agent" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Launched by").selectOption("actor-1");
+  await dialog.getByLabel("Adapter").selectOption("boxed");
+  await expect(dialog.getByTestId("adapter-boundary-hint")).toHaveText("Runs only inside a verified AppContainer; never retried unconfined.");
+  await dialog.getByLabel("Executable").fill("gemini");
+  await dialog.getByLabel("API keys to forward (optional)").fill("GITHUB_TOKEN");
+  await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+  await expect(dialog.getByText("Not forwardable for this adapter: GITHUB_TOKEN.")).toBeVisible();
+  expect(api.calls.filter((c) => c.path.endsWith("agents/launch"))).toHaveLength(0);
+  await dialog.getByLabel("API keys to forward (optional)").fill("gemini_api_key");
+  await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+  await expect.poll(() => api.calls.find((c) => c.path.endsWith("agents/launch"))?.body?.launch).toMatchObject({ adapter: "boxed", executable: "gemini", environment_keys: ["GEMINI_API_KEY"] });
+  expect(errors).toEqual([]);
+});

@@ -62,9 +62,9 @@ export function AgentsTab() {
               <li key={a.adapter} className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="font-medium">{a.adapter}</span>
                 <span className="text-muted-foreground">
-                  {Object.entries(a.executables).map(([name, found]) => `${name}: ${found ? "found" : "not found"}`).join(" · ") || "no executables listed"}
+                  {Object.entries(a.executables).map(([name, found]) => `${name}: ${found ? "found" : "not found"}`).join(" · ") || (a.any_native_executable ? "any native agent executable you name" : "no executables listed")}
                   {" · "}
-                  {a.restricted_token_available ? "restricted-token launch available" : "restricted-token launch not available"}
+                  {adapterBoundaryText(a)}
                   {" · "}
                   {a.descendant_control_available ? "process-tree evidence available" : "process-tree evidence not available"}
                 </span>
@@ -153,6 +153,14 @@ function RunCard({ run, changeId, actors }: { run: AgentRun; changeId: string; a
   );
 }
 
+/** What a launch with this adapter will require (its declared profile); each run then records what it actually had. */
+export function adapterBoundaryText(a: Pick<AgentAdapterInfo, "boundary" | "restricted_token_available">): string {
+  if (a.boundary === "APPCONTAINER") return "Runs only inside a verified AppContainer; never retried unconfined.";
+  if (a.boundary === "UNAVAILABLE") return "No tested boxed profile; launches are refused.";
+  if (a.boundary === "RESTRICTED_TOKEN") return a.restricted_token_available ? "Reduced token only (not a sandbox)." : "Reduced token not available on this computer.";
+  return a.restricted_token_available ? "restricted-token launch available" : "restricted-token launch not available";
+}
+
 /** The observed box facts a verified AppContainer run recorded (the profile and package SID name the exact box). */
 function boundaryFacts(run: AgentRun): { label: string; value: ReactNode }[] {
   const b = run.execution_boundary;
@@ -225,9 +233,10 @@ function AdapterSelect({ id, adapters, value, onChange, error }: { id: string; a
 }
 
 export function LaunchAgent({ changeId, actors, adapters }: { changeId: string; actors: ReturnType<typeof useActors>["actors"]; adapters: AgentAdapterInfo[] }) {
-  const [v, setV] = useState({ actor: "", adapter: "", exe: "", args: "", timeout: "" });
+  const [v, setV] = useState({ actor: "", adapter: "", exe: "", args: "", timeout: "", keys: "" });
   const [errs, setErrs] = useState<Record<string, string>>({});
-  const dlg = useDialogState(() => { setV({ actor: "", adapter: adapters.length === 1 ? adapters[0]!.adapter : "", exe: "", args: "", timeout: "" }); setErrs({}); run.reset(); run.renewKey(); });
+  const dlg = useDialogState(() => { setV({ actor: "", adapter: adapters.length === 1 ? adapters[0]!.adapter : "", exe: "", args: "", timeout: "", keys: "" }); setErrs({}); run.reset(); run.renewKey(); });
+  const chosen = adapters.find((a) => a.adapter === v.adapter);
   const run = useFormAction({ run: (b: Parameters<typeof launchAgent>[1], key) => launchAgent(changeId, b, key), invalidate: [[...changeKeys.all], ["tools"]], onSuccess: () => dlg.close() });
   const set = (k: keyof typeof v) => (val: string) => setV((s) => ({ ...s, [k]: val }));
   return (
@@ -247,19 +256,29 @@ export function LaunchAgent({ changeId, actors, adapters }: { changeId: string; 
           if (!v.adapter) e.adapter = "Choose an adapter.";
           if (!v.exe.trim()) e.exe = "Enter the executable to run.";
           if (v.timeout.trim() && !/^[1-9]\d*$/.test(v.timeout.trim())) e.timeout = "Use a whole number of seconds.";
+          const keys = v.keys.split(/[\s,]+/).map((k) => k.trim().toUpperCase()).filter(Boolean);
+          const allowed = new Set(chosen?.credential_keys ?? []);
+          const unknown = keys.filter((k) => !allowed.has(k));
+          if (unknown.length) e.keys = `Not forwardable for this adapter: ${unknown.join(", ")}.`;
           setErrs(e);
           if (Object.keys(e).length) return;
-          run.mutate({ actor_id: v.actor, launch: { adapter: v.adapter, executable: v.exe.trim(), args: splitArgs(v.args), ...(v.timeout.trim() ? { timeout_seconds: Number(v.timeout) } : {}) } });
+          run.mutate({ actor_id: v.actor, launch: { adapter: v.adapter, executable: v.exe.trim(), args: splitArgs(v.args), ...(v.timeout.trim() ? { timeout_seconds: Number(v.timeout) } : {}), ...(keys.length ? { environment_keys: keys } : {}) } });
         }}
       >
         <ActorPicker id="la-actor" label="Launched by" actors={actors} value={v.actor} onChange={set("actor")} error={errs.actor} />
         <AdapterSelect id="la-adapter" adapters={adapters} value={v.adapter} onChange={set("adapter")} error={errs.adapter} />
-        <Field id="la-exe" label="Executable" error={errs.exe}>
+        {chosen ? <p className="text-[13px] text-muted-foreground" data-testid="adapter-boundary-hint">{adapterBoundaryText(chosen)}</p> : null}
+        <Field id="la-exe" label="Executable" error={errs.exe} hint={chosen?.any_native_executable ? "Any native agent executable (.exe) on PATH or a short absolute path. Script shims are refused." : undefined}>
           <Input id="la-exe" value={v.exe} onChange={(e) => set("exe")(e.target.value)} className="mono text-[13px]" autoComplete="off" aria-describedby="la-exe-h" />
         </Field>
         <Field id="la-args" label="Arguments (optional)" hint="Separated by spaces. Use quotes for arguments containing spaces.">
           <Input id="la-args" value={v.args} onChange={(e) => set("args")(e.target.value)} className="mono text-[13px]" autoComplete="off" aria-describedby="la-args-h" />
         </Field>
+        {chosen?.credential_keys?.length ? (
+          <Field id="la-keys" label="API keys to forward (optional)" hint={`Variable names only; values come from Sentinel's environment and are redacted from output. Allowed: ${chosen.credential_keys.join(", ")}.`} error={errs.keys}>
+            <Input id="la-keys" value={v.keys} onChange={(e) => set("keys")(e.target.value)} className="mono text-[13px]" autoComplete="off" aria-describedby="la-keys-h" />
+          </Field>
+        ) : null}
         <Field id="la-timeout" label="Time limit in seconds (optional)" error={errs.timeout}>
           <Input id="la-timeout" inputMode="numeric" value={v.timeout} onChange={(e) => set("timeout")(e.target.value)} aria-describedby="la-timeout-h" />
         </Field>
