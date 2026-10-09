@@ -199,7 +199,7 @@ def test_attach_and_stop_and_adapter_listing(tmp_path):
                         json={"actor_id": other_agent})
     assert cross.status_code == 404 and cross.json()["error"]["code"] == "AGENT_RUN_NOT_FOUND"
     adapters = client.get("/api/v1/agents/adapters").json()
-    assert {item["adapter"] for item in adapters["items"]} == {"generic", "codex", "claude"}
+    assert {item["adapter"] for item in adapters["items"]} == {"generic", "codex", "claude", "boxed"}
     assert all(item["descendant_control_available"] is IS_WINDOWS for item in adapters["items"])
 
 

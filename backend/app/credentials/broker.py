@@ -9,7 +9,8 @@ this class or on `CredentialGrant` ever exposes the raw secret.
 
 Staged agent credentials (D-06) follow the same boundary: this class is
 the only code that reads an agent's model credential file (for
-``claude``, ``~/.claude/.credentials.json``). `stage_agent_credential`
+``claude``, ``~/.claude/.credentials.json``; for ``codex``,
+``~/.codex/auth.json``). `stage_agent_credential`
 copies it into one run's staged home (exclusive create, journaled
 without secret material before it is handed out),
 `revoke_staged_credential` deletes it when the run ends (never copying
@@ -52,8 +53,11 @@ from backend.app.execution.agent_ports import (
 # Where each agent credential kind lives inside a staged home.
 AGENT_CREDENTIAL_DESTINATIONS: Mapping[str, PurePath] = types.MappingProxyType({
     "claude-oauth-file": PurePath(".claude", ".credentials.json"),
+    "codex-auth-file": PurePath(".codex", "auth.json"),
 })
-_AGENT_CREDENTIAL_PROVIDERS = types.MappingProxyType({"claude-oauth-file": "anthropic"})
+_AGENT_CREDENTIAL_PROVIDERS = types.MappingProxyType({
+    "claude-oauth-file": "anthropic", "codex-auth-file": "openai",
+})
 AGENT_CREDENTIAL_MAX_BYTES = 1_048_576
 _DELETE_ATTEMPTS = 5
 _DELETE_BACKOFF_SECONDS = 0.2
@@ -61,7 +65,10 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 
 
 def _default_agent_credential_sources() -> dict[str, Path]:
-    return {"claude-oauth-file": Path.home() / ".claude" / ".credentials.json"}
+    return {
+        "claude-oauth-file": Path.home() / ".claude" / ".credentials.json",
+        "codex-auth-file": Path.home() / ".codex" / "auth.json",
+    }
 
 
 def _is_reparse(path: Path) -> bool:

@@ -62,6 +62,13 @@ did doesn't depend on trusting the agent's account of itself.
   token to confirm the AppContainer package SID and Low integrity level, and only then lets it
   run. The agent works from a hashed tool snapshot and a staged home directory with only the
   brokered model credential it needs, and cannot reach Sentinel's local API.
+- **Launch Codex, or any native agent CLI, in the same box.** The `codex` adapter runs the
+  vendored native `codex.exe` with only its staged `auth.json` (tested in a real box). The
+  `boxed` adapter runs any other native agent executable you name, with no staged credential:
+  only model-provider API keys you list explicitly are forwarded, and they are redacted from
+  output. A script shim (`.cmd`, `.ps1`, a Node or Python entry point) is refused for `boxed`,
+  and a boxed agent that cannot work inside an AppContainer simply fails; it is never retried
+  unconfined.
 - **Launch any other executable under supervision** with a restricted access token (maximum
   privileges disabled) inside a Job Object. Every descendant process is attributed: PID, parent,
   image path, command line, lifetime, exit code.
@@ -188,7 +195,7 @@ recovery/passport, API auth boundary) covers 16 findings: 15 fixed and one close
 design decision, with zero left open (see [`THREAT_MODEL_FINDINGS.md`](THREAT_MODEL_FINDINGS.md)).
 A few of the load-bearing decisions:
 
-- **A verified AppContainer boundary.** Claude Code launches through the documented AppContainer
+- **A verified AppContainer boundary.** Claude Code, Codex and `boxed` agents launch through the documented AppContainer
   path, inside a Job Object before it ever runs, and Sentinel confirms the boundary on the live
   token. If the boundary can't be established, the launch fails closed — there is no unconfined
   retry.

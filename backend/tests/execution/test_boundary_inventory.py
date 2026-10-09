@@ -18,7 +18,7 @@ APP = Path(__file__).resolve().parents[2] / "app"
 
 # capability -> (who gets it, the test that demonstrates the need)
 CAPABILITY_INVENTORY = {
-    "internetClient": ("claude agent (model API); check boxes only with network=True, "
+    "internetClient": ("claude, codex and boxed agents (model API); check boxes only with network=True, "
                        "which no caller passes",
                        "test_capability_need_real.py::test_internet_client_is_needed_and_sufficient"),
 }
@@ -40,7 +40,8 @@ def test_known_capabilities_are_exactly_the_inventory() -> None:
 
 def test_builtin_profiles_request_only_inventoried_capabilities() -> None:
     granted = {name: profile.capabilities for name, profile in BUILTIN_PROFILES.items()}
-    assert granted == {"generic": (), "claude": ("internetClient",), "codex": ()}
+    assert granted == {"generic": (), "claude": ("internetClient",), "codex": ("internetClient",),
+                       "boxed": ("internetClient",)}
     assert NETWORK_CAPABILITIES == ("internetClient",)
 
 

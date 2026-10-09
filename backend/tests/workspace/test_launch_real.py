@@ -185,5 +185,5 @@ def test_create_app_composes_the_appcontainer_launch_path(tmp_path: Path) -> Non
         assert app.state.runtime_services.credentials.broker is broker
         assert app.state.runtime_services.evidence.evidence._launcher is launcher
         assert launcher.runtime_profile("claude").boundary is BoundaryKind.APPCONTAINER
-        assert launcher.runtime_profile("codex").boundary is BoundaryKind.UNAVAILABLE
+        assert launcher.runtime_profile("codex").boundary is BoundaryKind.APPCONTAINER
         assert launcher.runtime_profile("generic").boundary is BoundaryKind.RESTRICTED_TOKEN

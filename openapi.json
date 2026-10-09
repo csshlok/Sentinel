@@ -130,12 +130,34 @@
       },
       "AgentAdapterInfo": {
         "additionalProperties": false,
+        "description": "One launchable adapter. ``boundary`` is its declared runtime profile (what a\nlaunch will require), not an observed fact; each run records its own.",
         "properties": {
           "adapter": {
             "maxLength": 256,
             "minLength": 1,
             "title": "Adapter",
             "type": "string"
+          },
+          "any_native_executable": {
+            "default": false,
+            "title": "Any Native Executable",
+            "type": "boolean"
+          },
+          "boundary": {
+            "anyOf": [
+              {
+                "enum": [
+                  "APPCONTAINER",
+                  "RESTRICTED_TOKEN",
+                  "UNAVAILABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
           },
           "credential_keys": {
             "items": {

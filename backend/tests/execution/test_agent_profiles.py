@@ -39,7 +39,7 @@ CUSTOM = RuntimeProfile("fake-node", BoundaryKind.APPCONTAINER, staged_home=True
 def test_every_builtin_profile_declares_exactly_one_boundary_kind():
     """PROMOTE decision: each built-in adapter resolves to exactly one declared boundary."""
 
-    assert set(BUILTIN_PROFILES) == {"generic", "claude", "codex"}
+    assert set(BUILTIN_PROFILES) == {"generic", "claude", "codex", "boxed"}
     for name, profile in BUILTIN_PROFILES.items():
         assert profile.adapter == name
         assert isinstance(profile.boundary, BoundaryKind)
@@ -55,7 +55,7 @@ def test_claude_always_resolves_to_appcontainer(extra):
     assert profile is BUILTIN_PROFILES["claude"]
 
 
-@pytest.mark.parametrize("name", ["claude", "generic", "codex"])
+@pytest.mark.parametrize("name", ["claude", "generic", "codex", "boxed"])
 def test_builtin_profiles_cannot_be_overridden(name):
     """PROMOTE decision: a caller cannot redefine a built-in adapter's boundary."""
 
@@ -85,8 +85,17 @@ def test_builtin_profile_contents():
         "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
     }
     codex = BUILTIN_PROFILES["codex"]
-    assert codex.boundary is BoundaryKind.UNAVAILABLE
-    assert "tested" in codex.unavailable_reason
+    assert codex.boundary is BoundaryKind.APPCONTAINER
+    assert codex.capabilities == ("internetClient",)
+    assert codex.tool_snapshot and codex.staged_home and codex.requires_native_executable
+    assert codex.credential_kind == "codex-auth-file"
+    assert dict(codex.home_env) == {"CODEX_HOME": ".codex"}
+    assert codex.powershell_tool and codex.workspace_drive
+    boxed = BUILTIN_PROFILES["boxed"]
+    assert boxed.boundary is BoundaryKind.APPCONTAINER
+    assert boxed.capabilities == ("internetClient",)
+    assert boxed.tool_snapshot and boxed.staged_home and boxed.requires_native_executable
+    assert boxed.credential_kind is None and boxed.home_env == ()
 
 
 def test_builtin_table_is_read_only():
@@ -221,3 +230,32 @@ def test_a_profile_cannot_override_psmodulepath():
                          static_env=(("PSModulePath", r"C:\evil"),))
     with pytest.raises(ValueError):
         validate_extra_profiles({"bad": bad})
+
+
+@pytest.mark.parametrize("relative", ["..", "../x", "a/../../b", "C:/x", "/abs", r"\\server\x", ""])
+def test_home_variables_must_stay_inside_the_staged_home(relative):
+    profile = RuntimeProfile("homey", BoundaryKind.APPCONTAINER, staged_home=True,
+                             home_env=(("TOOL_HOME", relative),))
+    with pytest.raises(ValueError, match="home"):
+        validate_extra_profiles({"homey": profile})
+
+
+def test_home_variables_need_a_staged_home_and_an_unprotected_key():
+    with pytest.raises(ValueError, match="home variable"):
+        validate_extra_profiles({"a": RuntimeProfile("a", BoundaryKind.APPCONTAINER,
+                                                     home_env=(("TOOL_HOME", ".tool"),))})
+    with pytest.raises(ValueError, match="home variable"):
+        validate_extra_profiles({"b": RuntimeProfile("b", BoundaryKind.APPCONTAINER,
+                                                     staged_home=True,
+                                                     home_env=(("APPDATA", ".tool"),))})
+
+
+def test_codex_home_points_inside_the_staged_home(tmp_path):
+    from backend.app.execution.appcontainer import base_environment
+
+    home = tmp_path / "home"
+    env = appcontainer_environment(
+        BUILTIN_PROFILES["codex"], base_env=base_environment(tmp_path), home=home,
+        tools_dir=None, git_cmd_dir=None, node_dir=None, git_bash=None)
+    assert env["CODEX_HOME"] == str(home / ".codex")
+    assert env["USERPROFILE"] == str(home)

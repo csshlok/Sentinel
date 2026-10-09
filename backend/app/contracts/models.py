@@ -1120,11 +1120,16 @@ class AgentRunListResponse(ContractModel):
 
 
 class AgentAdapterInfo(ContractModel):
+    """One launchable adapter. ``boundary`` is its declared runtime profile (what a
+    launch will require), not an observed fact; each run records its own."""
+
     adapter: ShortText
     executables: dict[str, bool]
     credential_keys: list[str] = Field(default_factory=list)
     descendant_control_available: bool = False
     restricted_token_available: bool = False
+    boundary: Literal["APPCONTAINER", "RESTRICTED_TOKEN", "UNAVAILABLE"] | None = None
+    any_native_executable: bool = False
 
 
 class AgentAdapterListResponse(ContractModel):

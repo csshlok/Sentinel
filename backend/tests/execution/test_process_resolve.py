@@ -186,3 +186,32 @@ def test_native_command_without_shim_or_node(tmp_path, monkeypatch):
     monkeypatch.setattr(resolve, "_which", lambda name, env, root:
                         Path("C:/x/npm.cmd") if name == "npm" else None)
     assert native_command("npm", ["a"], {}, tmp_path) == ("npm", ["a"])
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_codex_npm_shim_resolves_to_its_vendored_native_executable(tmp_path, nested):
+    """Spike 008: the codex.cmd shim is never run; its package's codex.exe is."""
+
+    bin_dir = tmp_path / "npm"
+    bin_dir.mkdir()
+    (bin_dir / "codex.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    prefix = ["node_modules", "@openai", "codex", "node_modules"] if nested else ["node_modules"]
+    native = bin_dir.joinpath(*prefix, "@openai", "codex-win32-x64", "vendor",
+                              "x86_64-pc-windows-msvc", "codex", "codex.exe")
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"MZ")
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = {"PATH": str(bin_dir), "PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    assert resolve_argv("codex", env, root) == [str(native.resolve())]
+
+
+def test_a_shim_without_its_vendored_executable_is_still_refused(tmp_path):
+    bin_dir = tmp_path / "npm"
+    bin_dir.mkdir()
+    (bin_dir / "codex.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    root = tmp_path / "repo"
+    root.mkdir()
+    with pytest.raises(AppError) as caught:
+        resolve_argv("codex", {"PATH": str(bin_dir), "PATHEXT": ".COM;.EXE;.BAT;.CMD"}, root)
+    assert caught.value.code == "EXECUTABLE_NOT_ALLOWED"

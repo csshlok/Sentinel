@@ -1,8 +1,9 @@
 """Executable resolution outside the selected repository.
 
 Repository-owned directories never contribute executables, batch wrappers are
-never run through a shell, and the Node package-manager shims are translated to
-``node <cli.js>`` so Windows installations work without ``cmd.exe``.
+never run through a shell, the Node package-manager shims are translated to
+``node <cli.js>`` so Windows installations work without ``cmd.exe``, and an
+npm shim whose package vendors a native executable (``codex``) resolves to it.
 """
 
 from __future__ import annotations
@@ -17,6 +18,17 @@ from backend.app.core.errors import AppError
 
 _NODE_CLI = {"npm": "npm-cli.js", "npx": "npx-cli.js"}
 _BATCH = {".cmd", ".bat"}
+# npm shims whose package vendors a native executable: the shim is mapped to that
+# executable (never run). Paths are relative to the shim's directory; npm may nest
+# the platform package under the main one or hoist it next to it.
+_VENDORED_NATIVE = {
+    "codex": tuple(
+        Path("node_modules", *prefix, "@openai", f"codex-win32-{arch}", "vendor",
+             f"{triple}-pc-windows-msvc", "codex", "codex.exe")
+        for prefix in (("@openai", "codex", "node_modules"), ())
+        for arch, triple in (("x64", "x86_64"), ("arm64", "aarch64"))
+    ),
+}
 
 
 def safe_path_entries(env: Mapping[str, str], root: Path) -> list[Path]:
@@ -71,6 +83,10 @@ def resolve_argv(
         )
     if found.suffix.lower() in _BATCH:
         base = name.lower().removesuffix(".cmd").removesuffix(".bat")
+        for relative in _VENDORED_NATIVE.get(base, ()):
+            native = found.parent / relative
+            if native.is_file():
+                return [str(native.resolve())]
         node = _which("node", env, root)
         script = _NODE_CLI.get(base)
         if node is not None and script is not None:

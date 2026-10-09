@@ -232,14 +232,54 @@ def test_missing_credential_is_disclosed(box):
     assert box["stager"].revoked == []
 
 
-def test_codex_fails_closed_before_any_run(box, monkeypatch):
-    monkeypatch.setattr(module, "capture", lambda *a, **k: pytest.fail("nothing may start"))
+def test_codex_runs_only_in_the_appcontainer_with_codex_home_staged(box):
+    """Spike 008: codex is a boxed adapter now; a failed verification is an ERROR run, never a fallback."""
+
+    run = box["launcher"].launch(CHANGE, str(box["repo"]), AgentLaunchRequest(
+        adapter="codex", executable="codex", timeout_seconds=10), 10_000)
+    assert run.status is AgentRunStatus.ERROR
+    assert run.restricted_token_applied is False
+    assert box["restricted_calls"] == []
+    (call,) = box["spawn_calls"]
+    assert tuple(call["capabilities"]) == ("internetClient",)
+    assert call["argv"] == [str(box["container"] / "tools" / box["exe"].name)]
+    env = call["env"]
+    assert env["CODEX_HOME"] == str(box["container"] / "home" / ".codex")
+    assert env["USERPROFILE"] == str(box["container"] / "home")
+    assert "DISABLE_AUTOUPDATER" not in env and "CLAUDE_CODE_USE_POWERSHELL_TOOL" not in env
+    assert len(box["stager"].staged) == 1 and len(box["stager"].revoked) == 1
+
+
+def test_boxed_runs_any_native_executable_only_in_the_appcontainer(box):
+    run = box["launcher"].launch(CHANGE, str(box["repo"]), AgentLaunchRequest(
+        adapter="boxed", executable="my-agent", environment_keys=["OPENAI_API_KEY"],
+        timeout_seconds=10), 10_000)
+    assert run.status is AgentRunStatus.ERROR and box["restricted_calls"] == []
+    (call,) = box["spawn_calls"]
+    assert tuple(call["capabilities"]) == ("internetClient",)
+    assert call["argv"] == [str(box["container"] / "tools" / box["exe"].name)]
+    # No staged credential for a bring-your-own agent.
+    assert box["stager"].staged == []
+
+
+@pytest.mark.parametrize("key", ["GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK_TOKEN"])
+def test_boxed_forwards_only_model_provider_keys(box, key):
     with pytest.raises(AppError) as caught:
         box["launcher"].launch(CHANGE, str(box["repo"]), AgentLaunchRequest(
-            adapter="codex", executable="codex", timeout_seconds=10), 10_000)
+            adapter="boxed", executable="my-agent", environment_keys=[key],
+            timeout_seconds=10), 10_000)
+    assert caught.value.code == "AGENT_ENVIRONMENT_KEY_DENIED"
+    assert box["spawn_calls"] == [] and box["provider"].ensured == []
+
+
+def test_boxed_refuses_a_script_shim(box, monkeypatch):
+    shim = box["exe"].with_name("agent.cmd")
+    monkeypatch.setattr(module, "resolve_argv", lambda name, env, root: ["node", str(shim)])
+    with pytest.raises(AppError) as caught:
+        box["launcher"].launch(CHANGE, str(box["repo"]), AgentLaunchRequest(
+            adapter="boxed", executable="agent", timeout_seconds=10), 10_000)
     assert caught.value.code == "AGENT_RUNTIME_PROFILE_UNAVAILABLE"
-    assert caught.value.status_code == 409
-    assert box["seen"] == [] and box["provider"].ensured == []
+    assert box["spawn_calls"] == []
 
 
 def test_claude_without_a_workspace_provider_is_refused(tmp_path, monkeypatch):

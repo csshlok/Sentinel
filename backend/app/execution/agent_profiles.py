@@ -5,7 +5,7 @@ The boundary is a declared property of each adapter's :class:`RuntimeProfile`
 never chosen by platform detection or by exception handling: an adapter whose
 profile says ``APPCONTAINER`` either launches inside a verified AppContainer or
 does not launch at all, and an adapter whose profile says ``UNAVAILABLE``
-(``codex``, D-02) always fails closed.
+always fails closed. ``codex`` was UNAVAILABLE (D-02) until spike 008 tested it.
 
 Built-in profiles cannot be overridden by callers. Pure module: no Win32, no
 process starts and no file I/O.
@@ -13,7 +13,7 @@ process starts and no file I/O.
 Capabilities and their demonstrated need (plan 02-01, inventory in
 ``backend/tests/execution/test_boundary_inventory.py``):
 
-* ``internetClient`` (claude only): the model API. A box reaches a public
+* ``internetClient`` (claude, codex, boxed): the model API. A box reaches a public
   HTTPS host with it and not without it
   (``test_capability_need_real.py::test_internet_client_is_needed_and_sufficient``).
   It also means outbound internet is not restricted for that agent.
@@ -61,6 +61,8 @@ class RuntimeProfile:
     powershell_tool: bool = False
     workspace_drive: bool = False
     unavailable_reason: str | None = None
+    # (key, relative path) pairs pointing inside the staged home, e.g. CODEX_HOME -> .codex.
+    home_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 # Keys an AppContainer environment derives from the boundary itself (container
@@ -71,11 +73,6 @@ PROTECTED_ENV_KEYS = frozenset({
 })
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _BASE_KEYS = ("SystemRoot", "windir", "COMSPEC", "LOCALAPPDATA", "TEMP", "TMP")
-
-CODEX_UNAVAILABLE_REASON = (
-    "The codex adapter has no tested AppContainer runtime profile yet, so Sentinel refuses "
-    "to launch it rather than run it without a verified boundary."
-)
 
 BUILTIN_PROFILES: Mapping[str, RuntimeProfile] = types.MappingProxyType({
     "generic": RuntimeProfile("generic", BoundaryKind.RESTRICTED_TOKEN),
@@ -99,8 +96,32 @@ BUILTIN_PROFILES: Mapping[str, RuntimeProfile] = types.MappingProxyType({
         powershell_tool=True,
         workspace_drive=True,
     ),
+    # Spike 008: the vendored native codex.exe runs in the box with its ChatGPT/API
+    # credential staged at home/.codex/auth.json; it needs CODEX_HOME (it cannot
+    # find a home directory from USERPROFILE inside the box).
     "codex": RuntimeProfile(
-        "codex", BoundaryKind.UNAVAILABLE, unavailable_reason=CODEX_UNAVAILABLE_REASON,
+        "codex", BoundaryKind.APPCONTAINER,
+        capabilities=("internetClient",),
+        tool_snapshot=True,
+        staged_home=True,
+        credential_kind="codex-auth-file",
+        static_env=(("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_TERMINAL_PROMPT", "0")),
+        home_env=(("CODEX_HOME", ".codex"),),
+        requires_native_executable=True,
+        powershell_tool=True,
+        workspace_drive=True,
+    ),
+    # Bring-your-own agent: any native agent CLI the caller names, in the same box
+    # as claude but with no staged credential (API keys only by explicit name).
+    "boxed": RuntimeProfile(
+        "boxed", BoundaryKind.APPCONTAINER,
+        capabilities=("internetClient",),
+        tool_snapshot=True,
+        staged_home=True,
+        static_env=(("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_TERMINAL_PROMPT", "0")),
+        requires_native_executable=True,
+        powershell_tool=True,
+        workspace_drive=True,
     ),
 })
 
@@ -134,6 +155,12 @@ def validate_extra_profiles(
             if key.upper() in PROTECTED_ENV_KEYS:
                 raise ValueError(
                     f"The runtime profile '{name}' may not override the protected key {key}.")
+        for key, relative in profile.home_env:
+            if not _ENV_KEY.fullmatch(key) or key.upper() in PROTECTED_ENV_KEYS:
+                raise ValueError(f"The runtime profile '{name}' has an invalid home variable.")
+            if not profile.staged_home or not isinstance(relative, str) or "\0" in relative:
+                raise ValueError(f"The runtime profile '{name}' has an invalid home variable.")
+            _home_relative_parts(relative)
         validated[name] = profile
     return types.MappingProxyType(validated)
 
@@ -197,4 +224,20 @@ def appcontainer_environment(
         if key.upper() in PROTECTED_ENV_KEYS:
             raise ValueError(f"The runtime profile may not override the protected key {key}.")
         env[key] = value
+    for key, relative in profile.home_env:
+        if key.upper() in PROTECTED_ENV_KEYS:
+            raise ValueError(f"The runtime profile may not override the protected key {key}.")
+        if home is None:
+            raise ValueError("A home-relative variable needs a staged home.")
+        env[key] = str(home.joinpath(*_home_relative_parts(relative)))
     return env
+
+
+def _home_relative_parts(relative: str) -> tuple[str, ...]:
+    """The parts of a plain relative path inside the staged home (no drive, root or ``..``)."""
+
+    parts = tuple(part for part in relative.replace("\\", "/").split("/") if part not in ("", "."))
+    if (not parts or ntpath.splitdrive(relative)[0] or relative.startswith(("/", "\\"))
+            or any(part == ".." for part in parts)):
+        raise ValueError(f"A home-relative path must stay inside the staged home: {relative!r}.")
+    return parts

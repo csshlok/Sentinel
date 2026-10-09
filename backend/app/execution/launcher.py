@@ -10,12 +10,12 @@ Scope, deliberately narrow:
     the top-level process with maximum privileges removed from a restricted
     token (the caller integrity level is retained for repository writes).
     Reduced privilege is not a sandbox or isolation boundary.
-  - ``APPCONTAINER`` (``claude``): the agent runs in the Change's
+  - ``APPCONTAINER`` (``claude``, ``codex``, ``boxed``): the agent runs in the Change's
     Sentinel-owned workspace clone, from a hash-verified tool snapshot with a
     per-run staged home, inside an AppContainer whose live token and Job
     membership were verified before it resumed. Every failure on this path
     raises or returns an ERROR run; it never falls back to the restricted token.
-  - ``UNAVAILABLE`` (``codex``, D-02): refused before anything starts.
+  - ``UNAVAILABLE``: refused before anything starts (``codex`` was, D-02, until spike 008).
 * ``attach`` records caller-declared metadata. Nothing is observed.
 * ``stop`` terminates the owned Job Object tree when supervision is available.
 
@@ -155,6 +155,9 @@ class AgentAdapter:
     name: str
     executables: frozenset[str]
     credential_keys: frozenset[str] = frozenset()
+    # Any executable the caller names (the ``boxed`` adapter): its profile then
+    # requires a native .exe, snapshots it and runs it only inside the box.
+    any_native_executable: bool = False
 
 
 GENERIC_EXECUTABLES = frozenset({
@@ -164,6 +167,15 @@ CODEX_ADAPTER = AgentAdapter("codex", frozenset({"codex"}),
                              frozenset({"OPENAI_API_KEY", "CODEX_API_KEY"}))
 CLAUDE_ADAPTER = AgentAdapter("claude", frozenset({"claude"}),
                               frozenset({"ANTHROPIC_API_KEY"}))
+# Bring-your-own agent: any native agent CLI, boxed. Only model-provider API keys
+# may be forwarded, each named explicitly per launch and redacted from output.
+BOXED_CREDENTIAL_KEYS = frozenset({
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
+    "AZURE_OPENAI_API_KEY", "DASHSCOPE_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY",
+})
+BOXED_ADAPTER = AgentAdapter("boxed", frozenset(), BOXED_CREDENTIAL_KEYS,
+                             any_native_executable=True)
 
 
 def _normalize(executable: str) -> str:
@@ -240,7 +252,7 @@ def appcontainer_boundary(
 
 
 class AgentLauncher:
-    """Concrete ``AgentLauncherPort`` for the generic, Codex and Claude adapters."""
+    """Concrete ``AgentLauncherPort`` for the generic, Codex, Claude and boxed adapters."""
 
     def __init__(
         self,
@@ -252,7 +264,7 @@ class AgentLauncher:
         credentials: CredentialStager | None = None,
         profiles: Mapping[str, RuntimeProfile] | None = None,
     ) -> None:
-        # Built-in profiles (claude = AppContainer, codex = unavailable) can never
+        # Built-in profiles (claude, codex and boxed = AppContainer) can never
         # be overridden: this raises ValueError for such a mapping (D-01).
         self._profiles = validate_extra_profiles(profiles)
         self._workspaces = workspaces
@@ -261,6 +273,7 @@ class AgentLauncher:
             "generic": AgentAdapter("generic", frozenset(generic_executables)),
             "codex": CODEX_ADAPTER,
             "claude": CLAUDE_ADAPTER,
+            "boxed": BOXED_ADAPTER,
         }
         table.update(adapters or {})
         self._adapters = table
@@ -297,7 +310,8 @@ class AgentLauncher:
         # Revalidate in case a model was built with model_construct.
         request = AgentLaunchRequest.model_validate(request.model_dump())
         adapter = self._adapter(request.adapter)
-        if _normalize(request.executable) not in adapter.executables:
+        if not (adapter.any_native_executable
+                or _normalize(request.executable) in adapter.executables):
             raise AppError("AGENT_EXECUTABLE_NOT_ALLOWED",
                            "The executable is not permitted for this adapter.")
         if any("\0" in item for item in (request.executable, *request.args)):
@@ -948,6 +962,8 @@ class AgentLauncher:
                 "credential_keys": sorted(adapter.credential_keys),
                 "descendant_control_available": IS_WINDOWS,
                 "restricted_token_available": IS_WINDOWS,
+                "boundary": resolve_profile(name, self._profiles).boundary.name,
+                "any_native_executable": adapter.any_native_executable,
             })
         return listing
 

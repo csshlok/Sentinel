@@ -422,7 +422,12 @@ def test_adapter_metadata_reports_availability_without_paths(tmp_path):
     launcher = AgentLauncher(adapters={"ghost": AgentAdapter("ghost", frozenset({"no-such-agent-xyz"}),
                                                             frozenset({"GHOST_API_KEY"}))})
     listing = {item["adapter"]: item for item in launcher.adapters(str(tmp_path))}
-    assert set(listing) == {"generic", "codex", "claude", "ghost"}
+    assert set(listing) == {"generic", "codex", "claude", "boxed", "ghost"}
+    assert listing["boxed"]["executables"] == {} and listing["boxed"]["any_native_executable"]
+    assert {n: listing[n]["boundary"] for n in ("generic", "claude", "codex", "boxed", "ghost")} == {
+        "generic": "RESTRICTED_TOKEN", "claude": "APPCONTAINER", "codex": "APPCONTAINER",
+        "boxed": "APPCONTAINER", "ghost": "RESTRICTED_TOKEN"}
+    assert "OPENAI_API_KEY" in listing["boxed"]["credential_keys"]
     assert listing["generic"]["executables"]["python"] is True
     assert listing["ghost"]["executables"] == {"no-such-agent-xyz": False}
     assert listing["ghost"]["credential_keys"] == ["GHOST_API_KEY"]

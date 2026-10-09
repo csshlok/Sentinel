@@ -58,7 +58,7 @@ def test_person_two_flow_through_the_cli_against_a_real_server(live_api_url, tmp
     assert call(live_api_url, "assurance", "facts", cid)["assurance_fresh"] is True
     assert call(live_api_url, "agent", "list", cid)["count"] == 1
     assert {a["adapter"] for a in call(live_api_url, "agent", "adapters")["items"]} == {
-        "generic", "codex", "claude"}
+        "generic", "codex", "claude", "boxed"}
 
     denied = call(live_api_url, "agent", "launch", cid, human["id"], "python", "--", "-c", "print(1)",
                   expect=1)

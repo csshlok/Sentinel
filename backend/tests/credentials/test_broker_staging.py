@@ -210,3 +210,29 @@ def test_constructing_a_broker_does_not_read_the_home_directory(monkeypatch):
 
     monkeypatch.setattr(Path, "home", staticmethod(refuse))
     CredentialBroker(InMemoryCredentialStore())
+
+
+def test_codex_auth_file_is_staged_under_codex_and_its_tokens_are_redaction_values(tmp_path):
+    """Spike 008: ~/.codex/auth.json is staged at home/.codex/auth.json for the codex adapter."""
+
+    access, refresh = "eyJCANARYcodexACCESS-do-not-leak-0123456789", "rt_CANARYcodexREFRESH-0123456789"
+    source = tmp_path / "host-home" / ".codex" / "auth.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(json.dumps({"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": {
+        "id_token": "eyJCANARYcodexIDTOKEN-0123456789", "access_token": access,
+        "refresh_token": refresh, "account_id": "acct"}}), encoding="utf-8")
+    home = tmp_path / "AC" / "home"
+    home.mkdir(parents=True)
+    broker = CredentialBroker(InMemoryCredentialStore(),
+                              agent_credential_sources={"codex-auth-file": source})
+    staged = broker.stage_agent_credential(uuid4(), "codex-auth-file", home)
+    assert staged is not None and staged.path == home / ".codex" / "auth.json"
+    assert staged.path.read_bytes() == source.read_bytes()
+    assert {access, refresh} <= set(staged.redaction_values)
+    outcome = broker.revoke_staged_credential(staged)
+    assert outcome.deleted and not staged.path.exists() and source.is_file()
+    # The workspace sweep also knows where a leftover codex credential would be.
+    leftover = home / ".codex" / "auth.json"
+    leftover.write_text("{}", encoding="utf-8")
+    assert broker.purge_staged_credentials(home) is True
+    assert not leftover.exists()
