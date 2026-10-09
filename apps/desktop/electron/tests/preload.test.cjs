@@ -44,7 +44,7 @@ test("exposes exactly one namespace with a narrow, frozen surface", () => {
   assert.deepEqual(Object.keys(bridge.api), ["request"]);
   assert.deepEqual(Object.keys(bridge.runtime).sort(), ["getStatus", "restartBackend"]);
   assert.deepEqual(Object.keys(bridge.repositories), ["selectFolder"]);
-  assert.deepEqual(Object.keys(bridge.exports), ["saveJson"]);
+  assert.deepEqual(Object.keys(bridge.exports), ["saveJson", "savePassportBundle"]);
   assert.deepEqual(Object.keys(bridge.diagnostics), ["openLogs"]);
   assert.deepEqual(Object.keys(bridge.windowControls).sort(), ["close", "getState", "minimize", "onStateChanged", "toggleMaximize"]);
   for (const value of [bridge, bridge.api, bridge.runtime, bridge.repositories, bridge.exports, bridge.diagnostics, bridge.windowControls]) {
@@ -71,6 +71,7 @@ test("each method maps to exactly one named channel", async () => {
   await bridge.runtime.getStatus();
   await bridge.repositories.selectFolder();
   await bridge.exports.saveJson({ suggestedName: "a.json", content: "{}" });
+  await bridge.exports.savePassportBundle({ changeId: "00000000-0000-4000-8000-000000000000" });
   await bridge.diagnostics.openLogs();
   await bridge.runtime.restartBackend();
   await bridge.windowControls.getState();
@@ -84,6 +85,7 @@ test("each method maps to exactly one named channel", async () => {
       "runtime:get-status",
       "repositories:select-folder",
       "exports:save-json",
+      "exports:save-passport-bundle",
       "diagnostics:open-logs",
       "runtime:restart-backend",
       "window:get-state",

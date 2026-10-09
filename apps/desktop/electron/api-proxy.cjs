@@ -89,4 +89,50 @@ function createApiProxy({ getBaseUrl, getToken, fetchImpl = fetch }) {
   };
 }
 
-module.exports = { createApiProxy, parseLoopbackBase };
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BUNDLE_MEDIA_TYPE = "application/vnd.sentinel.passport+zip";
+const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Fetch one Change's Passport v2 bundle (a zip) in the main process. Only this fixed route is reachable, the token stays in
+ * this closure, and the bytes never pass through the renderer. A JSON error envelope is returned as `{ ok: false, error }`.
+ */
+function createBundleFetch({ getBaseUrl, getToken, fetchImpl = fetch }) {
+  return async function fetchBundle(changeId) {
+    if (typeof changeId !== "string" || !UUID_PATTERN.test(changeId)) {
+      throw new BridgeError("invalid_request", "That is not a Change id.");
+    }
+    const baseUrl = getBaseUrl();
+    if (!baseUrl) throw new BridgeError("backend_unreachable", "The backend is not running.");
+    const origin = parseLoopbackBase(baseUrl);
+    const headers = { Accept: `${BUNDLE_MEDIA_TYPE}, application/json` };
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    let response;
+    try {
+      response = await fetchImpl(`${origin}/api/v1/changes/${changeId}/passport/v2/bundle`, {
+        method: "POST", headers, signal: AbortSignal.timeout(60_000), redirect: "error",
+      });
+    } catch (cause) {
+      const timedOut = cause?.name === "TimeoutError" || cause?.name === "AbortError";
+      throw new BridgeError(
+        timedOut ? "backend_timeout" : "backend_unreachable",
+        timedOut ? "The backend did not respond in time." : "The backend is not reachable.",
+      );
+    }
+    const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_BUNDLE_BYTES) throw new BridgeError("response_too_large", "The bundle is too large.");
+    if (response.ok && type === BUNDLE_MEDIA_TYPE) return { ok: true, bytes };
+    let message = "The backend did not return a Passport bundle.";
+    try {
+      const envelope = JSON.parse(bytes.toString("utf8"));
+      if (typeof envelope?.error?.message === "string") message = envelope.error.message;
+    } catch {
+      // keep the generic message: a non-JSON body is never shown to the user
+    }
+    return { ok: false, error: { code: "bundle_unavailable", message: message.slice(0, 500) } };
+  };
+}
+
+module.exports = { createApiProxy, createBundleFetch, parseLoopbackBase, BUNDLE_MEDIA_TYPE };

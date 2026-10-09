@@ -46,4 +46,23 @@ async function saveJson({ dialog, window, writeFile }, input) {
   return { ok: true, path: target };
 }
 
-module.exports = { selectFolder, saveJson, safeJsonName, MAX_EXPORT_BYTES };
+/**
+ * Saves a Change's Passport v2 bundle. The renderer passes only the Change id: the main process fetches the zip (see
+ * `createBundleFetch`) and writes it to the location the user picks. Returns `{ path: null }` on cancel.
+ */
+async function savePassportBundle({ dialog, window, writeFile, fetchBundle }, input) {
+  const changeId = typeof input === "object" && input !== null ? input.changeId : undefined;
+  const fetched = await fetchBundle(changeId);
+  if (!fetched.ok) return fetched;
+  const result = await dialog.showSaveDialog(window, {
+    title: "Save Passport bundle",
+    defaultPath: `change-${changeId}.sentinel`,
+    filters: [{ name: "Sentinel Passport bundle", extensions: ["sentinel"] }],
+  });
+  if (result.canceled || !result.filePath) return { ok: true, path: null };
+  const target = /\.sentinel$/i.test(result.filePath) ? result.filePath : `${result.filePath}.sentinel`;
+  await writeFile(target, fetched.bytes);
+  return { ok: true, path: target };
+}
+
+module.exports = { selectFolder, saveJson, savePassportBundle, safeJsonName, MAX_EXPORT_BYTES };

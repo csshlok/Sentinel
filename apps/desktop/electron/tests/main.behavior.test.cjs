@@ -267,6 +267,7 @@ test("registers exactly the expected IPC channels", async () => {
       "api:request",
       "diagnostics:open-logs",
       "exports:save-json",
+      "exports:save-passport-bundle",
       "repositories:select-folder",
       "runtime:get-status",
       "runtime:restart-backend",

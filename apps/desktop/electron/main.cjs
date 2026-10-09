@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } = require("electron");
-const { createApiProxy } = require("./api-proxy.cjs");
+const { createApiProxy, createBundleFetch } = require("./api-proxy.cjs");
 const { HOST, SCHEME, createProtocolHandler } = require("./app-protocol.cjs");
 const { createBackendRuntime } = require("./backend-runtime.cjs");
 const { toSafeError, BridgeError } = require("./ipc-errors.cjs");
@@ -11,7 +11,7 @@ const { createLogger } = require("./logging.cjs");
 const { describeProcess, detectGit, killTree } = require("./process-tools.cjs");
 const { createDescriptorStore } = require("./runtime-descriptor.cjs");
 const { readExternalToken: readExternalTokenFrom } = require("./external-token.cjs");
-const { selectFolder, saveJson } = require("./native-dialogs.cjs");
+const { selectFolder, saveJson, savePassportBundle } = require("./native-dialogs.cjs");
 const { buildRepairPage } = require("./repair-page.cjs");
 const { buildRuntimeStatus } = require("./runtime-status.cjs");
 const { attachWindowStateEvents, registerWindowControlHandlers } = require("./window-controls.cjs");
@@ -97,6 +97,7 @@ function createRuntime() {
 
 const runtime = createRuntime();
 const apiProxy = createApiProxy({ getBaseUrl: runtime.getBaseUrl, getToken: runtime.getToken });
+const fetchBundle = createBundleFetch({ getBaseUrl: runtime.getBaseUrl, getToken: runtime.getToken });
 
 function isTrustedSender(event) {
   const url = event.senderFrame?.url ?? "";
@@ -150,6 +151,15 @@ function registerIpc() {
     "exports:save-json",
     guarded((event, input) =>
       saveJson({ dialog, window: BrowserWindow.fromWebContents(event.sender), writeFile: require("node:fs/promises").writeFile }, input),
+    ),
+  );
+  ipcMain.handle(
+    "exports:save-passport-bundle",
+    guarded((event, input) =>
+      savePassportBundle(
+        { dialog, window: BrowserWindow.fromWebContents(event.sender), writeFile: require("node:fs/promises").writeFile, fetchBundle },
+        input,
+      ),
     ),
   );
   registerWindowControlHandlers({ ipcMain, BrowserWindow, guard: guarded });

@@ -24,6 +24,7 @@ const diagnostics = Object.freeze({
 
 const exportsApi = Object.freeze({
   saveJson: (input) => ipcRenderer.invoke("exports:save-json", input),
+  savePassportBundle: (input) => ipcRenderer.invoke("exports:save-passport-bundle", input),
 });
 
 const windowControls = Object.freeze({

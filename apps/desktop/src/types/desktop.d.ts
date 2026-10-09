@@ -55,6 +55,7 @@ declare global {
       exports: {
         /** Saves JSON to a path the user chooses in a native dialog. `path` is null when they cancel. */
         saveJson(input: { suggestedName: string; content: string }): Promise<{ ok: true; path: string | null } | BridgeFailure>;
+        savePassportBundle(input: { changeId: string }): Promise<{ ok: true; path: string | null } | BridgeFailure>;
       };
       windowControls: {
         getState(): Promise<DesktopWindowState>;
