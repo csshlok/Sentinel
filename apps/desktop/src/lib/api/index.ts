@@ -22,9 +22,9 @@ function withQuery(path: string, query?: Query): string {
 export const http = {
   get: <T>(path: string, opts: { query?: Query; signal?: AbortSignal } = {}) =>
     transport.request<T>({ method: "GET", path: withQuery(path, opts.query) }, opts.signal),
-  post: <T>(path: string, body?: unknown, opts: { idempotencyKey?: string; signal?: AbortSignal } = {}) =>
+  post: <T>(path: string, body?: unknown, opts: { idempotencyKey?: string; signal?: AbortSignal; query?: Query; timeoutMs?: number } = {}) =>
     transport.request<T>(
-      { method: "POST", path, body, idempotencyKey: opts.idempotencyKey },
+      { method: "POST", path: withQuery(path, opts.query), body, idempotencyKey: opts.idempotencyKey, timeoutMs: opts.timeoutMs },
       opts.signal,
     ),
   put: <T>(path: string, body: unknown, opts: { signal?: AbortSignal } = {}) =>

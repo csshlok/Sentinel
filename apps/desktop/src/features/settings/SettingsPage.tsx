@@ -17,6 +17,7 @@ import { devToken } from "@/lib/api/browser-transport";
 import type { CapabilityState } from "@/lib/api/types";
 import type { StatusInfo } from "@/lib/status";
 import { capabilitiesQuery, healthQuery, identityQuery, runtimeQuery } from "@/services/system";
+import { WorkspaceSweepCard } from "./WorkspaceSweepCard";
 import { formatTime } from "@/lib/status";
 
 const CAPABILITY: Record<CapabilityState, StatusInfo> = {
@@ -211,6 +212,8 @@ export function SettingsPage() {
       </Section>
 
       <Section title="Appearance"><Appearance /></Section>
+
+      <Section title="Agent workspaces"><WorkspaceSweepCard /></Section>
 
       <Section title="Diagnostics">
         <Diagnostics text={buildDiagnostics({ interfaceKind: inBrowser ? "browser" : "desktop", api: health.data?.api_version ?? null, reachable: health.isSuccess, runtime: runtime.data ?? null, capabilities: caps.data?.items ?? [] })} />

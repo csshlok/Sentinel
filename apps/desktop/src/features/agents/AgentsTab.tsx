@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorState } from "@/components/ErrorState";
 import { Field, FormDialog, Select, useDialogState, useFormAction } from "@/components/FormDialog";
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AgentAdapterInfo, AgentRun, DescendantProcess } from "@/lib/api/types";
 import { agentRunInfo, formatRelative, formatTime } from "@/lib/status";
+import { boundaryLine, boundaryStatus } from "@/lib/boundary";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { adaptersQuery, agentsQuery, attachAgent, isActiveRun, launchAgent, pauseAgent, resumeAgent, stopAgent } from "@/services/actions";
 import { changeKeys } from "@/services/changes";
 import { useActors } from "@/features/authority/useActors";
@@ -34,6 +36,8 @@ export function AgentsTab() {
 
   return (
     <>
+      <WorkspacePanel changeId={changeId} actors={actors} />
+
       <div className="flex flex-wrap gap-2" role="toolbar" aria-label="Agent actions">
         <LaunchAgent changeId={changeId} actors={actors} adapters={adapters.data?.items ?? []} />
         <AttachAgent changeId={changeId} actors={actors} adapters={adapters.data?.items ?? []} />
@@ -116,6 +120,7 @@ function RunCard({ run, changeId, actors }: { run: AgentRun; changeId: string; a
       description={`Started ${formatRelative(run.started_at)}`}
       action={
         <div className="flex items-center gap-2">
+          <StatusLabel status={boundaryStatus(run)} />
           <StatusLabel status={info} />
           {run.status === "RUNNING" ? <RunControl kind="pause" run={run} changeId={changeId} actors={actors} /> : null}
           {run.status === "PAUSED" ? <RunControl kind="resume" run={run} changeId={changeId} actors={actors} /> : null}
@@ -135,8 +140,10 @@ function RunCard({ run, changeId, actors }: { run: AgentRun; changeId: string; a
           ...(run.external_run_id ? [{ label: "External run", value: <code>{run.external_run_id}</code> }] : []),
           { label: "Descendant control", value: run.descendant_control_available ? "Available" : "Not available" },
           { label: "Restricted-token launch", value: run.restricted_token_applied ? "Applied" : "Not applied" },
+          ...boundaryFacts(run),
         ]}
       />
+      <p className="mt-3 text-[13px]" data-testid="run-boundary">{boundaryLine(run)}</p>
       {run.limitations?.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-[13px] text-muted-foreground">{run.limitations.map((l) => <li key={l}>{l}</li>)}</ul> : null}
       <DescendantProcessesTable processes={run.descendant_processes} />
       <OutputBlock label="stdout" text={run.stdout} />
@@ -144,6 +151,17 @@ function RunCard({ run, changeId, actors }: { run: AgentRun; changeId: string; a
       {run.output_truncated ? <p className="mt-2 text-xs text-muted-foreground">Output was truncated to the configured limit.</p> : null}
     </Section>
   );
+}
+
+/** The observed box facts a verified AppContainer run recorded (the profile and package SID name the exact box). */
+function boundaryFacts(run: AgentRun): { label: string; value: ReactNode }[] {
+  const b = run.execution_boundary;
+  if (!b || b.kind !== "APPCONTAINER") return [];
+  return [
+    ...(b.profile ? [{ label: "Box profile", value: <code className="break-all">{b.profile}</code> }] : []),
+    ...(b.package_sid ? [{ label: "Package SID", value: <code className="break-all">{b.package_sid}</code> }] : []),
+    ...(b.verified_at ? [{ label: "Box verified", value: formatTime(b.verified_at) }] : []),
+  ];
 }
 
 /** Best-effort process-tree evidence (PROCESS_SUPERVISOR_AND_CONTAINER_SHARING_PLAN.md Part A): only rendered when the runtime actually observed descendants. */

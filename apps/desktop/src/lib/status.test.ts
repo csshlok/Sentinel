@@ -59,3 +59,6 @@ test("a value from a newer backend degrades to a neutral label instead of throwi
     assert.equal(out.tone, "neutral");
   }
 });
+
+// boundary.test.ts runs through this listed file: package.json (which lists the unit tests) holds local-only edits.
+import "./boundary.test.ts";

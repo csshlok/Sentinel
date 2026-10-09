@@ -35,6 +35,13 @@ export interface FakeApi {
   passports: Record<string, unknown>;
   lists: Record<string, Record<string, unknown[]>>;
   requests: string[];
+  /** Phase 11 surfaces, keyed by Change id; a missing workspace or preset is a 404 like the real backend. */
+  workspaces: Record<string, any>;
+  previews: Record<string, any>;
+  checkRuns: Record<string, unknown[]>;
+  presets: Record<string, any>;
+  passportV2: Record<string, any>;
+  githubCheck: (declineApp: boolean) => any;
 }
 
 const NOW = "2026-09-19T12:00:00Z";
@@ -90,6 +97,12 @@ export async function installFakeApi(page: Page, overrides: Partial<FakeApi> = {
     passports: {},
     lists: {},
     requests: [],
+    workspaces: {},
+    previews: {},
+    checkRuns: {},
+    presets: {},
+    passportV2: {},
+    githubCheck: () => ({ state: "GITHUB_APP_NOT_INSTALLED", presentation: "CHECK_RUN", repository: "octo/repo", installation_url: "https://github.com/apps/sentinel-octo/installations/new" }),
     ...overrides,
   };
   const json = (route: Route, status: number, body: unknown) =>
@@ -151,7 +164,7 @@ export async function installFakeApi(page: Page, overrides: Partial<FakeApi> = {
       if (!existing) api.changes.unshift(change);
       return json(route, 201, view(change));
     }
-    const op = path.match(/^\/api\/v1\/changes\/([^/]+)\/(refresh|transition|cancel|verify|contract|passport|agents|outcomes|delegations|recovery|assurance\/facts|assurance\/plan|replay\/verify|evidence\/(?:baseline|current))$/);
+    const op = path.match(/^\/api\/v1\/changes\/([^/]+)\/(refresh|transition|cancel|verify|contract|passport|agents|outcomes|delegations|recovery|assurance\/facts|assurance\/plan|replay\/verify|evidence\/(?:baseline|current)|workspace|workspace\/(?:preview|apply|discard)|checks|policy\/preset|passport\/v2\/issue|providers\/github\/checks)$/);
     if (op) {
       const chg = api.changes.find((c) => c.id === decodeURIComponent(op[1]!));
       const name = op[2]!;
@@ -174,6 +187,19 @@ export async function installFakeApi(page: Page, overrides: Partial<FakeApi> = {
       if (name === "recovery") return json(route, 404, envelope(404, "NOT_FOUND", "No recovery plan.").body);
       if (name === "assurance/facts") return json(route, 200, { required_evidence_complete: false, required_assurance_passed: false, assurance_fresh: false, deviations_resolved: true, reasons: ["No baseline checkpoint."] });
       if (name === "assurance/plan") return method === "POST" ? json(route, 200, { id: "plan-1", change_id: chg.id }) : json(route, 404, envelope(404, "NOT_FOUND", "No plan.").body);
+      if (name === "workspace") return api.workspaces[chg.id] ? json(route, 200, api.workspaces[chg.id]) : json(route, 404, envelope(404, "WORKSPACE_NOT_FOUND", "No workspace.").body);
+      if (name === "workspace/preview") return api.previews[chg.id] ? json(route, 200, api.previews[chg.id]) : json(route, 409, envelope(409, "WORKSPACE_NOT_READY", "Nothing to preview.").body);
+      if (name === "workspace/apply") {
+        const ws = api.workspaces[chg.id];
+        if (body?.approval_token !== api.previews[chg.id]?.approval_token) return json(route, 409, envelope(409, "WORKSPACE_APPLY_REFUSED", "The approval token does not match the latest preview.").body);
+        ws.state = "APPLIED"; ws.applied_sha = ws.sealed_sha;
+        return json(route, 200, { applied: true, workspace: ws, preview: api.previews[chg.id] });
+      }
+      if (name === "workspace/discard") { const ws = api.workspaces[chg.id]; ws.state = "DISCARDED"; return json(route, 200, ws); }
+      if (name === "checks") { const items = api.checkRuns[chg.id] ?? []; return json(route, 200, { count: items.length, items }); }
+      if (name === "policy/preset") return api.presets[chg.id] ? json(route, 200, api.presets[chg.id]) : json(route, 404, envelope(404, "NOT_FOUND", "No preset.").body);
+      if (name === "passport/v2/issue") return api.passportV2[chg.id] ? json(route, 200, api.passportV2[chg.id]) : json(route, 409, envelope(409, "SIGNING_KEY_UNAVAILABLE", "No signing key.").body);
+      if (name === "providers/github/checks") return json(route, 200, api.githubCheck(url.searchParams.get("decline_app") === "true"));
       if (name === "replay/verify") return json(route, 200, { verified: true, checked_events: (api.events[chg.id] ?? []).length, first_break_seq: null });
     }
     const match = path.match(/^\/api\/v1\/changes\/([^/]+)(?:\/(evidence|events))?$/);

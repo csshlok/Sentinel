@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { assuranceEvaluationQuery, assuranceFactsQuery, assurancePlanQuery, createAssurancePlan, runAssurancePlan } from "@/services/actions";
 import { changeKeys } from "@/services/changes";
 import { useActors } from "@/features/authority/useActors";
+import { CheckRunsPanel, DiffCoveragePanel, PresetPanel } from "./AssurancePanels";
 
 const isMissing = (e: unknown) => e instanceof ApiError && e.kind === "not_found";
 const yesNo = (ok: boolean): { label: string; tone: "ok" | "warn" } => (ok ? { label: "Yes", tone: "ok" } : { label: "No", tone: "warn" });
@@ -76,6 +77,9 @@ export function AssuranceTab() {
           )}
         </>
       )}
+      <PresetPanel changeId={changeId} />
+      <CheckRunsPanel changeId={changeId} />
+      <DiffCoveragePanel changeId={changeId} />
       <p className="text-xs leading-5 text-muted-foreground">Passing checks are evidence for one Git state, not proof the change is correct. Checks that can't run or were skipped are shown as such rather than as passes.</p>
     </>
   );
@@ -247,7 +251,7 @@ function RunPlan({ changeId, plan, actors, onDone }: { changeId: string; plan: A
         open={dlg.open}
         onOpenChange={dlg.onOpenChange}
         title="Run the planned checks"
-        description={`This executes ${checks.length} command${checks.length === 1 ? "" : "s"} (${commands} required) in the repository. They can modify files, depending on what they are.`}
+        description={`This executes ${checks.length} command${checks.length === 1 ? "" : "s"} (${commands} required) . Each runs in its own confined AppContainer box on a copy of the committed tree, unless this Change explicitly opted into unconfined checks; the Check runs list shows the boundary each run actually had.`}
         submitLabel="Run checks"
         pending={run.isPending}
         error={run.error}

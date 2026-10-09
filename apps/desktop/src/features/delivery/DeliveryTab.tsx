@@ -16,6 +16,7 @@ import { closePull, createGrant, createPull, githubStatusQuery, outcomesQuery, r
 import { changeDetailQuery, changeKeys } from "@/services/changes";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GithubConnection } from "./GithubConnection";
+import { GithubCheckPanel } from "./GithubCheckPanel";
 import { KIND_LABEL, groupOutcomes } from "./outcomes";
 
 const GRANT_SCOPES = ["github.repo.read", "github.pr.create", "github.pr.close"];
@@ -53,6 +54,8 @@ export function DeliveryTab() {
         <NewGrant changeId={changeId} actors={actors} disabled={!connected} onDone={refreshGrants} />
       </div>
       {!connected && status.isSuccess ? <Notice title="Connect GitHub first">Pull-request actions need a connection. Local evidence and outcomes already recorded stay visible.</Notice> : null}
+
+      <GithubCheckPanel changeId={changeId} disabled={!connected} />
 
       <Section title="Outcomes" description={`For the current commit ${shortSha(c.git_summary?.head_sha)}. The newest observation of each kind is what counts.`} flush>
         {groups.length === 0 ? (

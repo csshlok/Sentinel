@@ -35,6 +35,18 @@ import type {
   ToolManifestListResponse,
   ToolTrustDecision,
   ToolTrustScope,
+  ChangeWorkspace,
+  CheckRunListResponse,
+  DiffCoverageRequest,
+  DiffCoverageResult,
+  GitHubAppConfigurationStatus,
+  GitHubAppFlowResult,
+  GitHubCheckPublicationResult,
+  PassportV2Issued,
+  PolicyPresetEvaluation,
+  WorkspaceApplyPreview,
+  WorkspaceApplyResult,
+  WorkspaceSweepReport,
 } from "@/lib/api/types";
 import { changeKeys } from "./changes";
 
@@ -167,3 +179,39 @@ export const adaptersQuery = () =>
   queryOptions({ queryKey: ["agents", "adapters"] as const, queryFn: ({ signal }) => http.get<AgentAdapterListResponse>("/api/v1/agents/adapters", { signal }), staleTime: 60_000 });
 export const githubStatusQuery = () =>
   queryOptions({ queryKey: ["providers", "github", "status"] as const, queryFn: ({ signal }) => http.get<ProviderConnectionStatus>("/api/v1/providers/github/status", { signal }) });
+
+// --- S3 workspace, confined checks, presets, Passport v2 and the GitHub Check (Phase 11) --------------------------------
+export const workspaceQuery = (id: string) => read<ChangeWorkspace>(id, "workspace", "/workspace");
+export const previewWorkspace = (id: string) => http.post<WorkspaceApplyPreview>(`${base(id)}/workspace/preview`, undefined, idem());
+export const applyWorkspace = (id: string, body: { actor_id: string; approval_token: string }, key?: string) =>
+  http.post<WorkspaceApplyResult>(`${base(id)}/workspace/apply`, body, idem(key));
+export const discardWorkspace = (id: string, body: { actor_id: string }, key?: string) =>
+  http.post<ChangeWorkspace>(`${base(id)}/workspace/discard`, body, idem(key));
+export const sweepWorkspaces = () => http.post<WorkspaceSweepReport>("/api/v1/workspaces/sweep", undefined, idem());
+
+export const checkRunsQuery = (id: string) => read<CheckRunListResponse>(id, "check-runs", "/checks");
+export const presetQuery = (id: string) => read<PolicyPresetEvaluation>(id, "policy-preset", "/policy/preset");
+/** Diff coverage runs the tests in a confined box; that can take minutes, so it gets the transport's longest timeout. */
+export const runDiffCoverage = (id: string, body: DiffCoverageRequest, key?: string) =>
+  http.post<DiffCoverageResult>(`${base(id)}/assurance/diff-coverage`, body, { ...idem(key), timeoutMs: 60_000 });
+
+export const issuePassportV2 = (id: string) => http.post<PassportV2Issued>(`${base(id)}/passport/v2/issue`, undefined, idem());
+
+export const publishGithubCheck = (id: string, declineApp = false) =>
+  http.post<GitHubCheckPublicationResult>(`${base(id)}/providers/github/checks`, undefined, { ...idem(), query: declineApp ? { decline_app: true } : undefined });
+export const githubAppStatusQuery = (owner: string) =>
+  queryOptions({
+    queryKey: ["providers", "github", "app", owner] as const,
+    queryFn: ({ signal }) => http.get<GitHubAppConfigurationStatus>(`/api/v1/providers/github/app/status/${seg(owner)}`, { signal }),
+    enabled: Boolean(owner),
+    retry: false,
+  });
+export const startGithubAppFlow = (body: { owner: string; account_kind: "user" | "organization" }) =>
+  http.post<GitHubAppFlowResult>("/api/v1/providers/github/app/flows", body, idem());
+export const githubAppFlowQuery = (flowId: string) =>
+  queryOptions({
+    queryKey: ["providers", "github", "app-flow", flowId] as const,
+    queryFn: ({ signal }) => http.get<GitHubAppFlowResult>(`/api/v1/providers/github/app/flows/${seg(flowId)}`, { signal }),
+    enabled: Boolean(flowId),
+    refetchInterval: (q) => (q.state.data && q.state.data.status !== "PENDING" ? false : 3_000),
+  });

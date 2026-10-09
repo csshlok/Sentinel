@@ -1461,6 +1461,7 @@ export interface components {
             descendant_processes?: components["schemas"]["DescendantProcess"][];
             /** Duration Ms */
             duration_ms?: number | null;
+            execution_boundary?: components["schemas"]["ExecutionBoundary"] | null;
             /** Exit Code */
             exit_code?: number | null;
             /** External Run Id */
@@ -2710,6 +2711,41 @@ export interface components {
          * @enum {string}
          */
         EvidenceStatus: "CURRENT" | "STALE" | "MISSING" | "UNSUPPORTED" | "PARTIAL";
+        /**
+         * ExecutionBoundary
+         * @description The launch boundary observed for one agent run (never inferred from a profile).
+         *
+         *     ``APPCONTAINER`` only from a live token verified before the process
+         *     resumed; ``RESTRICTED_TOKEN`` only when a reduced token was applied
+         *     (not a sandbox); ``NONE`` for a run without either (attached, or an
+         *     unreduced top-level process).
+         */
+        ExecutionBoundary: {
+            /** Capabilities */
+            capabilities?: string[];
+            /** Integrity Rid */
+            integrity_rid?: string | null;
+            /**
+             * Job Verified
+             * @default false
+             */
+            job_verified: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "APPCONTAINER" | "RESTRICTED_TOKEN" | "NONE";
+            /** Package Sid */
+            package_sid?: string | null;
+            /** Profile */
+            profile?: string | null;
+            /** Verified At */
+            verified_at?: string | null;
+            /** Working Directory */
+            working_directory?: string | null;
+            /** Workspace Drive */
+            workspace_drive?: string | null;
+        };
         /** GitCheckpoint */
         GitCheckpoint: {
             /** Branch */
@@ -2821,7 +2857,7 @@ export interface components {
             /** Diff Exercised */
             diff_exercised?: ("PASS" | "FAIL" | "UNKNOWN" | "STALE" | "NOT_APPLICABLE") | null;
             /** Execution Boundary */
-            execution_boundary?: "UNKNOWN" | null;
+            execution_boundary?: ("APPCONTAINER" | "RESTRICTED_TOKEN_ONLY" | "MIXED" | "NONE" | "UNKNOWN") | null;
             /** Freshness */
             freshness?: ("CURRENT" | "STALE" | "UNKNOWN") | null;
             /** Head Sha */
@@ -3127,6 +3163,19 @@ export interface components {
             status_digest?: string | null;
         };
         /**
+         * PassportV2ExecutionBearing
+         * @description A changed file that makes code run later outside Sentinel (CI, IDE, hooks, builds).
+         */
+        PassportV2ExecutionBearing: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "npm-scripts" | "ci" | "test-bootstrap" | "build-hook" | "git-or-ide-hook";
+            /** Path */
+            path: string;
+        };
+        /**
          * PassportV2Issued
          * @description Sentinel-issued v2 payload signature; bundle manifests are signed in Phase 8.
          */
@@ -3183,12 +3232,14 @@ export interface components {
             /** Contract Digest */
             contract_digest?: string | null;
             diff_coverage?: components["schemas"]["PassportV2DiffClaim"];
+            /** Execution Bearing Changes */
+            execution_bearing_changes?: components["schemas"]["PassportV2ExecutionBearing"][];
             /**
              * Execution Boundary
              * @default UNKNOWN
-             * @constant
+             * @enum {string}
              */
-            execution_boundary: "UNKNOWN";
+            execution_boundary: "APPCONTAINER" | "RESTRICTED_TOKEN_ONLY" | "MIXED" | "NONE" | "UNKNOWN";
             /**
              * Issued At
              * Format: date-time
@@ -3230,9 +3281,9 @@ export interface components {
             /**
              * Runs Later
              * @default UNKNOWN
-             * @constant
+             * @enum {string}
              */
-            runs_later: "UNKNOWN";
+            runs_later: "NONE" | "PRESENT" | "UNKNOWN";
             /**
              * Schema Version
              * @default 2

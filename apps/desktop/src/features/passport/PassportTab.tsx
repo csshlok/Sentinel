@@ -11,6 +11,7 @@ import { exportFileName, saveJsonExport, type SaveResult } from "@/lib/export";
 import { evidenceInfo, formatRelative, formatTime, lifecycleInfo, recoveryInfo, signatureInfo, trustInfo } from "@/lib/status";
 import { buildPassport, exportSignedPassport, passportQuery } from "@/services/actions";
 import { signingKeyQuery } from "@/services/system";
+import { PassportV2Panel } from "./PassportV2Panel";
 
 /** "Trace verified" is the honest reading of a verified hash chain; a passport doesn't prove the change is correct. */
 function replayLine(p: { replay_verified?: boolean | null; replay_checked_events?: number | null; replay_first_break_seq?: number | null }) {
@@ -50,6 +51,8 @@ export function PassportTab() {
       {save.isError ? <Notice tone="danger" title="The export wasn't saved" role="alert">{save.error instanceof Error ? save.error.message : "Saving failed."}</Notice> : null}
       {signAndSave.isError ? <Notice tone="danger" title="The signed export wasn't saved" role="alert">{signAndSave.error instanceof ApiError ? signAndSave.error.message : signAndSave.error instanceof Error ? signAndSave.error.message : "The request failed."}</Notice> : null}
       {saved?.kind === "saved" ? <Notice title="Saved" role="status">Written to <code className="break-all">{saved.where}</code>.</Notice> : null}
+
+      <PassportV2Panel changeId={id} />
 
       {!p ? (
         <Section><EmptyState title="No passport yet" action={buildButton}>A passport summarizes intent, authority, evidence, outcomes and tool trust for this Change at one moment. Building one doesn't change the Change.</EmptyState></Section>

@@ -23,3 +23,15 @@ export async function saveJsonExport(suggestedName: string, data: unknown): Prom
   URL.revokeObjectURL(url);
   return { kind: "downloaded" };
 }
+
+/**
+ * Saves a Change's Passport v2 bundle (`.sentinel` zip). Only the desktop app can do this: its main process fetches the bytes and
+ * writes them where the user picks, so the renderer never handles the file. In a plain browser this explains that instead.
+ */
+export async function savePassportBundle(changeId: string): Promise<SaveResult> {
+  const bridge = window.changeAssuranceDesktop;
+  if (!bridge?.exports?.savePassportBundle) throw new Error("Saving a Passport bundle needs the desktop app (or `sentinel passport export <change-id>` in a terminal).");
+  const result = await bridge.exports.savePassportBundle({ changeId });
+  if (!result.ok) throw new Error(result.error.message);
+  return result.path ? { kind: "saved", where: result.path } : { kind: "cancelled" };
+}

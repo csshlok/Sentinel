@@ -73,3 +73,24 @@ export type EvidenceSnapshot = S["EvidenceSnapshot"];
 export type DescendantProcess = S["DescendantProcess"];
 export type SignedPassportExport = S["SignedPassportExport"];
 export type SigningPublicKeyResponse = S["SigningPublicKeyResponse"];
+
+// Execution boundary, S3 workspace, confined checks, presets, Passport v2 and the GitHub Check (Phase 11 catch-up).
+export type ExecutionBoundary = S["ExecutionBoundary"];
+export type ChangeWorkspace = S["ChangeWorkspace"];
+export type WorkspaceState = S["WorkspaceState"];
+export type WorkspaceApplyPreview = S["WorkspaceApplyPreview"];
+export type WorkspaceApplyResult = S["WorkspaceApplyResult"];
+export type WorkspaceChangedPath = S["WorkspaceChangedPath"];
+export type WorkspaceCommit = S["WorkspaceCommit"];
+export type WorkspaceSweepReport = S["WorkspaceSweepReport"];
+export type CheckRunView = S["CheckRunView"];
+export type CheckRunListResponse = S["CheckRunListResponse"];
+export type PolicyPresetEvaluation = S["PolicyPresetEvaluation"];
+export type DiffCoverageRequest = S["DiffCoverageRequest"];
+export type DiffCoverageResult = S["DiffCoverageResult"];
+export type DiffCoverageRule = S["DiffCoverageRule"];
+export type PassportV2Issued = S["PassportV2Issued"];
+export type PassportV2Payload = S["PassportV2Payload"];
+export type GitHubCheckPublicationResult = S["GitHubCheckPublicationResult"];
+export type GitHubAppFlowResult = S["GitHubAppFlowResult"];
+export type GitHubAppConfigurationStatus = S["GitHubAppConfigurationStatus"];
