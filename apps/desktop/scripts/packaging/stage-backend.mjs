@@ -18,17 +18,34 @@ const PYTHON_VERSION = "3.12.10";
 const EMBED_SHA256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3";
 const EMBED_URL = `https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip`;
 
-// Runtime only: the desktop app never runs the CLI (typer/rich) or the terminal UI (textual).
-const RUNTIME_REQUIREMENTS = ["fastapi>=0.115,<1", "pydantic>=2.10,<3", "uvicorn[standard]>=0.34,<1"];
+// Runtime only: the desktop app never runs the CLI (typer/rich) or the terminal UI (textual). The versions are the
+// exact pins of pyproject.toml's [project] dependencies (checked below), so the packaged backend is the tested one;
+// cryptography is needed by Passport v2 signing, verification and the GitHub Check.
+const RUNTIME_PACKAGES = ["fastapi", "pydantic", "uvicorn[standard]", "cryptography"];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..", "..");
 const repoRoot = resolve(desktop, "..", "..");
+const RUNTIME_REQUIREMENTS = pinnedRequirements(RUNTIME_PACKAGES);
 const cacheDir = join(desktop, ".cache");
 const stage = join(desktop, "build", "backend-stage");
 const pythonDir = join(stage, "python");
 const srcDir = join(stage, "src");
 const hostPython = process.env.CHANGE_ASSURANCE_PYTHON || "python";
+
+/** `name==version` for each package, read from pyproject.toml's dependency pins; a missing or unpinned one fails. */
+function pinnedRequirements(names) {
+  const text = readFileSync(join(repoRoot, "pyproject.toml"), "utf8");
+  // The list ends at a `]` on its own line (an extra like `uvicorn[standard]` contains one too).
+  const block = text.match(/\ndependencies\s*=\s*\[([\s\S]*?)\r?\n\]/);
+  if (!block) throw new Error("pyproject.toml has no [project] dependencies list.");
+  const pins = new Map([...block[1].matchAll(/"([A-Za-z0-9_.\-]+(?:\[[^\]]+\])?)==([^"]+)"/g)].map((m) => [m[1], m[2]]));
+  return names.map((name) => {
+    const version = pins.get(name);
+    if (!version) throw new Error(`pyproject.toml does not pin ${name} with ==.`);
+    return `${name}==${version}`;
+  });
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: "inherit", shell: false, ...options });
@@ -112,7 +129,7 @@ function copyBackend() {
 
 function smokeTest() {
   const exe = join(pythonDir, "python.exe");
-  const code = "import backend.app.main, fastapi, pydantic, uvicorn, sqlite3; print('ok')";
+  const code = "import backend.app.main, backend.app.passport.cng, fastapi, pydantic, uvicorn, cryptography, sqlite3; print('ok')";
   // Importing the backend creates its database and API token under CHANGE_ASSURANCE_DB_PATH (default: the working
   // directory). Point it at a throwaway directory outside the stage so nothing runtime-generated is ever packaged.
   const scratch = mkdtempSync(join(tmpdir(), "ca-stage-smoke-"));
