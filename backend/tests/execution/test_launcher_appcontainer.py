@@ -382,3 +382,14 @@ def test_the_drive_is_named_in_the_run_and_a_failed_removal_is_reported(box):
     assert any("drive Z: could not be confirmed removed" in text for text in run.limitations)
     # Removal is attempted exactly once, even though both `after` and the finally run.
     assert box["drives"]["unmapped"] == [("Z:", box["container"])]
+
+
+def test_a_caller_cannot_override_a_staged_home_variable(box):
+    """Review finding: CODEX_HOME is boundary-derived; naming it as an environment key is refused."""
+
+    with pytest.raises(AppError) as caught:
+        box["launcher"].launch(CHANGE, str(box["repo"]), AgentLaunchRequest(
+            adapter="codex", executable="codex", environment_keys=["CODEX_HOME"],
+            timeout_seconds=10), 10_000)
+    assert caught.value.code == "AGENT_ENVIRONMENT_KEY_DENIED"
+    assert box["spawn_calls"] == [] and box["provider"].ensured == []

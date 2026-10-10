@@ -236,3 +236,16 @@ def test_codex_auth_file_is_staged_under_codex_and_its_tokens_are_redaction_valu
     leftover.write_text("{}", encoding="utf-8")
     assert broker.purge_staged_credentials(home) is True
     assert not leftover.exists()
+
+
+def test_the_codex_source_follows_the_host_codex_home(tmp_path, monkeypatch):
+    """Review finding: Codex reads auth.json from CODEX_HOME when it is set, and so does the broker."""
+
+    from backend.app.credentials import broker as module
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "custom-codex"))
+    assert module._default_agent_credential_sources()["codex-auth-file"] == \
+        tmp_path / "custom-codex" / "auth.json"
+    monkeypatch.delenv("CODEX_HOME")
+    assert module._default_agent_credential_sources()["codex-auth-file"] == \
+        Path.home() / ".codex" / "auth.json"

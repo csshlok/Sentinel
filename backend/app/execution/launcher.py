@@ -417,7 +417,10 @@ class AgentLauncher:
                 "workspace provider is configured.",
                 status_code=503, details={"adapter": adapter.name},
             )
-        reserved = _APPCONTAINER_RESERVED_KEYS | {key.upper() for key, _ in profile.static_env}
+        # Every key the profile derives (static and staged-home variables such as CODEX_HOME)
+        # is boundary-owned: a caller-named key can never replace it.
+        reserved = (_APPCONTAINER_RESERVED_KEYS | {key.upper() for key, _ in profile.static_env}
+                    | {key.upper() for key, _ in profile.home_env})
         if any(key.upper() in reserved for key in request.environment_keys):
             raise AppError("AGENT_ENVIRONMENT_KEY_DENIED",
                            "An environment key is not permitted for a launched agent.")

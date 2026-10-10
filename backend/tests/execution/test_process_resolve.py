@@ -215,3 +215,22 @@ def test_a_shim_without_its_vendored_executable_is_still_refused(tmp_path):
     with pytest.raises(AppError) as caught:
         resolve_argv("codex", {"PATH": str(bin_dir), "PATHEXT": ".COM;.EXE;.BAT;.CMD"}, root)
     assert caught.value.code == "EXECUTABLE_NOT_ALLOWED"
+
+
+def test_a_vendored_executable_inside_the_repository_is_never_used(tmp_path):
+    """Review finding: a linked install pointing into the repository must not contribute codex.exe."""
+
+    import _winapi
+
+    root = tmp_path / "repo"
+    vendored = root / "vendor-pkg"
+    native = vendored / "vendor" / "x86_64-pc-windows-msvc" / "codex" / "codex.exe"
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"MZ")
+    bin_dir = tmp_path / "npm"
+    (bin_dir / "node_modules" / "@openai").mkdir(parents=True)
+    (bin_dir / "codex.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    _winapi.CreateJunction(str(vendored), str(bin_dir / "node_modules" / "@openai" / "codex-win32-x64"))
+    with pytest.raises(AppError) as caught:
+        resolve_argv("codex", {"PATH": str(bin_dir), "PATHEXT": ".COM;.EXE;.BAT;.CMD"}, root.resolve())
+    assert caught.value.code == "EXECUTABLE_NOT_ALLOWED"

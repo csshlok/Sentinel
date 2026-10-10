@@ -9,6 +9,7 @@ npm shim whose package vendors a native executable (``codex``) resolves to it.
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import sys
 from collections.abc import Mapping
@@ -21,12 +22,16 @@ _BATCH = {".cmd", ".bat"}
 # npm shims whose package vendors a native executable: the shim is mapped to that
 # executable (never run). Paths are relative to the shim's directory; npm may nest
 # the platform package under the main one or hoist it next to it.
+# The host's own architecture is tried first, so an ARM64 machine never picks the x64 build.
+_ARCHES = (("arm64", "aarch64"), ("x64", "x86_64"))
+if platform.machine().lower() not in {"arm64", "aarch64"}:
+    _ARCHES = _ARCHES[::-1]
 _VENDORED_NATIVE = {
     "codex": tuple(
         Path("node_modules", *prefix, "@openai", f"codex-win32-{arch}", "vendor",
              f"{triple}-pc-windows-msvc", "codex", "codex.exe")
+        for arch, triple in _ARCHES
         for prefix in (("@openai", "codex", "node_modules"), ())
-        for arch, triple in (("x64", "x86_64"), ("arm64", "aarch64"))
     ),
 }
 
@@ -86,7 +91,11 @@ def resolve_argv(
         for relative in _VENDORED_NATIVE.get(base, ()):
             native = found.parent / relative
             if native.is_file():
-                return [str(native.resolve())]
+                resolved = native.resolve()
+                # A linked install must not let the repository contribute the executable.
+                if resolved == root or root in resolved.parents:
+                    continue
+                return [str(resolved)]
         node = _which("node", env, root)
         script = _NODE_CLI.get(base)
         if node is not None and script is not None:

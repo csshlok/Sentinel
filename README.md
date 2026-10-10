@@ -67,10 +67,13 @@ did doesn't depend on trusting the agent's account of itself.
   `boxed` adapter runs any other native agent executable you name, with no staged credential:
   only model-provider API keys you list explicitly are forwarded, and they are redacted from
   output. Only the single executable is copied into the box, so it must be self-contained
-  (an executable that needs DLLs or resource files beside it can fail there). A script shim
-  (`.cmd`, `.ps1`, a Node or Python entry point) is refused for `boxed`,
-  and a boxed agent that cannot work inside an AppContainer simply fails; it is never retried
-  unconfined.
+  (an executable that needs DLLs or resource files beside it can fail there). A `.cmd` or
+  `.ps1` shim is refused. Naming an interpreter such as `node` copies only the interpreter, so it
+  can run only a script inside the workspace; a globally installed Node or Python agent CLI does
+  not work under `boxed`. A boxed agent that cannot work inside an AppContainer simply fails; it
+  is never retried unconfined. The staged model credential is deleted after each run and never
+  copied back, so a token the agent refreshed inside the box is discarded (with ChatGPT login,
+  Codex may then ask you to sign in again).
 - **Launch any other executable under supervision** with a restricted access token (maximum
   privileges disabled) inside a Job Object. Every descendant process is attributed: PID, parent,
   image path, command line, lifetime, exit code.

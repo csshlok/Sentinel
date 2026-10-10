@@ -67,8 +67,15 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 def _default_agent_credential_sources() -> dict[str, Path]:
     return {
         "claude-oauth-file": Path.home() / ".claude" / ".credentials.json",
-        "codex-auth-file": Path.home() / ".codex" / "auth.json",
+        "codex-auth-file": _codex_home() / "auth.json",
     }
+
+
+def _codex_home() -> Path:
+    """Where the host's Codex keeps auth.json: ``CODEX_HOME`` when set (as Codex itself does), else ``~/.codex``."""
+
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured) if configured else Path.home() / ".codex"
 
 
 def _is_reparse(path: Path) -> bool:
