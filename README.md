@@ -13,18 +13,19 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows-1f2937.svg" alt="Windows">
-  <img src="https://img.shields.io/badge/status-pre--release-b7791f.svg" alt="Pre-release">
+  <img src="https://img.shields.io/badge/release-v0.1.0-2f855a.svg" alt="Release v0.1.0">
   <img src="https://img.shields.io/badge/version-0.1.0-2563eb.svg" alt="Version 0.1.0">
-  <img src="https://img.shields.io/badge/tests-1%2C600%2B-2f855a.svg" alt="1,600+ tests">
+  <img src="https://img.shields.io/badge/tests-2%2C000%2B-2f855a.svg" alt="2,000+ tests">
+  <img src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20your%20own-6b46c1.svg" alt="Claude Code, Codex, or your own agent">
   <img src="https://img.shields.io/badge/threat--model-16%2F16%20reviewed-2f855a.svg" alt="16/16 threat-model findings reviewed">
 </p>
 
-Sentinel sits between an AI coding agent and your Git repository. It launches the agent inside a
-verified Windows AppContainer, working on a Sentinel-owned copy of your repository, captures Git,
-environment, and dependency evidence before and after it runs, runs your checks inside their own
-disposable AppContainer, records every mutation in a hash-chained journal, and produces a signed,
-portable Change Passport that says — with evidence, not with the agent's own word — exactly what
-happened.
+Sentinel sits between an AI coding agent and your Git repository. It launches the agent (Claude
+Code, Codex, or your own agent CLI) inside a verified Windows AppContainer, working on a
+Sentinel-owned copy of your repository, captures Git, environment, and dependency evidence before
+and after it runs, runs your checks inside their own disposable AppContainer, records every
+mutation in a hash-chained journal, and produces a signed, portable Change Passport that says —
+with evidence, not with the agent's own word — exactly what happened.
 
 It is a local-first Windows runtime: a FastAPI backend, a Textual terminal UI, a CLI, and a
 native desktop app, all driven from the same frozen API contract.
@@ -43,6 +44,7 @@ did doesn't depend on trusting the agent's account of itself.
 | Without Sentinel | With Sentinel |
 | --- | --- |
 | The agent runs with your full account privileges, directly in your repository | The agent runs inside a verified Windows AppContainer, editing a Sentinel-owned workspace clone; its changes reach your branch only through a previewed, fast-forward-only apply |
+| Protection depends on which agent you picked | Claude Code, Codex, and any self-contained native agent CLI all run in the same verified box, and every run states the boundary it actually had |
 | Tests the agent wrote run with your full authority | Every Python and Node check, test, and coverage run executes in its own disposable AppContainer over a copy of the repository, with no access to your credentials, signing key, local API, or network |
 | Trust the agent's own transcript for what it ran | Independently observed process-tree evidence: every spawned process, its PID, image path, command line, and lifetime |
 | No record of the environment or dependencies before/after | Environment and dependency passports captured automatically and diffed for drift |
@@ -63,17 +65,11 @@ did doesn't depend on trusting the agent's account of itself.
   run. The agent works from a hashed tool snapshot and a staged home directory with only the
   brokered model credential it needs, and cannot reach Sentinel's local API.
 - **Launch Codex, or any native agent CLI, in the same box.** The `codex` adapter runs the
-  vendored native `codex.exe` with only its staged `auth.json` (tested in a real box). The
-  `boxed` adapter runs any other native agent executable you name, with no staged credential:
-  only model-provider API keys you list explicitly are forwarded, and they are redacted from
-  output. Only the single executable is copied into the box, so it must be self-contained
-  (an executable that needs DLLs or resource files beside it can fail there). A `.cmd` or
-  `.ps1` shim is refused. Naming an interpreter such as `node` copies only the interpreter, so it
-  can run only a script inside the workspace; a globally installed Node or Python agent CLI does
-  not work under `boxed`. A boxed agent that cannot work inside an AppContainer simply fails; it
-  is never retried unconfined. The staged model credential is deleted after each run and never
-  copied back, so a token the agent refreshed inside the box is discarded (with ChatGPT login,
-  Codex may then ask you to sign in again).
+  native Codex CLI with only its own sign-in staged for the run, and the `boxed` adapter brings
+  your own agent: name any self-contained native agent executable and it runs in the same verified
+  AppContainer, receiving only the model-provider API keys you list (redacted from its output). If
+  a box can't be established the launch stops; it is never retried unconfined. The desktop app,
+  CLI and API show which adapters are boxed before you launch.
 - **Launch any other executable under supervision** with a restricted access token (maximum
   privileges disabled) inside a Job Object. Every descendant process is attributed: PID, parent,
   image path, command line, lifetime, exit code.
@@ -190,7 +186,11 @@ operations across 76 routes, described by 141 typed schemas.
   tree for checkpoint forking, passport, recovery, delegation, tool trust, and the event timeline.
 - **Desktop app** (`apps/desktop`, Electron + React) — a native Windows shell over the same API;
   with Electron's context isolation and the Electron renderer sandbox enabled, and the API token owned by the main process and never
-  exposed to the renderer.
+  exposed to the renderer. It shows each agent run's verified boundary, lets you preview, apply or
+  discard the agent's work, shows where every check ran, the policy decision and diff coverage,
+  issues and saves signed Passport v2 bundles, and publishes GitHub Checks. Download the portable
+  Windows build from [Releases](https://github.com/csshlok/Sentinel/releases/latest): unzip and run
+  `Sentinel.exe`; it bundles its own Python runtime and backend.
 
 ## Security posture
 
@@ -204,6 +204,12 @@ A few of the load-bearing decisions:
   path, inside a Job Object before it ever runs, and Sentinel confirms the boundary on the live
   token. If the boundary can't be established, the launch fails closed — there is no unconfined
   retry.
+- **The boundary is tested like an attacker would test it.** From inside a real box, an adversarial
+  suite tries to reach the user's repository and profile, Sentinel's own store, database, journal
+  and trust registry, another box's files, loopback and LAN listeners, named pipes, Credential
+  Manager, signing keys and the registry, and every attempt is denied, each paired with a control
+  proving the same resource is reachable from outside. All 16 threat-model findings were re-checked
+  against the new launch path.
 - **Agent-influenced code runs confined.** Python and Node tests, `conftest.py`, coverage, and
   package scripts run in a disposable check box, never at your full authority, and each run records
   the boundary it actually ran under.
@@ -219,3 +225,35 @@ A few of the load-bearing decisions:
 - **Tamper-evident by construction.** Every mutation and its journal event commit or roll back
   together in one transaction; the journal itself is append-only, hash-chained, and independently
   replay-verifiable.
+
+## TL;DR (explained like you're five)
+
+Imagine you have a **robot helper** that can build with your LEGO set. It's fast and clever, but
+sometimes robots make mistakes, and you can't just believe the robot when it says
+"I didn't break anything!"
+
+Sentinel is the **grown-up who watches the robot**:
+
+- 🧸 **A play pen.** The robot doesn't play on your real LEGO table. It gets its own play pen with
+  a *copy* of your LEGO set, and it can't climb out to touch your toys, your piggy bank (your
+  passwords), or your diary (Sentinel's own records). *Example: the robot tries to peek at your
+  password box — the door is locked, so the box stays shut.*
+- 👀 **A notebook nobody can erase.** While the robot plays, Sentinel writes down everything it
+  does, in pen, in a notebook where every page is tied to the one before it, so nobody can sneak a
+  page out later. *Example: if someone rips out page 5, the notebook shows it right away.*
+- ✅ **Checking the homework.** When the robot says "I tested it!", Sentinel runs the tests itself,
+  in another little play pen, and checks the tests actually touched the pieces the robot changed.
+  *Example: the robot says "the bridge is strong", so Sentinel drives a toy car over the exact part
+  the robot rebuilt.*
+- 🙋 **You say yes before anything changes.** The robot's new build stays in its play pen until
+  you look at it and say "yes, put it on my table." If you say no, it's thrown away and your table
+  never changed.
+- 🏅 **A signed report card.** At the end you get a report card with a special seal that only your
+  Sentinel can make, saying exactly what happened. Your friends can check the seal themselves,
+  even without the internet. *Example: you send the report card to a teacher, and they can tell it
+  is real and nobody changed it.*
+- 🤖 **Works with different robots.** Claude Code, Codex, or a robot you bring yourself: each one
+  gets the same play pen and the same rules.
+
+So: **the robot does the work, Sentinel keeps it in the play pen, writes everything down, checks
+the homework, asks you first, and gives you a report card you can prove is true.**
