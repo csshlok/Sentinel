@@ -47,3 +47,8 @@ test("check-run and workspace states", () => {
   assert.equal(workspaceInfo("APPLIED").tone, "ok");
   assert.equal(workspaceInfo("APPLY_REFUSED").tone, "danger");
 });
+
+test("an unknown kind is shown the way Python's repr() shows it", () => {
+  assert.equal(boundaryLine({ execution_boundary: { kind: "LOWBOX", job_verified: false } } as never), "Boundary: UNKNOWN ('LOWBOX')");
+  assert.equal(boundaryLine({ execution_boundary: { job_verified: false } } as never), "Boundary: UNKNOWN (None)");
+});

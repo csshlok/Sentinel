@@ -27,7 +27,9 @@ export function boundaryLine(run: Pick<AgentRun, "execution_boundary">): string 
   }
   if (boundary.kind === "RESTRICTED_TOKEN") return REDUCED_LINE;
   if (boundary.kind === "NONE") return NONE_LINE;
-  return `Boundary: UNKNOWN ('${String((boundary as { kind?: unknown }).kind)}')`;
+  // Python's repr(): a string kind is quoted, a missing kind is None.
+  const kind = (boundary as { kind?: unknown }).kind;
+  return `Boundary: UNKNOWN (${typeof kind === "string" ? `'${kind}'` : "None"})`;
 }
 
 /** Tone for the boundary badge: only a verified AppContainer is "ok"; a reduced token is a warning, anything else is danger. */
