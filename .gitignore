@@ -50,3 +50,6 @@ node_modules/
 /.planning/milestone.lock
 /.planning/state.json
 /.planning/phases/**/.gitkeep
+
+# Local benchmark harness (tools/bench), never committed (user decision 2026-10-08)
+/tools/
