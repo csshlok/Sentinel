@@ -62,13 +62,21 @@ try {
   check("bridge surface is exactly the expected one", JSON.stringify(Object.fromEntries(Object.entries(bridge).sort(([a], [b]) => a.localeCompare(b)))) === JSON.stringify({
     api: ["request"],
     diagnostics: ["openLogs"],
-    exports: ["saveJson"],
+    exports: ["saveJson", "savePassportBundle"],
     repositories: ["selectFolder"],
     runtime: ["getStatus", "restartBackend"],
     windowControls: ["close", "getState", "minimize", "onStateChanged", "toggleMaximize"],
   }));
-  const status = JSON.parse(await ev("window.changeAssuranceDesktop.runtime.getStatus().then(s => JSON.stringify(s))"));
-  check("packaged, managed, ready", status.packaged && status.backend.mode === "managed" && status.backend.state === "ready");
+  // The UI connects on /health; the supervisor reports ready only after its capabilities and identity probes, the first
+  // of which includes the backend's one-time boxed platform probe, so wait for it rather than sampling once.
+  let status = {};
+  for (let i = 0; i < 40; i++) {
+    status = JSON.parse(await ev("window.changeAssuranceDesktop.runtime.getStatus().then(s => JSON.stringify(s))"));
+    if (status.backend?.state !== "starting") break;
+    await wait(500);
+  }
+  check("packaged, managed, ready", status.packaged && status.backend.mode === "managed" && status.backend.state === "ready",
+    `packaged=${status.packaged} mode=${status.backend?.mode} state=${status.backend?.state}`);
   check("token is reported only as a boolean", status.hasToken === true && !JSON.stringify(status).match(/token"?:\s*"/i));
   check("capabilities load through the bridge", (await ev("window.changeAssuranceDesktop.api.request({method:'GET',path:'/api/v1/capabilities'}).then(r=>r.status)")) === 200);
   check("non-API path rejected", (await ev("window.changeAssuranceDesktop.api.request({method:'GET',path:'/etc/passwd'}).then(r=>r.error&&r.error.code)")) === "forbidden_path");
