@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ErrorState } from "@/components/ErrorState";
 import { errMessage, useFormAction } from "@/components/FormDialog";
@@ -27,6 +27,10 @@ export function WorkspacePanel({ changeId, actors }: { changeId: string; actors:
   const q = useQuery(workspaceQuery(changeId));
   const [preview, setPreview] = useState<WorkspaceApplyPreview | null>(null);
   const previewAct = useFormAction({ run: () => previewWorkspace(changeId), invalidate: [[...changeKeys.all]], onSuccess: (p) => setPreview(p) });
+  // A preview (and its approval token) belongs to one Change and one sealed state: drop it when either moves on.
+  const state = q.data?.state;
+  useEffect(() => { setPreview(null); }, [changeId]);
+  useEffect(() => { if (state && !OPEN.has(state)) setPreview(null); }, [state]);
 
   if (q.isPending) return <Section title="Workspace" flush><Skeleton lines={2} label="Loading workspace" /></Section>;
   if (q.isError) {
@@ -60,7 +64,7 @@ export function WorkspacePanel({ changeId, actors }: { changeId: string; actors:
     >
       <WorkspaceFacts ws={ws} />
       {previewAct.error ? <Notice tone="danger" title="Preview failed" role="alert">{errMessage(previewAct.error)}</Notice> : null}
-      {preview ? <PreviewView preview={preview} changeId={changeId} actors={actors} onApplied={() => setPreview(null)} /> : null}
+      {preview && preview.change_id === changeId && preview.workspace_id === ws.id ? <PreviewView preview={preview} changeId={changeId} actors={actors} onApplied={() => setPreview(null)} /> : null}
     </Section>
   );
 }

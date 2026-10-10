@@ -15,11 +15,14 @@ const hashPath = resolve(outDir, "OPENAPI_SHA256");
 const banner = "// Generated from the root openapi.json by scripts/api/generate.mjs. Do not edit.\n";
 const ast = await openapiTS(pathToFileURL(specPath));
 const output = banner + astToString(ast).replace(/\r\n/g, "\n");
-const hash = createHash("sha256").update(readFileSync(specPath)).digest("hex") + "\n";
+// Line endings are normalized on both sides: a Windows checkout (core.autocrlf) turns the committed LF files into
+// CRLF, which must not read as drift.
+const lf = (text) => text.replace(/\r\n/g, "\n");
+const hash = createHash("sha256").update(lf(readFileSync(specPath, "utf8"))).digest("hex") + "\n";
 
 function safeRead(path) {
   try {
-    return readFileSync(path, "utf8");
+    return lf(readFileSync(path, "utf8"));
   } catch {
     return null;
   }

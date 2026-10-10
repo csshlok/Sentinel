@@ -52,3 +52,8 @@ test("an unknown kind is shown the way Python's repr() shows it", () => {
   assert.equal(boundaryLine({ execution_boundary: { kind: "LOWBOX", job_verified: false } } as never), "Boundary: UNKNOWN ('LOWBOX')");
   assert.equal(boundaryLine({ execution_boundary: { job_verified: false } } as never), "Boundary: UNKNOWN (None)");
 });
+
+test("a malformed boundary is not observed, as in the CLI", () => {
+  assert.equal(boundaryLine({ execution_boundary: [] } as never), NOT_OBSERVED);
+  assert.equal(boundaryLine({ execution_boundary: "APPCONTAINER" } as never), NOT_OBSERVED);
+});

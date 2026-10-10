@@ -52,7 +52,7 @@ test("no workspace yet is explained, not shown as an error", async ({ page }) =>
 });
 
 test("preview then apply sends the preview's approval token with the approving actor", async ({ page }) => {
-  const { api, errors } = await open(page, "agents", ((id) => ({ workspaces: { [id]: workspace() }, previews: { [id]: preview } })) as Over);
+  const { api, errors } = await open(page, "agents", ((id) => ({ workspaces: { [id]: workspace() }, previews: { [id]: { ...preview, change_id: id } } })) as Over);
   await page.getByRole("button", { name: "Preview changes" }).click();
   const shown = page.getByTestId("workspace-preview");
   await expect(shown.getByText(".github/workflows/ci.yml")).toBeVisible();
@@ -73,7 +73,7 @@ test("preview then apply sends the preview's approval token with the approving a
 
 test("a preview that cannot fast-forward offers no apply", async ({ page }) => {
   const refused = { ...preview, fast_forward_possible: false, approval_token: null, refusal_reason: "Your branch moved since the workspace was created." };
-  const { errors } = await open(page, "agents", ((id) => ({ workspaces: { [id]: workspace() }, previews: { [id]: refused } })) as Over);
+  const { errors } = await open(page, "agents", ((id) => ({ workspaces: { [id]: workspace() }, previews: { [id]: { ...refused, change_id: id } } })) as Over);
   await page.getByRole("button", { name: "Preview changes" }).click();
   await expect(page.getByText("Your branch moved since the workspace was created.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply to my repository" })).toHaveCount(0);

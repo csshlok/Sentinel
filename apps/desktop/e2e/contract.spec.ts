@@ -111,6 +111,8 @@ test("a forked Change names its parent even before it has a repository summary",
 });
 
 test("every screen has an accessible name on every control and raises no console errors", async ({ page }) => {
+  // 18 screens, each waited to network idle: about 32 s since the Phase 11 panels, above the 30 s default.
+  test.setTimeout(90_000);
   const c = makeChange(1, { title: "A11y", files: 2 });
   const { errors } = await open(page, "/home", { changes: [c], tools: [makeTool(1)], actors: [{ id: "a1-00000000", display_name: "Ada", kind: "HUMAN" }] });
   const routes = ["/home", "/changes", "/tools", "/tools/tool-1", "/settings", "/agents", "/actors", "/github", ...["", "/contract", "/evidence", "/assurance", "/agents", "/delivery", "/authority", "/recovery", "/passport", "/timeline"].map((t) => `/changes/${c.id}${t}`)];

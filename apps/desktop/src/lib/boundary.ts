@@ -14,7 +14,8 @@ export const NONE_LINE = "Boundary: none (attached or unreduced run; no boundary
 
 export function boundaryLine(run: Pick<AgentRun, "execution_boundary">): string {
   const boundary = run.execution_boundary as ExecutionBoundary | null | undefined;
-  if (!boundary || typeof boundary !== "object") return NOT_OBSERVED;
+  // Python checks for a Mapping: an array or any non-object is "not observed" there too.
+  if (!boundary || typeof boundary !== "object" || Array.isArray(boundary)) return NOT_OBSERVED;
   if (boundary.kind === "APPCONTAINER") {
     const capabilities = (boundary.capabilities ?? []).join(", ");
     const details = [

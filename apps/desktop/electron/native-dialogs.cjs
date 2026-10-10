@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { UUID_PATTERN } = require("./api-proxy.cjs");
 
 /** Folder picker. Returns the selected path or null; the renderer never gets general filesystem access. */
 async function selectFolder({ dialog, window }) {
@@ -52,14 +53,18 @@ async function saveJson({ dialog, window, writeFile }, input) {
  */
 async function savePassportBundle({ dialog, window, writeFile, fetchBundle }, input) {
   const changeId = typeof input === "object" && input !== null ? input.changeId : undefined;
-  const fetched = await fetchBundle(changeId);
-  if (!fetched.ok) return fetched;
+  if (typeof changeId !== "string" || !UUID_PATTERN.test(changeId)) {
+    return { ok: false, error: { code: "invalid_request", message: "That is not a Change id." } };
+  }
+  // Ask for the location first, so a cancel never makes the backend export a bundle for nothing.
   const result = await dialog.showSaveDialog(window, {
     title: "Save Passport bundle",
     defaultPath: `change-${changeId}.sentinel`,
     filters: [{ name: "Sentinel Passport bundle", extensions: ["sentinel"] }],
   });
   if (result.canceled || !result.filePath) return { ok: true, path: null };
+  const fetched = await fetchBundle(changeId);
+  if (!fetched.ok) return fetched;
   const target = /\.sentinel$/i.test(result.filePath) ? result.filePath : `${result.filePath}.sentinel`;
   await writeFile(target, fetched.bytes);
   return { ok: true, path: target };

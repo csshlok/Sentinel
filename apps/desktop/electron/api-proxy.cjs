@@ -121,6 +121,11 @@ function createBundleFetch({ getBaseUrl, getToken, fetchImpl = fetch }) {
       );
     }
     const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    // Refuse a declared oversize body before buffering anything; the length is re-checked after reading.
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_BUNDLE_BYTES) {
+      throw new BridgeError("response_too_large", "The bundle is too large.");
+    }
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length > MAX_BUNDLE_BYTES) throw new BridgeError("response_too_large", "The bundle is too large.");
     if (response.ok && type === BUNDLE_MEDIA_TYPE) return { ok: true, bytes };
@@ -135,4 +140,4 @@ function createBundleFetch({ getBaseUrl, getToken, fetchImpl = fetch }) {
   };
 }
 
-module.exports = { createApiProxy, createBundleFetch, parseLoopbackBase, BUNDLE_MEDIA_TYPE };
+module.exports = { createApiProxy, createBundleFetch, parseLoopbackBase, BUNDLE_MEDIA_TYPE, UUID_PATTERN };

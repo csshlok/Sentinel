@@ -86,13 +86,34 @@ test("saves the fetched bytes only to the path the user picked, adding the .sent
   assert.equal(h.calls.dialog[0][1].defaultPath, `change-${ID}.sentinel`);
 });
 
-test("cancel writes nothing; a failed fetch shows no dialog", async () => {
+test("cancel fetches nothing and writes nothing; a failed fetch writes nothing", async () => {
   const cancelled = deps({ canceled: true }, { ok: true, bytes: Buffer.from("zip") });
   assert.deepEqual(await savePassportBundle(cancelled.deps, { changeId: ID }), { ok: true, path: null });
+  assert.equal(cancelled.calls.fetched.length, 0);
   assert.equal(cancelled.calls.writes.length, 0);
   const failure = { ok: false, error: { code: "bundle_unavailable", message: "No." } };
   const failed = deps({ canceled: false, filePath: "C:\\x.sentinel" }, failure);
   assert.deepEqual(await savePassportBundle(failed.deps, { changeId: ID }), failure);
-  assert.equal(failed.calls.dialog.length, 0);
   assert.equal(failed.calls.writes.length, 0);
+});
+
+test("a malformed Change id shows no dialog and fetches nothing", async () => {
+  for (const bad of [undefined, null, {}, { changeId: "../x" }, { changeId: 5 }]) {
+    const h = deps({ canceled: false, filePath: "C:\\x.sentinel" }, { ok: true, bytes: Buffer.from("zip") });
+    const result = await savePassportBundle(h.deps, bad);
+    assert.equal(result.ok, false);
+    assert.equal(h.calls.dialog.length + h.calls.fetched.length + h.calls.writes.length, 0);
+  }
+});
+
+test("a declared oversize body is refused before it is read", async () => {
+  let read = false;
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: (n) => ({ "content-type": BUNDLE_MEDIA_TYPE, "content-length": String(64 * 1024 * 1024) })[n.toLowerCase()] ?? null },
+    arrayBuffer: async () => { read = true; return new ArrayBuffer(0); },
+  });
+  const fetchBundle = createBundleFetch({ getBaseUrl: () => "http://127.0.0.1:8000", getToken: () => TOKEN, fetchImpl });
+  await assert.rejects(fetchBundle(ID), (e) => e.code === "response_too_large");
+  assert.equal(read, false);
 });
